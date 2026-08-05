@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{COMPANY}}（{{CODE}}）深度分析报告 — {{DATE}}</title>
+<!--
+  本模板由 scripts/render_report.py 渲染，占位符为双花括号唯一键（形如 COMPANY、DATE）。
+  章节正文的 HTML 结构骨架见 references/fill-schema.md（dim-block/table/deduction/badge 等写法）。
+  条件章节：IF:CYCLE_HTML 包裹的块在 CYCLE_HTML 为空时整块删除。
+-->
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: "Times New Roman", "STKaiti", "KaiTi", serif;
+  font-size: 14px; line-height: 1.7; color: #2c3e50;
+  background: #eef1f5; max-width: 1024px; margin: 0 auto; padding: 24px 16px;
+}
+.mono { font-family: "Times New Roman", serif; }
+.topbar { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 24px; margin-bottom: 16px; }
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.topbar-icon { width: 36px; height: 36px; background: #4a6fa5; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 15px; }
+.topbar-title { font-size: 15px; font-weight: 600; color: #2c3e50; }
+.topbar-sub { font-size: 11px; color: #8899a6; }
+.topbar-right { display: flex; align-items: center; gap: 16px; }
+.topbar-tag { font-size: 11px; color: #8899a6; border: 1px solid #dde3ea; border-radius: 4px; padding: 3px 8px; }
+.topbar-tag.active { background: #4a6fa5; color: #fff; border-color: #4a6fa5; }
+.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 28px 32px; margin-bottom: 16px; }
+.hero h1 { font-size: 24px; font-weight: 700; color: #1a2b4a; margin: 0 0 6px; }
+.hero .subtitle { font-size: 13px; color: #8899a6; margin-bottom: 20px; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 24px; }
+.metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
+.metric-card { flex: 1; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 16px 18px; }
+.metric-card .label { font-size: 11px; color: #8899a6; margin-bottom: 4px; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: #1a2b4a; }
+.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #8899a6; }
+.metric-card .sub { font-size: 11px; color: #8899a6; margin-top: 4px; }
+.metric-card .sub .up { color: #6ba86b; }
+.metric-card .sub .down { color: #c75b5b; }
+.section { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #eef1f5; background: #fafbfc; }
+.section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #eef2f7; border-radius: 4px; padding: 2px 8px; }
+.section-title { font-size: 15px; font-weight: 600; color: #1a2b4a; }
+.section-meta { margin-left: auto; font-size: 11px; color: #8899a6; }
+.section-body { padding: 20px 24px; }
+.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; }
+.badge-green { background: #6ba86b; }
+.badge-orange { background: #d4a24c; }
+.badge-red { background: #c75b5b; }
+.badge-blue { background: #4a6fa5; }
+.badge-lg { font-size: 15px; padding: 3px 10px; }
+.score-line { margin: 4px 0 12px; }
+.muted { color: #8899a6; }
+.verdict { color: #8899a6; font-style: italic; margin: 8px 0 16px; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+th { background: #f5f7fa; color: #8899a6; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 11px; letter-spacing: 0.5px; border-bottom: 2px solid #dde3ea; }
+td { padding: 8px 12px; border-bottom: 1px solid #eef1f5; color: #2c3e50; }
+tr:hover td { background: #f8fafc; }
+td.num, th.num { text-align: right; }
+td.center, th.center { text-align: center; }
+.source { display: block; font-size: 11px; color: #8899a6; font-style: italic; margin: 4px 0 12px; }
+.conclusion-box { background: #f8fafc; border: 1px solid #dde3ea; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
+.warning-card { background: #fdf8f0; border-left: 3px solid #d4a24c; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.danger-card { background: #fdf0f0; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.info-card { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.deduction { color: #c75b5b; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
+.scenario-pess { color: #c75b5b; }
+.scenario-base { color: #d4a24c; }
+.scenario-opt { color: #6ba86b; }
+.matrix-table td { text-align: center; font-size: 12px; padding: 14px 10px; }
+.matrix-table .target { background: #eef2f7; font-weight: 700; color: #4a6fa5; }
+.layer-summary { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+.dim-block { margin-bottom: 20px; }
+.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eef1f5; }
+.dim-name { font-size: 14px; font-weight: 600; color: #2c3e50; }
+.dim-weight { font-size: 11px; color: #8899a6; }
+.disclaimer { color: #8899a6; font-size: 11px; border-top: 1px solid #dde3ea; padding-top: 16px; margin-top: 24px; }
+.table-scroll { overflow-x: auto; }
+@media (max-width: 768px) {
+  body { padding: 12px 8px; }
+  .metric-row { flex-wrap: wrap; }
+  .metric-card { min-width: calc(50% - 6px); }
+  .hero { padding: 20px; }
+  .section-body { padding: 14px 16px; }
+}
+@media print {
+  body { background: #fff; padding: 12px; }
+  .section, .hero, .metric-card { border: 1px solid #ccc; }
+  th { background: #e8e8e8; }
+}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="topbar-icon">{{TOP_ICON}}</div>
+    <div>
+      <div class="topbar-title">个股深度分析引擎</div>
+      <div class="topbar-sub">Four-Layer Scoring Framework · Equity Research</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <span class="topbar-tag">深度分析</span>
+    <span class="topbar-tag">四层评分框架</span>
+    <span class="topbar-tag active">{{DATE}}</span>
+  </div>
+</div>
+
+<!-- Hero -->
+<div class="hero">
+  <h1>{{COMPANY}}（{{CODE}}）</h1>
+  <div class="subtitle">{{SUBTITLE}}｜报告日期：{{DATE}}</div>
+  <div class="thesis">
+    {{THESIS_HTML}}
+  </div>
+  <div class="metric-row">
+    <div class="metric-card">
+      <div class="label">当前股价（{{DATE}} 收盘）</div>
+      <div class="value">{{PRICE}}<span class="unit"> 元</span></div>
+      <div class="sub">{{PRICE_SUB_HTML}}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">总市值</div>
+      <div class="value">{{MCAP}}<span class="unit"> 亿</span></div>
+      <div class="sub">{{MCAP_SUB}}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">PE(TTM)</div>
+      <div class="value">{{PE_TTM}}<span class="unit"> 倍</span></div>
+      <div class="sub">{{PE_SUB}}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">综合得分</div>
+      <div class="value"><span class="badge {{TOTAL_BADGE_CLASS}} badge-lg">{{TOTAL_SCORE}}</span></div>
+      <div class="sub">{{SCORE_SUB}}</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">目标价区间（{{HORIZON}}）</div>
+      <div class="value">{{TARGET_RANGE}}<span class="unit"> 元</span></div>
+      <div class="sub">{{TARGET_SUB_HTML}}</div>
+    </div>
+  </div>
+</div>
+
+<!-- 00 核心结论 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">00</span>
+    <span class="section-title">核心结论</span>
+    <span class="section-meta">综合评分 {{TOTAL_SCORE}} / 10.00</span>
+  </div>
+  <div class="section-body">
+    {{CONCLUSION_HTML}}
+  </div>
+</div>
+
+<!-- P0 关键利润驱动 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">P0</span>
+    <span class="section-title">关键利润驱动识别</span>
+  </div>
+  <div class="section-body">
+    {{P0_HTML}}
+  </div>
+</div>
+
+<!-- L1 公司本质 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">L1</span>
+    <span class="section-title">公司本质（{{L1_W}}%）— 什么成色</span>
+    <span class="section-meta"><span class="badge badge-blue">L1 {{L1_SCORE}}</span></span>
+  </div>
+  <div class="section-body">
+    {{L1_HTML}}
+  </div>
+</div>
+
+<!-- L2 市场时机 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">L2</span>
+    <span class="section-title">市场时机（{{L2_W}}%）— 现在是不是好价格</span>
+    <span class="section-meta"><span class="badge badge-blue">L2 {{L2_SCORE}}</span></span>
+  </div>
+  <div class="section-body">
+    {{L2_HTML}}
+  </div>
+</div>
+
+<!-- L3 未来预期 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">L3</span>
+    <span class="section-title">未来预期（{{L3_W}}%）— 利润往哪走</span>
+    <span class="section-meta"><span class="badge badge-blue">L3 {{L3_SCORE}}</span></span>
+  </div>
+  <div class="section-body">
+    {{L3_HTML}}
+  </div>
+</div>
+
+<!-- L4 风险评估 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">L4</span>
+    <span class="section-title">风险评估（{{L4_W}}%）— 什么会让你亏钱（扣分制）</span>
+    <span class="section-meta"><span class="badge badge-red">L4 {{L4_SCORE}}</span></span>
+  </div>
+  <div class="section-body">
+    {{L4_HTML}}
+  </div>
+</div>
+
+<!-- 05 估值三情景 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <span class="section-title">估值三情景（{{VALUATION_METHOD}}）</span>
+    <span class="section-meta">{{STOCK_TYPE}}</span>
+  </div>
+  <div class="section-body">
+    {{VALUATION_HTML}}
+  </div>
+</div>
+
+<!-- 06 市场预期差拆解 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">06</span>
+    <span class="section-title">市场预期差拆解</span>
+    <span class="section-meta">档位{{GAP_TIER}}</span>
+  </div>
+  <div class="section-body">
+    {{GAP_HTML}}
+  </div>
+</div>
+
+<!-- 07 同业横向对比 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">07</span>
+    <span class="section-title">同业横向对比</span>
+    <span class="section-meta">{{PEERS_META}}</span>
+  </div>
+  <div class="section-body">
+    {{PEERS_HTML}}
+  </div>
+</div>
+
+<!--IF:CYCLE_HTML-->
+<!-- 08 周期规律（条件章节：CYCLE_HTML 为空时整块删除） -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">08</span>
+    <span class="section-title">周期规律</span>
+    <span class="section-meta">{{CYCLE_META}}</span>
+  </div>
+  <div class="section-body">
+    {{CYCLE_HTML}}
+  </div>
+</div>
+<!--ENDIF-->
+
+<!-- 09 评分汇总（脚本计算生成，含算术校验） -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">09</span>
+    <span class="section-title">评分汇总（14维度加权）</span>
+    <span class="section-meta">脚本计算·算术保证</span>
+  </div>
+  <div class="section-body">
+    <div class="table-scroll">
+    <table>
+      <tr><th>层级</th><th>维度</th><th class="center">得分</th><th class="num">权重</th><th class="num">加权</th></tr>
+      {{SCORE_TABLE_ROWS}}
+      <tr style="border-top:2px solid #dde3ea;"><td colspan="2"><strong>综合得分</strong></td><td class="center"><span class="badge {{TOTAL_BADGE_CLASS}} badge-lg">{{TOTAL_SCORE}}</span></td><td class="num">100%</td><td class="num" style="font-weight:700;">{{TOTAL_SCORE}}</td></tr>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- 10 跟踪仪表盘 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">10</span>
+    <span class="section-title">跟踪仪表盘</span>
+    <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
+  </div>
+  <div class="section-body">
+    {{DASH_HTML}}
+  </div>
+</div>
+
+<!-- 11 仓位映射 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">11</span>
+    <span class="section-title">仓位映射</span>
+  </div>
+  <div class="section-body">
+    {{POSITION_HTML}}
+  </div>
+</div>
+
+<!-- Disclaimer -->
+<div class="disclaimer">
+  本报告为AI生成的研究笔记，不构成投资建议。所有数据和结论基于公开信息，可能存在偏差和错误。
+  生成时间：{{GEN_TIME}} · {{CALIB_NOTE}}
+</div>
+
+</body>
+</html>

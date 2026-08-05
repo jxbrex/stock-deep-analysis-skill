@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# 渲染工作流临时产物（fill 数据 / 生成报告）
+_fill_*.json
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db
+*.tmp

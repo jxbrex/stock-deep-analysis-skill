@@ -19,6 +19,9 @@
   行情/K线/财务/股东户数/券商预测/审计意见/主营构成；tushare token 自动发现
   （`TUSHARE_TOKEN` 环境变量 > ZCode config 的 `mcp.servers.tushare.url`），无需手工传入；
   A 股 + 港股（5 位代码自动识别），东财 E7 站内搜索作为无 WebSearch 环境的定性搜索路径
+- **妙想 MCP 模型直调层**（可选，东财官方免费 AI 数据服务）：港股财务首选
+  （`mx_hk_finance_data`）、定性检索主力（`mx_finance_search_news`/`notice` 研报观点与公告）、
+  大宗商品价格（`mx_macro_data`）；自然语言接口，指标名存在漂移，只做模型直调不进脚本
 
 ## 目录结构
 

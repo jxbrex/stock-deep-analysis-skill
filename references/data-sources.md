@@ -9,6 +9,20 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `stk_holdernumber`（股东户数）、`adj_factor`（复权因子）；**无权限**：`news`（新闻快讯）、
 `hk_income`/`hk_fina_indicator`（港股财务）→ 港股财务仍走本手册 §港股支持矩阵 的手工路径；
 **`hk_daily` 限流 1次/分钟** → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
+
+**妙想 MCP（mx-ds-mcp，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务（HTTP 型，
+认证头 `em_api_key` 在 ZCode MCP 配置里），11 个自然语言查询工具。定位：
+① **港股财务首选通道**（`mx_hk_finance_data`，补 tushare `hk_income` 无权限的缺口，实测壁仞 06082 可用）；
+② **定性检索主力**（`mx_finance_search_news` 研报观点/评级/目标价、`mx_finance_search_notice` 公告/审计意见，
+返回标题+摘要+来源+链接，质量高于 E7 站内搜索）；
+③ A股定量第三层兜底（tushare 与东财均失败时）；
+④ 新增能力：`mx_macro_data`（大宗商品高频价格，周期股 P0 变量直接数据源）、
+`mx_stocks_screener`（可比公司初筛）、`mx_index_block_finance_data`（板块估值水位）、
+`mx_us_finance_data`（美股，如扩展美股报告）。
+**注意**：返回为自然语言接口的半结构化 JSON（中文指标名+带单位值），指标名/口径由 AI 理解层决定、
+存在漂移（实测"股东户数"查询被误解析为日度序列）——**不进 em_fetch.py 脚本**，只做模型直调；
+脚本通道保持 tushare 固定字段的确定性。工具在 MCP 加载的会话生效（`mcp__mx-ds-mcp__mx_*`）。
+
 结构化数据占比约 80%，搜索仅用于定性信息。
 
 ## 通用规则
@@ -199,10 +213,11 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 
 ```
 scripts/em_fetch.py（首选：内部 tushare 优先、东财自动兜底，均结构化）
-  → 均失败/缺字段 → 本手册东财手工 curl（特定字段补充，如港股财务 HKF10）
-    → 仍无 → 定性查询：有WebSearch用WebSearch，无WebSearch用E7站内搜索+10jqka已知URL
-      → 仍无 → 委派仅限边界清晰机械任务（定性调研禁委派，见SKILL.md Step 1.3）
-        → 仍无 → 按 SKILL.md Error Handling 降级规则处理，禁止编造
+  → 均失败/缺字段 → 妙想 MCP 直查（mx_*_finance_data；港股财务首选通道）
+    → 仍无 → 本手册东财手工 curl（特定字段补充，如港股财务 HKF10）
+      → 仍无 → 定性查询：有WebSearch用WebSearch；有妙想用 mx_finance_search_news/notice；都无则E7+10jqka已知URL
+        → 仍无 → 委派仅限边界清晰机械任务（定性调研禁委派，见SKILL.md Step 1.3）
+          → 仍无 → 按 SKILL.md Error Handling 降级规则处理，禁止编造
 ```
 注：搜索引擎结果页（bing/baidu/so.com 等）是**最后手段**，非默认路径。遇 429 见下方硬停规则。
 
@@ -240,8 +255,9 @@ https://search-api-web.eastmoney.com/search/jsonp?cb=cb&param={URL编码的JSON}
 
 ## 港股支持矩阵（港股代码 = 5 位数字，如 01880 / 06082）
 
-脚本 `em_fetch.py` 已自动识别港股（5 位数字 → secid `116.` 前缀），E1/E2/E7 直接可用。
-E3 财务需按下方手工 curl（字段名与 A 股完全不同）。E4/E5/E6 港股不支持。
+脚本 `em_fetch.py` 已自动识别港股（5 位数字 → secid `116.` 前缀），E1/E2 直接可用。
+**E3 财务首选妙想 MCP `mx_hk_finance_data` 直查**（模型直调，自然语言查询，实测可用）；
+妙想不可用时按下方手工 curl（字段名与 A 股完全不同）。E4/E5/E6 港股不支持。
 
 | 端点 | 港股 | 说明 |
 |------|:----:|------|

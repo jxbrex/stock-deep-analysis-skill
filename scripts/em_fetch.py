@@ -743,8 +743,9 @@ def summarize(code: str, years: int, searches: list = None) -> str:
             out.append("\n## 盈利质量红旗\n[港股：现金含量/应收/存货周转天数港股接口不提供，按缺失处理；"
                        "毛利率用上表对照同业；审计意见走必查项手工查证]\n")
         except Exception as e:
-            out.append(f"## E3 财务年表\n[tushare 港股取数失败: {e}。兜底：按 data-sources.md 港股手册 "
-                       f"curl 调 RPT_HKF10_FN_MAININDICATOR（字段映射见手册）]\n")
+            out.append(f"## E3 财务年表\n[tushare 港股无 hk_income 权限。**优先：妙想 MCP "
+                       f"mx_hk_finance_data 直查**（模型直调，实测可用）；次兜底：data-sources.md "
+                       f"港股手册 curl RPT_HKF10_FN_MAININDICATOR（字段映射见手册）。tushare 报错: {e}]\n")
     else:
         try:
             annual = _ts_annual_rows(pure)

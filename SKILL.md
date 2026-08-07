@@ -260,7 +260,10 @@ cmd 下用 `dir /s`），修正路径后重跑。**禁止因路径问题放弃�
 脚本一次输出：E1 行情估值、E3 五年财务年表+红旗五项判定（三态：✓真通过/✗真恶化/△数据不足）、
 E2 月线区间、E4 股东户数、E5 一致预期+目标价、E6 主营构成，含全部 peer。
 **港股（5位数字代码，如 01880/06082）**：脚本自动识别 → secid 切 `116.` 前缀、
-价格 ÷1000、K线按真实价；E1/E2/E7 直接可用，E3 财务按 `data-sources.md` 港股手册手工 curl，
+价格 ÷1000、K线按真实价；E1/E2 直接可用（tushare hk_daily 缓存复用绕限流）。
+**E3 港股财务：优先妙想 MCP `mx_hk_finance_data` 直查**（自然语言查询，如
+"壁仞科技(06082.HK) 2024年报和2025中报：营业总收入、归母净利、毛利率、ROE"，实测可用）；
+妙想不可用再按 `data-sources.md` 港股手册手工 curl HKF10。
 E4/E5/E6 输出"港股不支持"。**不要像壁仞项目那样手工探测 secid——脚本已内置。**
 
 #### 环境工具探测（Phase 1 第一步，做一次记录一次）
@@ -268,8 +271,9 @@ E4/E5/E6 输出"港股不支持"。**不要像壁仞项目那样手工探测 sec
 正式取数前，先确认本会话有哪些可用工具。**不要假设——用以下顺序探一次**：
 
 1. WebSearch 是否在工具列表里？（不是"试了失败"——是列表里有没有）
-2. curl 可用？（`curl --version` 0.3 秒即知）
-3. python 可用？（脚本是否跑通即知）
+2. 妙想 MCP 工具（`mcp__mx-ds-mcp__mx_*`）是否在工具列表里？（定性检索与港股财务的关键通道）
+3. curl 可用？（`curl --version` 0.3 秒即知）
+4. python 可用？（脚本是否跑通即知）
 
 把结果记在心里（如"有 curl + python，无 WebSearch"）。后续所有定性搜索路径都依据
 这个探测结果选择，不要每条搜索都重探。
@@ -284,8 +288,9 @@ E4/E5/E6 输出"港股不支持"。**不要像壁仞项目那样手工探测 sec
 
 | 环境 | 定性搜索主路径 | 顺序 |
 |------|---------------|------|
-| **有 WebSearch** | WebSearch 工具 | 唯一定性搜索入口，搜索页一律禁用 |
-| **无 WebSearch**（常见） | ① `curl 东方财富 search-api`（见 data-sources.md E7，结构化 JSON）<br>② WebFetch 抓**已知 URL**的结构化页面：10jqka basic 四页（company/operate/holder/event）、巨潮公告、东财研报页 | 优先 E7 + 已知 URL；搜索页是最后手段 |
+| **有 WebSearch** | WebSearch 工具 | 定性搜索主入口，搜索页一律禁用 |
+| **有妙想 MCP**（`mcp__mx-ds-mcp__mx_*` 在工具列表） | ① `mx_finance_search_news`（新闻/研报观点/评级/目标价，返回标题+摘要+来源+链接）<br>② `mx_finance_search_notice`（公告/年报原文，审计意见/重大事项） | 无 WebSearch 时的**定性首选**，检索质量高于 E7（实测） |
+| **前两者都无** | ① `em_fetch.py --search` 调东财 E7 站内搜索（结构化 JSON）<br>② WebFetch 抓**已知 URL**的结构化页面：10jqka basic 四页（company/operate/holder/event）、巨潮公告、东财研报页 | E7 + 已知 URL；搜索页是最后手段 |
 
 **通用硬规则（不分环境）：**
 1. **禁止第三方搜索代理**（r.jina.ai/s.jina.ai、mcporter/exa 等）——慢且不可靠。
@@ -312,7 +317,15 @@ WebSearch(query="[Company Name] 重大事件 催化剂 [近6个月]")
 WebSearch(query="[Industry] 市场规模 增速 2026")
 ```
 
-无 WebSearch 时（首选 em_fetch.py --search 调 E7，避免手写接口）：
+无 WebSearch 但有妙想 MCP 时（定性首选，模型直调）：
+```
+mx_finance_search_news(query="[公司名] 主营业务 护城河 竞争优势 最新研报观点 评级 目标价")
+mx_finance_search_news(query="[公司名] 在建项目 产能 投产 进展 重大事件 催化剂")
+mx_finance_search_notice(query="[公司名] 控股股东 质押 减持 关联交易 公告")
+mx_finance_search_notice(query="[公司名] 年度报告 审计意见")
+```
+
+前两者都无时（em_fetch.py --search 调 E7 + 已知 URL，避免手写接口）：
 ```
 python "<skill目录>\scripts\em_fetch.py" [代码] --search="关键词1,关键词2"
 WebFetch(http://basic.10jqka.com.cn/[代码]/company.html)   # 公司概况
@@ -323,19 +336,24 @@ WebFetch(http://basic.10jqka.com.cn/[代码]/operate.html)   # 项目进展
 **审计意见 = 必查项（MANDATORY）**：盈利质量红旗第 5 项不能停留在"需查年报"标注——
 那只是待办描述，不是结果。必须实际查证后填写：
 
-1. 优先：E7 搜 `[公司名] 年报 审计意见`（或 `[公司名] 标准无保留意见`），
+0. A股首选：**em_fetch.py 已用 tushare `fina_audit` 自动填**（脚本红旗输出第 5 行直接给结论），
+   脚本显示 ✓/✗ 时直接采用；显示 △ 或港股时走下述手工路径
+1. 妙想 MCP（如在工具列表）：`mx_finance_search_notice(query="[公司名] 年度报告 审计意见")`——
+   实测可直接命中审计报告原文段落
+2. 或：E7 搜 `[公司名] 年报 审计意见`（或 `[公司名] 标准无保留意见`），
    或 WebFetch 巨潮年报公告页 `http://www.cninfo.com.cn/new/disclosure/stock?stockCode={code}`
-2. 年报 PDF 封面/审计报告首页即注明意见类型（标准无保留 / 保留 / 无法表示 / 否定）
-3. 查到 → 红旗表填实际结论（"✓ 标准无保留意见" 或 "✗ 保留意见"）
-4. 查不到（尝试 ≥2 种路径后）→ 填 `△ 审计意见 未查证（已尝试[X]路径）`，禁止直接沿用"需查年报"默认行
+3. 年报 PDF 封面/审计报告首页即注明意见类型（标准无保留 / 保留 / 无法表示 / 否定）
+4. 查到 → 红旗表填实际结论（"✓ 标准无保留意见" 或 "✗ 保留意见"）
+5. 查不到（尝试 ≥2 种路径后）→ 填 `△ 审计意见 未查证（已尝试[X]路径）`，禁止直接沿用"需查年报"默认行
 
 #### Step 1.2: Sell-Side Deep Dive（预期差档位A专用）
 
 E5 已给出一致 EPS 和目标价（档位B）。若要升级档位A（具体假设对照）：
 
 有 WebSearch 时 `WebSearch(query="[Company Name] 券商研报 关键假设 [年份]")`；
-无 WebSearch 时用 E7 搜"研报"或在 `data.eastmoney.com/report/zw_stock.jshtml?infocode=...`
-研报页找假设。
+有妙想 MCP 时 `mx_finance_search_news(query="[公司名] 券商研报 关键假设 盈利预测 [年份]")`
+（返回研报摘要含假设细节）；前两者都无时用 E7 搜"研报"或在
+`data.eastmoney.com/report/zw_stock.jshtml?infocode=...` 研报页找假设。
 
 找到具体假设必须记录来源（券商名+日期）；找不到就停在档位B，禁止编造。
 
@@ -368,14 +386,14 @@ E5 已给出一致 EPS 和目标价（档位B）。若要升级档位A（具体�
 - [ ] Shareholder structure: top holders, shareholder count trend, institutional % — **E4** + 定性搜索
 - [ ] Governance red flags: 控股股东质押率、关联交易占比、近12个月减持、实控人年龄/继任安排、近3年监管处罚 — 定性搜索（10jqka event.html 首选）
 - [ ] 盈利质量红旗数据（现金含量/应收/存货周转） — **E3**（审计意见需定性搜索查年报）
-- [ ] Recent major events (last 6 months) — 定性搜索（E7 站内搜索首选）
+- [ ] Recent major events (last 6 months) — 定性搜索（妙想 news/notice 首选，E7 备选）
 - [ ] Historical PE range (3-5 years), current PE percentile — **E2**（月线）+ E3（净利）
 - [ ] Key price levels: recent high/low, MA60, MA120 — **E2**（近6月日线）
 - [ ] Analyst consensus (rating distribution, recent changes) — **E5**
 - [ ] Sell-side estimates: 一致盈利预测（2026E/2027E净利）、一致目标价、关键假设（如有，必须带来源） — **E5**（档位B）+ 定性搜索（档位A）
 
 > 注：清单中的"定性搜索"指 Step 1.1 的环境自适应路径——有 WebSearch 用 WebSearch，
-> 无 WebSearch 用 E7 + 10jqka 已知 URL，不要写死工具名。
+> 有妙想 MCP 用 mx_finance_search_news/notice，都无则 E7 + 10jqka 已知 URL，不要写死工具名。
 
 ---
 
@@ -1003,10 +1021,11 @@ Flag all uncertain numbers with explicit markers.
 ```
 em_fetch.py（data-sources.md，首选：tushare 优先、东财自动兜底）
   → 超时/失败，重试一次
-    → 仍失败 → 东财手工 curl 补特定字段（港股财务 HKF10 等，见 data-sources.md）
-      → 仍失败 → 定性查询（有WebSearch用WebSearch，无则E7+10jqka已知URL）
-        → 仍无 → 委派仅限边界清晰机械任务（见Step 1.3，定性调研禁委派）
-          → 仍无 → 按下表降级规则处理，禁止编造
+    → 仍失败 → 妙想 MCP 直查（mx_ashare/hk_finance_data 等，如在工具列表；港股财务首选）
+      → 仍失败 → 东财手工 curl 补特定字段（港股财务 HKF10 等，见 data-sources.md）
+        → 仍失败 → 定性查询（有WebSearch用WebSearch；有妙想用 mx_finance_search_news/notice；都无则E7+10jqka已知URL）
+          → 仍无 → 委派仅限边界清晰机械任务（见Step 1.3，定性调研禁委派）
+            → 仍无 → 按下表降级规则处理，禁止编造
 遇 429：立即停止当前路径整条链，切下一级，禁止硬挺。
 ```
 

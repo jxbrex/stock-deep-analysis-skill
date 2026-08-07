@@ -49,6 +49,156 @@ def badge_class(score: float) -> str:
     return "badge-red"
 
 
+_TD_CELL = re.compile(r'<td\b([^>]*)>', re.I)
+_TH_CELL = re.compile(r'<th\b([^>]*)>', re.I)
+_CELL = re.compile(r'<(t[hd])\b([^>]*)>', re.I)
+_TR = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.I | re.S)
+_CLASS_ATTR = re.compile(r'class\s*=\s*"([^"]*)"', re.I)
+
+
+def _classes_of(attrs: str) -> set:
+    m = _CLASS_ATTR.search(attrs or "")
+    return set(m.group(1).split()) if m else set()
+
+
+def _align_class(attrs: str):
+    """返回单元格的对齐类：num / center / None"""
+    cls = _classes_of(attrs)
+    if "num" in cls:
+        return "num"
+    if "center" in cls:
+        return "center"
+    return None
+
+
+def _set_th_align(attrs: str, align: str) -> str:
+    """给 th 属性串设置对齐类（幂等：已有正确类则原样返回）。"""
+    cls = _classes_of(attrs)
+    if align in cls:
+        return attrs
+    m = _CLASS_ATTR.search(attrs or "")
+    if m:
+        new_cls = (m.group(1).strip() + " " + align).strip()
+        return (attrs[:m.start()] + f'class="{new_cls}"' + attrs[m.end():])
+    return (attrs.rstrip() + f' class="{align}"')
+
+
+def _strip_th_align(attrs: str) -> str:
+    """剔除 th 属性串里的 num/center（用于第一列或文字列）。"""
+    cls = _classes_of(attrs)
+    bad = cls & {"num", "center"}
+    if not bad:
+        return attrs
+    cm = _CLASS_ATTR.search(attrs)
+    new_cls = " ".join(c for c in cm.group(1).split() if c not in bad)
+    if new_cls:
+        return attrs[:cm.start()] + f'class="{new_cls}"' + attrs[cm.end():]
+    return _CLASS_ATTR.sub("", attrs).rstrip()
+
+
+def fix_table_alignment(html: str) -> str:
+    """表格对齐自动修正：逐单元格解析（th/td 都按列计数，处理行头 th），按列统计 td 对齐类
+    （num/center 多数决），给同列 th 配同类；第一列强制左对齐。matrix-table 跳过。
+    作用：模型手写 fragment 表头类不齐时（裸 th 配 td class=num/center），渲染层兜底对齐。"""
+    out = []
+    pos = 0
+    for tm in re.finditer(r'<table\b[^>]*>.*?</table>', html, flags=re.I | re.S):
+        out.append(html[pos:tm.start()])
+        tbl = tm.group(0)
+        tbl_attrs_m = re.match(r'<table\b([^>]*)>', tbl, re.I)
+        if tbl_attrs_m and "matrix-table" in _classes_of(tbl_attrs_m.group(1)):
+            out.append(tbl)
+            pos = tm.end()
+            continue
+        # 收集每列的对齐类（仅统计 td 数据格；rowspan 合并格需补偿列位，colspan 格不计票）
+        col_votes = {}
+        rowspans = []  # [(col, remaining_rows)]，行首 rem 即上方剩余占用
+        for trm in _TR.finditer(tbl):
+            col = 0
+            for cm in _CELL.finditer(trm.group(1)):
+                # 跳过被上方 rowspan 占用的列
+                while any(c == col and rem > 0 for c, rem in rowspans):
+                    col += 1
+                tag, attrs = cm.group(1).lower(), cm.group(2)
+                cs = re.search(r'colspan\s*=\s*"?(\d+)', attrs)
+                colspan = int(cs.group(1)) if cs else 1
+                if tag == "td" and colspan == 1:
+                    a = _align_class(attrs)
+                    if a:
+                        col_votes.setdefault(col, []).append(a)
+                # 登记本格 rowspan（跨 N 行 → 下方 N-1 行该列被占用）
+                rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
+                if rs and int(rs.group(1)) > 1:
+                    rowspans.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
+                col += colspan
+            # 行尾衰减：本行已消耗的占用减 1（行首 rem=N 表示上方还有 N 行占用）
+            rowspans = [(c, rem - 1) for c, rem in rowspans if rem - 1 > 0]
+        if not col_votes:
+            out.append(tbl)
+            pos = tm.end()
+            continue
+        decided = {}
+        for i, votes in col_votes.items():
+            if i == 0:
+                decided[i] = None  # 第一列强制左
+            else:
+                num_n = votes.count("num")
+                cen_n = votes.count("center")
+                decided[i] = "num" if num_n >= cen_n and num_n > 0 else ("center" if cen_n > 0 else None)
+
+        # 显式行循环重建（rowspan 是表级状态，逐行追踪列位）
+        tr_parts = []
+        last = 0
+        rowspans2 = []
+        for trm in _TR.finditer(tbl):
+            tr_parts.append(tbl[last:trm.start()])
+            row = trm.group(0)
+            if not _TH_CELL.search(row):
+                tr_parts.append(row)
+                # 仍要推进 rowspan（该行无 th 但可能有 td 的 rowspan，且上方 rowspan 继续消耗）
+                col = 0
+                for cm in _CELL.finditer(trm.group(1)):
+                    while any(c == col and rem > 0 for c, rem in rowspans2):
+                        col += 1
+                    rs = re.search(r'rowspan\s*=\s*"?(\d+)', cm.group(2))
+                    if rs and int(rs.group(1)) > 1:
+                        rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
+                    col += 1
+                rowspans2 = [(c, rem - 1) for c, rem in rowspans2 if rem - 1 > 0]
+                last = trm.end()
+                continue
+            # 该行有 th：逐单元格重建（保持列对齐，含 rowspan/colspan 补偿）
+            rebuilt = []
+            last_in_row = 0
+            col = 0
+            for cm in _CELL.finditer(row):
+                while any(c == col and rem > 0 for c, rem in rowspans2):
+                    col += 1
+                rebuilt.append(row[last_in_row:cm.start()])
+                tag, attrs = cm.group(1), cm.group(2)
+                cs = re.search(r'colspan\s*=\s*"?(\d+)', attrs)
+                colspan = int(cs.group(1)) if cs else 1
+                if tag.lower() == "th":
+                    want = decided.get(col)
+                    attrs = _strip_th_align(attrs) if want is None else _set_th_align(attrs, want)
+                else:
+                    rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
+                    if rs and int(rs.group(1)) > 1:
+                        rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
+                rebuilt.append(f"<{tag}{attrs}>")
+                last_in_row = cm.end()
+                col += colspan
+            rebuilt.append(row[last_in_row:])
+            tr_parts.append("".join(rebuilt))
+            rowspans2 = [(c, rem - 1) for c, rem in rowspans2 if rem - 1 > 0]
+            last = trm.end()
+        tr_parts.append(tbl[last:])
+        out.append("".join(tr_parts))
+        pos = tm.end()
+    out.append(html[pos:])
+    return "".join(out)
+
+
 def compute_scores(fill: dict):
     """返回 (rows_html, layer_scores, layer_weights, total)。校验权重和=100。"""
     scores = fill.get("scores") or {}
@@ -80,7 +230,7 @@ def compute_scores(fill: dict):
                      f'{LAYER_NAMES[layer]} ({layer_w:.0f}%)</td>') if j == 0 else ""
             rows.append(
                 f'<tr>{first}<td>{name}</td>'
-                f'<td class="center"><span class="badge {badge}">{s:.1f}</span></td>'
+                f'<td class="center score-cell"><span class="badge {badge}">{s:.1f}</span></td>'
                 f'<td class="num">{w:.0f}%</td><td class="num">{wtd:.2f}</td></tr>'
             )
     total = sum(float(scores[d[0]]) * weights[d[0]] for d in DIMS) / 100.0
@@ -154,6 +304,9 @@ def render(fill_path: str, out_path: str = None) -> str:
 
     for k, v in repl.items():
         html = html.replace("{{" + k + "}}", v)
+
+    # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
+    html = fix_table_alignment(html)
 
     # 校验残留
     leftover_double = re.findall(r"\{\{[A-Z_0-9]+\}\}", html)

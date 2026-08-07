@@ -253,12 +253,20 @@ python "<skill目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[pee
 #      <skill目录> = 本 SKILL.md 所在目录（技能安装位置，因人而异）
 ```
 
+**妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp__mx_*` 在工具列表，脚本盲区/增强项）：
+- **筹码分布（2C）**：tushare `cyq_*` 无权限 → `mx_ashare_finance_data(query="[公司] 最新获利比例、90%成本区间、平均成本、筹码集中度")`（实测返回平均成本/集中度）
+- **行业估值水位（2A）**：`mx_index_block_finance_data(query="[申万煤炭/对应行业] 最新 PE PB 及历史分位")`——从"跟自己历史比"升级为"跟行业当前比"
+- **大宗商品价格（P0 第一变量）**：`mx_macro_data(query="[动力煤/布伦特原油/对应品种] 最新价格及近30日走势")`
+- **港股盈利预测（E5 港股补位）**：`mx_hk_finance_data(query="[公司] 券商盈利预测 目标价")`
+
 **路径失败处理**：若提示找不到脚本，先在技能目录内定位（`find <技能目录> -name em_fetch.py`，
 cmd 下用 `dir /s`），修正路径后重跑。**禁止因路径问题放弃脚本**——放弃脚本 = 触发
 全套低效降级链。
 
-脚本一次输出：E1 行情估值、E3 五年财务年表+红旗五项判定（三态：✓真通过/✗真恶化/△数据不足）、
-E2 月线区间、E4 股东户数、E5 一致预期+目标价、E6 主营构成，含全部 peer。
+脚本一次输出：E1 行情估值（A股附 PE/PB 5年带与当前分位、下次财报披露计划日）、
+E3 五年财务年表+红旗五项判定（三态：✓真通过/✗真恶化/△数据不足，审计意见 tushare 自动填）、
+E2 月线区间、E4 股东户数、业绩预告/快报、1E 治理包（质押/增减持/回购）、
+E5 一致预期+目标价、E6 主营构成，含全部 peer。
 **港股（5位数字代码，如 01880/06082）**：脚本自动识别 → secid 切 `116.` 前缀、
 价格 ÷1000、K线按真实价；E1/E2 直接可用（tushare hk_daily 缓存复用绕限流）。
 **E3 港股财务：优先妙想 MCP `mx_hk_finance_data` 直查**（自然语言查询，如
@@ -351,8 +359,9 @@ WebFetch(http://basic.10jqka.com.cn/[代码]/operate.html)   # 项目进展
 E5 已给出一致 EPS 和目标价（档位B）。若要升级档位A（具体假设对照）：
 
 有 WebSearch 时 `WebSearch(query="[Company Name] 券商研报 关键假设 [年份]")`；
-有妙想 MCP 时 `mx_finance_search_news(query="[公司名] 券商研报 关键假设 盈利预测 [年份]")`
-（返回研报摘要含假设细节）；前两者都无时用 E7 搜"研报"或在
+有妙想 MCP 时 `mx_finance_search_news(query="[公司名] 券商研报 关键假设 盈利预测 [年份]")`；
+预期修订方向（"近30天上调X家/下调Y家"）：`mx_finance_search_news(query="[公司名] 近一个月 盈利预测 上调 下调 评级变动")`；
+前两者都无时用 E7 搜"研报"或在
 `data.eastmoney.com/report/zw_stock.jshtml?infocode=...` 研报页找假设。
 
 找到具体假设必须记录来源（券商名+日期）；找不到就停在档位B，禁止编造。

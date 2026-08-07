@@ -194,6 +194,131 @@ def _em_quote(secid: str, is_hk: bool = False) -> dict:
     }
 
 
+# ---------------- A 级增强：PE/PB 分位 / 业绩预告快报 / 治理包 / 披露日期 ----------------
+
+def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
+    """A股 PE(TTM)/PB 历史分位（tushare daily_basic）。失败返回 None。"""
+    try:
+        end = date.today().strftime("%Y%m%d")
+        beg = f"{date.today().year - years}0101"
+        rows = ts_call("daily_basic", {"ts_code": to_ts_code(code),
+                                       "start_date": beg, "end_date": end,
+                                       "fields": "ts_code,trade_date,pe_ttm,pb"})
+        if not rows:
+            raise RuntimeError("daily_basic 空返回")
+        pes = sorted(float(r["pe_ttm"]) for r in rows
+                     if r.get("pe_ttm") is not None and float(r["pe_ttm"]) > 0)
+        pbs = sorted(float(r["pb"]) for r in rows
+                     if r.get("pb") is not None and float(r["pb"]) > 0)
+        if len(pes) < 20:
+            raise RuntimeError(f"daily_basic 有效样本不足({len(pes)})")
+        latest_pe, latest_pb = None, None
+        for r in sorted(rows, key=lambda x: x.get("trade_date") or "", reverse=True):
+            if latest_pe is None and r.get("pe_ttm") and float(r["pe_ttm"]) > 0:
+                latest_pe = float(r["pe_ttm"])
+            if latest_pb is None and r.get("pb") and float(r["pb"]) > 0:
+                latest_pb = float(r["pb"])
+            if latest_pe and latest_pb:
+                break
+        def pctile(vals, cur):
+            if cur is None:
+                return None
+            return round(sum(1 for v in vals if v <= cur) / len(vals) * 100)
+        return {"n": len(pes), "years": years,
+                "pe_min": pes[0], "pe_max": pes[-1], "pe_cur": latest_pe, "pe_pct": pctile(pes, latest_pe),
+                "pb_min": pbs[0], "pb_max": pbs[-1], "pb_cur": latest_pb, "pb_pct": pctile(pbs, latest_pb)}
+    except Exception:
+        return None
+
+
+def fetch_forecast_express(code: str) -> list:
+    """业绩预告 + 业绩快报（tushare forecast/express，按报告期合并去重，新→旧最多4条）。"""
+    try:
+        out = []
+        for r in ts_call("forecast", {"ts_code": to_ts_code(code)}):
+            lo, hi = r.get("net_profit_min"), r.get("net_profit_max")
+            rng = (f"{float(lo)/1e4:,.1f}~{float(hi)/1e4:,.1f}亿"  # forecast 净利单位：万元→亿
+                   if lo is not None and hi is not None else None)
+            chg = (f"{r['p_change_min']:.0f}%~{r['p_change_max']:.0f}%"
+                   if r.get("p_change_min") is not None and r.get("p_change_max") is not None else None)
+            # 摘要清洗：剥离数字句子（净利区间已单独列示），只留原因短语；无原因则用 change_reason
+            raw = (r.get("summary") or "").replace("\n", " ")
+            reason = (r.get("change_reason") or "").strip()
+            if reason:
+                summ = reason[:50]
+            else:
+                summ = ""  # 净利区间已列示，不再重复原文长句
+            out.append({"类型": "预告", "报告期": r.get("end_date"), "披露": r.get("ann_date"),
+                        "预告类型": r.get("type"), "净利区间": rng, "变动幅度": chg,
+                        "摘要": summ})
+        for r in ts_call("express", {"ts_code": to_ts_code(code)}):
+            out.append({"类型": "快报", "报告期": r.get("end_date"), "披露": r.get("ann_date"),
+                        "净利": yi(r.get("n_income")), "同比": pct(r.get("yoy_net_profit")),
+                        "营收": yi(r.get("revenue"))})
+        # 按报告期新→旧，同报告期快报优先（快报晚于预告、数据更实）
+        out.sort(key=lambda x: (x.get("报告期") or "", 1 if x["类型"] == "快报" else 0), reverse=True)
+        dedup = {}
+        for r in out:
+            dedup.setdefault(r.get("报告期"), r)
+        return [dedup[k] for k in sorted(dedup, reverse=True)][:4]
+    except Exception:
+        return []
+
+
+def fetch_governance(code: str) -> dict:
+    """1E 治理包（tushare）：质押统计 / 增减持 / 回购。各项独立失败返回空，不影响其他项。"""
+    ts = to_ts_code(code)
+    g = {"pledge": None, "trades": [], "buyback": []}
+    try:
+        rows = ts_call("pledge_stat", {"ts_code": ts})
+        if rows:
+            r = max(rows, key=lambda x: x.get("end_date") or "")
+            g["pledge"] = {"日期": r.get("end_date"), "质押比例%": r.get("pledge_ratio")}
+    except Exception:
+        pass
+    try:
+        rows = ts_call("stk_holdertrade", {"ts_code": ts})
+        rows = [r for r in rows if r.get("ann_date")]
+        rows.sort(key=lambda x: x.get("ann_date") or "", reverse=True)
+        for r in rows[:6]:
+            g["trades"].append({"披露": r.get("ann_date"), "股东": (r.get("holder_name") or "")[:12],
+                                "方向": "增持" if r.get("in_de") == "IN" else "减持",
+                                "数量万股": r.get("change_vol")})
+    except Exception:
+        pass
+    try:
+        rows = ts_call("repurchase", {"ts_code": ts})
+        rows = [r for r in rows if r.get("ann_date")]
+        rows.sort(key=lambda x: x.get("ann_date") or "", reverse=True)
+        for r in rows[:3]:
+            g["buyback"].append({"披露": r.get("ann_date"), "金额": yi(r.get("amount")) + "亿"
+                                 if r.get("amount") else None, "进度": r.get("proc")})
+    except Exception:
+        pass
+    return g
+
+
+def fetch_disclosure(code: str) -> dict:
+    """下一次财报披露计划（tushare disclosure_date）。失败返回 None。"""
+    try:
+        rows = ts_call("disclosure_date", {"ts_code": to_ts_code(code)})
+        rows = [r for r in rows if r.get("end_date")]
+        rows.sort(key=lambda x: x.get("end_date") or "", reverse=True)
+        today = date.today().strftime("%Y%m%d")
+        for r in rows:
+            # 找尚未实际披露、且有计划日期的最近报告期
+            if not r.get("actual_date") and r.get("pre_date"):
+                return {"报告期": r.get("end_date"), "计划披露": r.get("pre_date")}
+        # 全部已披露 → 返回最近一条实际披露供参考
+        if rows:
+            r = rows[0]
+            return {"报告期": r.get("end_date"), "计划披露": r.get("pre_date"),
+                    "实际披露": r.get("actual_date")}
+    except Exception:
+        pass
+    return None
+
+
 def fetch_quote(secid: str, is_hk: bool = False) -> dict:
     """E1 行情。tushare 优先（PE 为标准 TTM 口径，东财 f162 动态口径失真问题规避），东财兜底。"""
     code = secid.split(".")[-1]
@@ -729,6 +854,19 @@ def summarize(code: str, years: int, searches: list = None) -> str:
         out.append(f"## E1 行情估值\n{q['名称']}({q['代码']}) 价¥{q['最新价']} "
                    f"涨跌{q['涨跌幅%']}% | 市值{q['总市值亿']}亿 | "
                    f"PE(TTM){pe_s} PB{q['PB']}x | 换手{q['换手率%']}%\n")
+        if not is_hk:
+            band = fetch_pe_pb_band(pure)
+            if band:
+                out.append(f"PE(TTM) {band['years']}年带: {band['pe_min']:.1f}~{band['pe_max']:.1f}x，"
+                           f"当前分位{band['pe_pct']}% | PB 带: {band['pb_min']:.2f}~{band['pb_max']:.2f}x，"
+                           f"当前分位{band['pb_pct']}%（n={band['n']}交易日）\n")
+            disc = fetch_disclosure(pure)
+            if disc:
+                if disc.get("实际披露"):
+                    out.append(f"财报披露: {disc['报告期']} 已于{disc['实际披露']}实际披露"
+                               f"（计划{disc.get('计划披露') or '—'}）\n")
+                else:
+                    out.append(f"财报披露: {disc['报告期']} 计划披露日 {disc['计划披露']}（未披露）\n")
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
 
@@ -749,6 +887,8 @@ def summarize(code: str, years: int, searches: list = None) -> str:
     else:
         try:
             annual = _ts_annual_rows(pure)
+            if not annual:
+                raise RuntimeError("tushare 年报序列为空")
         except Exception:
             annual = _em_f10(secucode, size=5, annual_only=True)
         try:
@@ -758,14 +898,17 @@ def summarize(code: str, years: int, searches: list = None) -> str:
         if not q1:
             f10 = _em_f10(secucode, size=4)
             q1 = f10[0] if f10 else {}
-        out.append("## E3 财务年表（年报）\n"
-                   "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
-        for r in annual:
-            out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
-                       f"{yi(r.get('PARENTNETPROFIT'))} | {pct(r.get('PARENTNETPROFITTZ'))} | "
-                       f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
-                       f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
-                       f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
+        if not annual:
+            out.append("## E3 财务年表\n[tushare 与东财均失败，按降级链走妙想 mx_ashare_finance_data 直查]\n")
+        else:
+            out.append("## E3 财务年表（年报）\n"
+                       "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
+            for r in annual:
+                out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
+                           f"{yi(r.get('PARENTNETPROFIT'))} | {pct(r.get('PARENTNETPROFITTZ'))} | "
+                           f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
+                           f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
+                           f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
         out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
                    f"同比{pct(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
                    f"ROIC {pct(q1.get('ROIC'))}\n")
@@ -796,6 +939,41 @@ def summarize(code: str, years: int, searches: list = None) -> str:
             out.append("## E4 股东户数\n[港股不支持，跳过]\n")
     except Exception as e:
         out.append(f"## E4 股东户数\n[失败: {e}]\n")
+
+    if not is_hk:
+        fe = fetch_forecast_express(pure)
+        if fe:
+            out.append("## 业绩预告/快报（tushare）")
+            for r in fe:
+                period = r.get("报告期") or "—"
+                period_s = f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(str(period)) == 8 else period
+                if r["类型"] == "快报":
+                    out.append(f"[快报] {period_s}（披露{r.get('披露')}）: 营收{r.get('营收')}亿 "
+                               f"归母净利{r.get('净利')}亿 同比{r.get('同比')}")
+                else:
+                    line = f"[预告] {period_s}（披露{r.get('披露')}）: {r.get('预告类型') or ''}"
+                    if r.get("净利区间"):
+                        line += f" 净利{r['净利区间']}"
+                    if r.get("变动幅度"):
+                        line += f" 变动{r['变动幅度']}"
+                    if r.get("摘要"):
+                        line += f" | {r['摘要']}"
+                    out.append(line)
+            out.append("")
+
+        g = fetch_governance(pure)
+        glines = []
+        if g.get("pledge"):
+            p = g["pledge"]
+            glines.append(f"质押: 质押比例{p.get('质押比例%')}%（截至{p.get('日期')}）")
+        if g.get("trades"):
+            t_s = "；".join(f"{t['披露']}{t['股东']}{t['方向']}" for t in g["trades"][:4])
+            glines.append(f"增减持: {t_s}")
+        if g.get("buyback"):
+            b_s = "；".join(f"{b['披露']}回购{b.get('金额') or ''}{b.get('进度') or ''}" for b in g["buyback"][:2])
+            glines.append(f"回购: {b_s}")
+        if glines:
+            out.append("## 1E 治理（tushare）\n" + "\n".join(glines) + "\n")
 
     try:
         c = fetch_consensus(pure)

@@ -17,11 +17,16 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 返回标题+摘要+来源+链接，质量高于 E7 站内搜索）；
 ③ A股定量第三层兜底（tushare 与东财均失败时）；
 ④ 新增能力：`mx_macro_data`（大宗商品高频价格，周期股 P0 变量直接数据源）、
-`mx_stocks_screener`（可比公司初筛）、`mx_index_block_finance_data`（板块估值水位）、
+`mx_stocks_screener`（可比公司初筛）、`mx_index_block_finance_data`（行业估值水位）、
+`mx_ashare_finance_data`（**筹码分布**：tushare `cyq_*` 无权限时查获利比例/平均成本/集中度，实测可用）、
 `mx_us_finance_data`（美股，如扩展美股报告）。
 **注意**：返回为自然语言接口的半结构化 JSON（中文指标名+带单位值），指标名/口径由 AI 理解层决定、
 存在漂移（实测"股东户数"查询被误解析为日度序列）——**不进 em_fetch.py 脚本**，只做模型直调；
 脚本通道保持 tushare 固定字段的确定性。工具在 MCP 加载的会话生效（`mcp__mx-ds-mcp__mx_*`）。
+
+**tushare 新增接口（2026-08-07 接入 em_fetch.py，实测有权限）**：`daily_basic` 历史序列（PE/PB 分位）、
+`forecast`（业绩预告）、`express`（业绩快报）、`pledge_stat`/`stk_holdertrade`/`repurchase`（治理包）、
+`disclosure_date`（财报披露计划日，给 10 跟踪仪表盘的精确日期）。
 
 结构化数据占比约 80%，搜索仅用于定性信息。
 

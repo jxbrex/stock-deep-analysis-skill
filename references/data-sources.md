@@ -1,7 +1,15 @@
 # 东方财富公开 API 数据获取手册
 
 本手册列出已实测验证的东方财富公开 JSON 接口（免鉴权，仅需 User-Agent 头）。
-Phase 1 数据获取**优先使用本手册的接口**，结构化数据占比约 80%，搜索仅用于定性信息。
+
+**数据源优先级（2026-08-07 起）**：`em_fetch.py` 已内置 **tushare 优先、东财兜底**双通道——
+tushare 是官方会员 API（口径规范、有限流保护、PE 为标准 TTM），东财野生端点作降级备份。
+token 自动发现（环境变量 `TUSHARE_TOKEN` > ZCode config 的 `mcp.servers.tushare.url`），无需手工传入。
+tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `report_rc`（券商预测）、`fina_audit`（审计意见）、
+`stk_holdernumber`（股东户数）、`adj_factor`（复权因子）；**无权限**：`news`（新闻快讯）、
+`hk_income`/`hk_fina_indicator`（港股财务）→ 港股财务仍走本手册 §港股支持矩阵 的手工路径；
+**`hk_daily` 限流 1次/分钟** → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
+结构化数据占比约 80%，搜索仅用于定性信息。
 
 ## 通用规则
 
@@ -190,10 +198,11 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 ## 降级链
 
 ```
-东方财富 API / scripts/em_fetch.py（结构化，首选）
-  → 失败/缺字段 → 定性查询：有WebSearch用WebSearch，无WebSearch用E7站内搜索+10jqka已知URL
-    → 仍无 → 委派仅限边界清晰机械任务（定性调研禁委派，见SKILL.md Step 1.3）
-      → 仍无 → 按 SKILL.md Error Handling 降级规则处理，禁止编造
+scripts/em_fetch.py（首选：内部 tushare 优先、东财自动兜底，均结构化）
+  → 均失败/缺字段 → 本手册东财手工 curl（特定字段补充，如港股财务 HKF10）
+    → 仍无 → 定性查询：有WebSearch用WebSearch，无WebSearch用E7站内搜索+10jqka已知URL
+      → 仍无 → 委派仅限边界清晰机械任务（定性调研禁委派，见SKILL.md Step 1.3）
+        → 仍无 → 按 SKILL.md Error Handling 降级规则处理，禁止编造
 ```
 注：搜索引擎结果页（bing/baidu/so.com 等）是**最后手段**，非默认路径。遇 429 见下方硬停规则。
 

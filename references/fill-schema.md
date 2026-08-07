@@ -54,11 +54,38 @@
 
 **L4 扣分行**：`<span class="deduction">−3 扣分原因……</span>`
 
+**盈利质量红旗行**（1D 财务健康，五项检查）：每行用三态 span 包裹行首（✓绿 / ✗红 / △橙）：
+
+```html
+<span class="flag-ok">✓ 利润现金含量</span>（最低 1.20，五年均 >1）<br>
+<span class="flag-bad">✗ 应收账款周转</span> 恶化（12→16 天，+33%）<br>
+<span class="flag-na">△ 毛利率</span> 35.1%（待与同业对照）
+```
+
 **提示卡**：`.info-card`（蓝/逻辑说明）`.warning-card`（橙/警示）`.danger-card`（红/致命警告+pre-mortem）
 
 **数据来源标注**：`<span class="source">数据来源：……</span>`（每张数据表下方必须有）
 
-**表格**：`<div class="table-scroll"><table>…</table></div>`，数字列 `<td class="num">`，居中列 `<td class="center">`
+**表格**：`<div class="table-scroll"><table>…</table></div>`，数字列 `<td class="num">`，居中列 `<td class="center">`。
+**表头必须与数据列同对齐**：数字列表头 `<th class="num">`、居中列表头 `<th class="center">`（与对应 `<td>` 同规则）；
+纯文字列表头保持默认左对齐，不要加类。
+**宽表首列冻结**（≥5 列的数据表，如 07 同业当前指标表必用）：`<table class="freeze-first">`——窄屏横向滚动时首列常驻。
+
+**数字千位符**：金额/户数类数值 ≥1000 必须带千位符（`2,949.2 亿`、`9,536.8 亿`、`188,153 户`）；
+年份（2025）、PE/PB 倍数、百分比、股价、EPS、评分**不加**。em_fetch 输出已带千位符，fragment 手写数字照此规则。
+
+**估值-质量矩阵**（07 同业对比）：`<table class="matrix-table">`，表头**不用加任何类**（模板 CSS 强制表头/表体一律居中），目标公司格用 `class="target"`：
+
+```html
+<table class="matrix-table">
+  <thead><tr><th>ROE \ PE</th><th>低PE(&lt;12x)</th><th>中PE(12-20x)</th><th>高PE(&gt;20x)</th></tr></thead>
+  <tbody>
+    <tr><td><strong>高ROE(&gt;15%)</strong></td><td>—</td><td>—</td><td>同业A(16%/40x)</td></tr>
+    <tr><td><strong>中ROE(8-15%)</strong></td><td class="target">目标公司(9%/11x)</td><td>同业B(11%/15x)</td><td>同业C(11%/21x)</td></tr>
+    <tr><td><strong>低ROE(&lt;8%)</strong></td><td>—</td><td>—</td><td>—</td></tr>
+  </tbody>
+</table>
+```
 
 ## 评分计算规则（脚本执行，模型不要手算）
 

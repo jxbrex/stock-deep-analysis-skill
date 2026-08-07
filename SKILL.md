@@ -125,7 +125,9 @@ Times New Roman 非等宽字体，数字列右对齐即可，不追求小数点�
 - `.layer-summary` — 层小结（`#f0f5fa` 底 + 钢蓝左竖线）
 - `.info-card` / `.warning-card` / `.danger-card` — 蓝/橙/红三种提示卡（左竖线）
 - `.conclusion-box` — 结论框（`#f8fafc` 底 + 边框）
-- `.matrix-table` — 估值-质量矩阵（HTML表格实现，`.target` 格钢蓝高亮）
+- `.matrix-table` — 估值-质量矩阵（HTML表格实现，表头/表体一律居中，`.target` 格钢蓝高亮）
+- `.flag-ok` / `.flag-bad` / `.flag-na` — 红旗三态色（✓绿 / ✗红 / △橙），1D 红旗清单行首用
+- `.freeze-first` — 宽表首列冻结（≥5 列数据表如 07 同业指标表，横向滚动时首列常驻）
 - `.source` — 数据来源标注（表格正下方，11px 斜体灰字）
 - `.verdict` — 维度判词（斜体灰字）
 
@@ -174,7 +176,12 @@ If data is estimated or from secondary sources: `估算` or `来源：XX，未�
 - No `text-shadow` or `transform` effects
 - No external fonts, CDN links, or JavaScript — pure HTML+CSS
 - 评分不允许裸数字，必须带 `.badge` 徽章
-- 表格不允许缺表头、不允许同表混用金额单位
+- 表格不允许缺表头、不允许同表混用金额单位；**表头必须与数据列同对齐**——数字列表头
+  `<th class="num">`、居中列表头 `<th class="center">`（与对应 `<td>` 同规则，禁止裸 `<th>`
+  配带类 `<td>`，否则表头左/数据右中对不齐）；矩阵表 `.matrix-table` 表头不加类
+  （CSS 强制居中，见 fill-schema）
+- 金额/户数类数值 ≥1000 必须带千位符（`2,949.2 亿`、`188,153 户`）；
+  年份、PE/PB 倍数、百分比、股价、EPS、评分不加
 - 禁止省略 `.section` 卡片包装——裸文本不配出现在 `.topbar` / `.hero` / `.disclaimer` 之外
 
 ---
@@ -994,11 +1001,12 @@ Flag all uncertain numbers with explicit markers.
 **取数降级链（任一数据项通用）**：
 
 ```
-东方财富 API / em_fetch.py（data-sources.md，首选）
+em_fetch.py（data-sources.md，首选：tushare 优先、东财自动兜底）
   → 超时/失败，重试一次
-    → 仍失败 → 定性查询（有WebSearch用WebSearch，无则E7+10jqka已知URL）
-      → 仍无 → 委派仅限边界清晰机械任务（见Step 1.3，定性调研禁委派）
-        → 仍无 → 按下表降级规则处理，禁止编造
+    → 仍失败 → 东财手工 curl 补特定字段（港股财务 HKF10 等，见 data-sources.md）
+      → 仍失败 → 定性查询（有WebSearch用WebSearch，无则E7+10jqka已知URL）
+        → 仍无 → 委派仅限边界清晰机械任务（见Step 1.3，定性调研禁委派）
+          → 仍无 → 按下表降级规则处理，禁止编造
 遇 429：立即停止当前路径整条链，切下一级，禁止硬挺。
 ```
 

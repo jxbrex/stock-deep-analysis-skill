@@ -10,8 +10,10 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `hk_income`/`hk_fina_indicator`（港股财务）→ 港股财务仍走本手册 §港股支持矩阵 的手工路径；
 **`hk_daily` 限流 1次/分钟** → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
 
-**妙想 MCP（mx-ds-mcp，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务（HTTP 型，
-认证头 `em_api_key` 在 ZCode MCP 配置里），11 个自然语言查询工具。定位：
+**妙想 MCP（mx-ds-mcp-stdio，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务
+（stdio 型，ZCode 经 `npx mcp-remote` 桥接远程端点，认证头 `em_api_key` 作为进程参数传入），
+11 个自然语言查询工具。**排障**：若会话工具列表无 `mcp__mx-ds-mcp-stdio__mx_*`，先用 `/mcp` 查连接状态——
+HTTP 旧版曾因 ZCode 不携带自定义 headers 而 403 禁用，stdio 版绕开此问题。定位：
 ① **港股财务首选通道**（`mx_hk_finance_data`，补 tushare `hk_income` 无权限的缺口，实测壁仞 06082 可用）；
 ② **定性检索主力**（`mx_finance_search_news` 研报观点/评级/目标价、`mx_finance_search_notice` 公告/审计意见，
 返回标题+摘要+来源+链接，质量高于 E7 站内搜索）；
@@ -22,7 +24,7 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `mx_us_finance_data`（美股，如扩展美股报告）。
 **注意**：返回为自然语言接口的半结构化 JSON（中文指标名+带单位值），指标名/口径由 AI 理解层决定、
 存在漂移（实测"股东户数"查询被误解析为日度序列）——**不进 em_fetch.py 脚本**，只做模型直调；
-脚本通道保持 tushare 固定字段的确定性。工具在 MCP 加载的会话生效（`mcp__mx-ds-mcp__mx_*`）。
+脚本通道保持 tushare 固定字段的确定性。工具在 MCP 加载的会话生效（`mcp__mx-ds-mcp-stdio__mx_*`）。
 
 **tushare 新增接口（2026-08-07 接入 em_fetch.py，实测有权限）**：`daily_basic` 历史序列（PE/PB 分位）、
 `forecast`（业绩预告）、`express`（业绩快报）、`pledge_stat`/`stk_holdertrade`/`repurchase`（治理包）、

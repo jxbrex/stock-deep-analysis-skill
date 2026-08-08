@@ -253,7 +253,7 @@ python "<skill目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[pee
 #      <skill目录> = 本 SKILL.md 所在目录（技能安装位置，因人而异）
 ```
 
-**妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp__mx_*` 在工具列表，脚本盲区/增强项）：
+**妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp-stdio__mx_*` 在工具列表，脚本盲区/增强项）：
 - **筹码分布（2C）**：tushare `cyq_*` 无权限 → `mx_ashare_finance_data(query="[公司] 最新获利比例、90%成本区间、平均成本、筹码集中度")`（实测返回平均成本/集中度）
 - **行业估值水位（2A）**：`mx_index_block_finance_data(query="[申万煤炭/对应行业] 最新 PE PB 及历史分位")`——从"跟自己历史比"升级为"跟行业当前比"
 - **大宗商品价格（P0 第一变量）**：`mx_macro_data(query="[动力煤/布伦特原油/对应品种] 最新价格及近30日走势")`
@@ -279,7 +279,7 @@ E4/E5/E6 输出"港股不支持"。**不要像壁仞项目那样手工探测 sec
 正式取数前，先确认本会话有哪些可用工具。**不要假设——用以下顺序探一次**：
 
 1. WebSearch 是否在工具列表里？（不是"试了失败"——是列表里有没有）
-2. 妙想 MCP 工具（`mcp__mx-ds-mcp__mx_*`）是否在工具列表里？（定性检索与港股财务的关键通道）
+2. 妙想 MCP 工具（`mcp__mx-ds-mcp-stdio__mx_*`）是否在工具列表里？（定性检索与港股财务的关键通道）
 3. curl 可用？（`curl --version` 0.3 秒即知）
 4. python 可用？（脚本是否跑通即知）
 
@@ -297,7 +297,7 @@ E4/E5/E6 输出"港股不支持"。**不要像壁仞项目那样手工探测 sec
 | 环境 | 定性搜索主路径 | 顺序 |
 |------|---------------|------|
 | **有 WebSearch** | WebSearch 工具 | 定性搜索主入口，搜索页一律禁用 |
-| **有妙想 MCP**（`mcp__mx-ds-mcp__mx_*` 在工具列表） | ① `mx_finance_search_news`（新闻/研报观点/评级/目标价，返回标题+摘要+来源+链接）<br>② `mx_finance_search_notice`（公告/年报原文，审计意见/重大事项） | 无 WebSearch 时的**定性首选**，检索质量高于 E7（实测） |
+| **有妙想 MCP**（`mcp__mx-ds-mcp-stdio__mx_*` 在工具列表） | ① `mx_finance_search_news`（新闻/研报观点/评级/目标价，返回标题+摘要+来源+链接）<br>② `mx_finance_search_notice`（公告/年报原文，审计意见/重大事项） | 无 WebSearch 时的**定性首选**，检索质量高于 E7（实测） |
 | **前两者都无** | ① `em_fetch.py --search` 调东财 E7 站内搜索（结构化 JSON）<br>② WebFetch 抓**已知 URL**的结构化页面：10jqka basic 四页（company/operate/holder/event）、巨潮公告、东财研报页 | E7 + 已知 URL；搜索页是最后手段 |
 
 **通用硬规则（不分环境）：**

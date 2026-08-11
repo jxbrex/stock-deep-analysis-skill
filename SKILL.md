@@ -50,8 +50,8 @@ reference report.
 
 - **Default**: Write the report as a **single self-contained HTML file** in the current working
   directory. All CSS embedded in `<style>`, no external dependencies. Openable in any browser.
-- **File naming convention**: `[公司名]_[股票代码]_[综合得分]_[YYYY-MM-DD].html`
-  - 综合得分保留两位小数，如 `5.66`
+- **File naming convention**: `[公司名]_[股票代码]_[研究分]_[YYYY-MM-DD].html`
+  - 研究分保留两位小数，如 `7.24`
   - Example: `宝丰能源_600989_5.66_2026-07-22.html`
   - English stocks: `Apple_AAPL_6.20_2026-07-22.html`
   - **港股**：代码用 5 位数字不带后缀，如 `壁仞科技_06082_5.95_2026-07-30.html`（不要写成
@@ -109,7 +109,7 @@ Times New Roman 非等宽字体，数字列右对齐即可，不追求小数点�
 
 1. **Topbar** — logo色块（36×36, `#4a6fa5`, 内放公司名首字）+ 标题 + 右侧标签组（报告类型/框架/日期）
 2. **Hero** — H1公司名 + 副标题 + 一句话结论（钢蓝左竖线引用块 `.thesis`）+ **5张指标卡**
-   （股价/市值/PE/综合得分/目标价区间，`.metric-row` + `.metric-card`）
+   （股价/市值/PE/研究分+时机分/目标价区间，`.metric-row` + `.metric-card`）
 3. **Section cards** — 每个大章节一张白色卡片 `.section`：
    - 卡片头 `.section-header`：`.section-num` 编号标签（00/P0/L1-L4/05-10）+ 标题 + 右侧meta
    - 卡片体 `.section-body`：维度块 `.dim-block`（`.dim-header` 一行排开：维度名+权重+徽章，
@@ -217,21 +217,21 @@ defined by where these 1-2 key variables go, not by arbitrary profit ranges.
 分型结果决定三件事：各层权重、估值方法、哪些维度是决定性维度。在报告 P0 卡片中
 必须声明分型及理由。
 
-| 类型 | 识别特征 | 权重调整 | 估值方法 | 决定性维度 |
+| 类型 | 识别特征 | 研究层权重调整（L1/L2/L3） | 估值方法 | 决定性维度 |
 |------|---------|---------|---------|-----------|
-| **周期股** | 利润随商品价格/产能周期大幅波动（化工、航运、养殖、煤炭、有色、钢铁、半导体、面板） | 默认权重（L1 35/25/20/20），L2/L4 是胜负手 | PE 历史时段匹配法（本框架默认） | 2A 估值、4A 基本面风险、周期位置 |
-| **稳定价值/金融** | 盈利稳定、高分红、杠杆经营（银行、保险、公用事业、高速公路） | L1→40%、L3→15%（增长不重要） | **PB-ROE 框架**（银行/保险）；DDM（高股息公用事业）。PE 仅作辅助 | 1D 资产质量、1E 治理、分红可持续性 |
+| **周期股** | 利润随商品价格/产能周期大幅波动（化工、航运、养殖、煤炭、有色、钢铁、半导体、面板） | 默认权重（50/30/20），L2 估值与黄灯 b/c 是胜负手 | PE 历史时段匹配法（本框架默认） | 2A 估值、黄灯 b/c、周期位置 |
+| **稳定价值/金融** | 盈利稳定、高分红、杠杆经营（银行、保险、公用事业、高速公路） | L1→55%、L3→15%（增长不重要） | **PB-ROE 框架**（银行/保险）；DDM（高股息公用事业）。PE 仅作辅助 | 1D 资产质量、1E 治理、分红可持续性 |
 | **稳健成长股** | 利润增速 10-25%、可预测性强（消费、医药白马、制造业龙头） | 默认权重 | PE 匹配 + DCF（通常满足 FCF 条件）+ PEG 辅助 | 1C 护城河、3A 增长持续性、2A 估值 |
-| **快速成长股** | 利润增速 >25%，利润基数尚小 | L3→30%、L2→15%（买点容忍度高） | PEG、远期 PE 折现、终局市值反推 | 3A 增速、1A 赛道天花板、4C 增长风险 |
-| **未盈利/管线股** | 当期亏损或利润无意义（创新药、早期科技） | L1→40%、L3→30%、L2→10% | **rNPV**（管线×成功概率×峰值销售）、P/S、EV/毛利。**禁用 PE 匹配** | 1A 赛道、1C 技术壁垒、现金消耗速率 |
-| **困境反转** | 财务指标全面恶化但存在反转催化剂 | L1 评分仅作参考、L1<3.5 致命缺陷规则**豁免**（财务烂是前提不是缺陷），L3→30% | 正常化利润 PE、重置成本、清算价值对照 | 3B/3C 反转催化剂、4A 生存风险（现金流能否撑到反转） |
+| **快速成长股** | 利润增速 >25%，利润基数尚小 | L3→30%、L2→20%、L1→50%（买点容忍度高） | PEG、远期 PE 折现、终局市值反推 | 3A 增速、1A 赛道天花板、黄灯 c 增长持续性 |
+| **未盈利/管线股** | 当期亏损或利润无意义（创新药、早期科技） | L1→55%、L3→30%、L2→15% | **rNPV**（管线×成功概率×峰值销售）、P/S、EV/毛利。**禁用 PE 匹配** | 1A 赛道、1C 技术壁垒、现金消耗速率 |
+| **困境反转** | 财务指标全面恶化但存在反转催化剂 | L1 评分仅作参考、红灯财务类**部分豁免**（财务烂是前提不是缺陷，但造假/立案/退市风险不豁免），L3→30% | 正常化利润 PE、重置成本、清算价值对照 | 3B/3C 反转催化剂、红灯 a 生存风险（现金流能否撑到反转） |
 
 **分型规则：**
 - 一只股票只归一个主类型；跨界时选"利润结构主导"的类型（如银行+成长 → 稳定价值）
 - 分型必须在报告中写明理由（一句话，引用识别特征）
 - 非周期股 → Phase 5 周期分析自动跳过（除非同时满足触发条件）
-- 困境反转型豁免 L1<3.5 致命缺陷规则，但必须在核心结论中明示"本报告为困境反转框架，
-  L1 低分是前提而非否决项"
+- 困境反转型豁免红灯财务类（连续亏损/ST 属前提），但造假/立案/退市风险不豁免；
+  必须在核心结论中明示"本报告为困境反转框架，财务恶化是前提而非否决项"
 
 ### Phase 1: Research (MANDATORY — do NOT skip)
 
@@ -414,19 +414,19 @@ Score each dimension 1-10, then apply weights.
 provide specific quantitative justification. Do NOT pre-calibrate to any range — let the
 evidence determine the score.
 
-#### L1: Company Essence (35% weight) — "What quality is this company?"
+#### L1: Company Essence (50% weight) — "What quality is this company?"
 
-> **权重哲学**：本框架采用价值投资者视角——公司质量(L1 35%) > 价格(L2 25%) >
-> 预期(L3 20%) = 风险(L4 20%)。深层逻辑：烂公司在任何价格都不值得买，好公司
-> 买贵了还能靠时间消化。如需调整为趋势交易视角，L1/L2 权重可互换（即 L2 35%、
-> L1 25%）。
+> **权重哲学（v2.0）**：本框架采用价值投资视角——企业质地（L1 50%）是研究的核心，
+> 估值（L2 30%）与预期（L3 20%）次之。风险不再占权重，改为红/黄灯双层（见 L4）。
+> 深层逻辑：宁可错过便宜的平庸公司，不妥协质地。研究分（L1+L2+L3，10分制）回答
+> "这公司值不值得拥有"；时机分（技术+筹码，见 11）单独回答"现在该不该伸手"。
 
 | # | Dimension | Weight | Key Questions |
 |---|-----------|--------|---------------|
-| 1A | Sector & Macro | 7% | Market size (万亿级=9-10, 千亿级=7-8, 百亿级=5-6). Growth rate (>10%=8-10, 3-10%=6-7, <3%=4-5). Is the sector strategically favored by policy? Structural tailwinds? Capacity utilization vs industry average. |
-| 1B | Industry Chain Position | 7% | Cost advantage vs competitors (quantify in ¥/ton or %). Upstream self-sufficiency. Downstream pricing power — price maker or price taker? Structural cost differential expected to persist? |
-| 1C | Business Model & Moat | 7% | Enumerate moats explicitly: cost advantage, scale barrier, policy/regulatory barrier, technology/IP, brand, network effects, switching costs. For each: is it widening or narrowing? Does it protect against ALL key risks or only some? |
-| 1D | Financial Health | 6% | ROE trend (3yr). Gross margin trend. Debt ratio and interest coverage. FCF strength (cumulative 5yr FCF). Dividend consistency. **必须先过盈利质量红旗清单（见下方 1D 细则）；重资产公司必须算增量 ROIC。** |
+| 1A | Sector & Macro | 10% | Market size (万亿级=9-10, 千亿级=7-8, 百亿级=5-6). Growth rate (>10%=8-10, 3-10%=6-7, <3%=4-5). Is the sector strategically favored by policy? Structural tailwinds? Capacity utilization vs industry average. |
+| 1B | Industry Chain Position | 10% | Cost advantage vs competitors (quantify in ¥/ton or %). Upstream self-sufficiency. Downstream pricing power — price maker or price taker? Structural cost differential expected to persist? |
+| 1C | Business Model & Moat | 10% | Enumerate moats explicitly: cost advantage, scale barrier, policy/regulatory barrier, technology/IP, brand, network effects, switching costs. For each: is it widening or narrowing? Does it protect against ALL key risks or only some? |
+| 1D | Financial Health | 10% | ROE trend (3yr). Gross margin trend. Debt ratio and interest coverage. FCF strength (cumulative 5yr FCF). Dividend consistency. **评"财务现状健康度"（静态体检）；边际恶化信号归黄灯 c 类。** 必须先过盈利质量红旗清单（见下方 1D 细则）；重资产公司必须算增量 ROIC。 |
 
 **1D 盈利质量红旗清单（MANDATORY — 先于评分执行）**：
 
@@ -438,7 +438,7 @@ evidence determine the score.
 | 应收账款周转 | F10 字段 YSZKZZTS（周转天数） | 最新年 > 最早年×1.3（连续恶化变长）→ 红旗 |
 | 存货周转 | F10 字段 CHZZTS（周转天数） | 最新年 > 最早年×1.3（连续恶化变长）→ 红旗 |
 | 毛利率异常 | 毛利率 vs 同业均值 | 高出同业均值 >50% 且无法给出业务解释 → 红旗 |
-| 审计意见 | 最新年报审计意见类型（**必查项**，按 Step 1.1 查证后填写） | 非标（保留/无法表示/否定）→ 红旗 |
+| 审计意见 | 最新年报审计意见类型（**必查项**，按 Step 1.1 查证后填写） | 非标（保留/无法表示/否定）→ **红灯**（见 L4 红灯 a） |
 
 **三态标注（MANDATORY）**：每项判定结果只能是三种之一——
 ✓=真通过（有数据且未恶化，写明数值）；✗=真恶化/真命中（写明数据）；
@@ -446,9 +446,9 @@ evidence determine the score.
 禁止把"数据缺失"标成 ✓——那会让读者误以为检查通过（芯原股份实证）。
 脚本 `em_fetch.py` 的 `red_flags()` 已按此三态输出，直接采用其结果，不要改写。
 
-**命中处理**：每命中一项，1D 扣 1 分；命中 ≥2 项，除扣分外必须在**核心结论**中置顶提示
-"⚠️ 盈利质量存在红旗（[具体项]），利润真实性存疑"。命中审计非标 → 直接触发 L1 致命缺陷
-警告（视同 L1<3.5 处理）。
+**命中处理**：审计意见非标（否定/无法表示意见）→ **红灯，直接回避**（见 L4）；
+其余四项每命中一项，1D 扣 1 分；命中 ≥2 项，除扣分外必须在**核心结论**中置顶提示
+"⚠️ 盈利质量存在红旗（[具体项]），利润真实性存疑"。
 
 **1D 增量 ROIC（重资产公司 MANDATORY）**：对 capex 驱动的公司（近3年年均资本开支 >
 折旧摊销×1.5），必须计算最新重大项目的增量资本回报：
@@ -460,7 +460,7 @@ evidence determine the score.
 与 WACC（无数据时用 8% 作默认）对比：增量 ROIC > WACC×1.5 → 加分依据；
 增量 ROIC < WACC → 1D 扣 1 分并在判词中说明"再投资在毁灭价值"。
 （例：投137亿建四期，达产年增净利15-20亿 → 增量ROIC≈11-15% > 8% WACC → 回报可观。）
-| 1E | Management Team | 8% | 采用**清单锚定 + 整体判断**混合制（见下方 1E 细则）。**This is the highest-weighted dimension in L1 — management quality determines whether financials and moats sustain or erode.** |
+| 1E | Management Team | 10% | 采用**清单锚定 + 整体判断**混合制（见下方 1E 细则）。**This is the highest-weighted dimension in L1 — management quality determines whether financials and moats sustain or erode.** |
 
 **1E 治理评分细则（混合制）**：先按清单计算锚定分（起始 10 分），再允许 ±1 分整体判断调整。
 
@@ -469,54 +469,73 @@ evidence determine the score.
 | 量化项 | 口径 | 扣分 |
 |--------|------|------|
 | 控股股东质押比例 | 质押股数 ÷ 其持股总数 | >50% → −0.5；>70% → −1.0 |
-| 关联交易 | 年度关联交易金额 ÷ 营收 | >10% → −0.5；>20% → −1.0 |
 | 近12个月减持 | 实控人+高管净减持股数 ÷ 总股本 | >0.5% → −0.5；>2% → −1.0 |
 | 实控人年龄 | >68岁 且无公开继任安排 | −0.5 |
-| 监管处罚/审计非标 | 近3年内 | −1.0 起，视严重性可加扣 |
+| 监管处罚 | 近3年内重大监管处罚 | −1.0 起，视严重性可加扣 |
 | 正向锚 | 分红率连续3年>40%，或近12个月有回购 | +0.5（正向合计封顶 +0.5） |
+
+（v2.0 变更：关联交易从 1E 移出，统一归黄灯 d 类评估；减持区分——经营者减持留 1E，
+财务投资人减持归 2C/时机层，大股东/实控人减持归黄灯 a 类。）
 
 *整体判断调整（±1 分以内）*：用于清单无法覆盖的治理风险或优势——治理文化、
 一言堂倾向、历史污点、继任安排质量、战略定力。调整必须在报告中写明理由；
 无调整需求时直接用锚定分。清单未扣分 ≠ 治理无问题，判词中不得这样暗示。
 
-#### L2: Market Timing (25% weight) — "Is now a good price?"
+#### L2: Valuation (30% weight) — "Is this price cheap relative to value?"
+
+**v2.0：L2 整层只含估值，技术面/筹码面已剥离至 11 仓位与时机决策。**
 
 | # | Dimension | Weight | Key Questions |
 |---|-----------|--------|---------------|
-| 2A | Valuation Attractiveness | 16% | Current PE vs 5yr historical range (percentile). Forward PE and what profit assumptions it embeds. PB vs peers. **Critical**: distinguish "PE looks low because profits are at cyclical peak" from "genuinely undervalued." Dividend yield normalized to mid-cycle earnings. **L2 的核心维度——价值框架里"价格 vs 价值"是买入决策的核心。** |
-| 2B | Technical Analysis | 3% | Price vs MA60/MA120 (trend health). Recent drawdown magnitude. **仅占 3%：技术面与价值框架哲学上不兼容，仅作短期择时参考，不驱动结论。** |
-| 2C | Capital & Sentiment | 6% | Shareholder count trend (rising = retail inflow = bearish signal; falling = accumulation = bullish). Institutional ownership % and trend. Analyst consensus (rating distribution, target price range). Insider trading if available. |
+| 2A | Valuation | 30% | Current PE vs 5yr historical range (percentile, em_fetch 已自动算). Forward PE and what profit assumptions it embeds. PB vs peers. **Critical**: distinguish "PE looks low because profits are at cyclical peak" from "genuinely undervalued." Dividend yield normalized to mid-cycle earnings. **得分应由 05 三情景的中枢期望收益与估值分位推导**——中枢为正且分位低 → 高分，而非孤立看 PE 绝对值。 |
 
 #### L3: Future Expectations (20% weight) — "Where is profit heading?"
 
 | # | Dimension | Weight | Key Questions |
 |---|-----------|--------|---------------|
-| 3A | Profit Growth | 8% | Project 1-2 year earnings. Break down: volume growth, price/margin assumptions, new project ramp-up. Acknowledge uncertainty — flag which variables are external. Provide range, not point estimate. |
+| 3A | Profit Growth | 8% | Project 1-2 year earnings. Break down: volume growth, price/margin assumptions, new project ramp-up. Acknowledge uncertainty — flag which variables are external. Provide range, not point estimate. **并入增长风险评估（原 4C）：3 年后增长是否依赖未批项目、核心业务是否结构性衰退。** |
 | 3B | Project Certainty | 7% | Pipeline: approval status, construction progress, funding secured. Distinguish "under construction" (high certainty) from "planning/awaiting approval" (low certainty). Timeline to profit contribution. |
 | 3C | Catalysts | 5% | Upcoming re-rating events: earnings reports, project milestones, policy changes, index inclusion. Time horizon for each. |
 
-#### L4: Risk Assessment (20% weight) — Deduction System
+#### L4: Risk Assessment (不占权重 — 红/黄灯双层评估)
 
-**L4 uses deduction scoring.** Each dimension starts at 10. Deductions are applied based on
-identified risks. The final score = 10 − total deductions (floor at 1).
+**v2.0：L4 不再产出分数、不再占权重，改为"风险双层评估"——红灯熔断 + 黄灯扣分。**
+先查红灯（Phase 0 前置，命中即直接回避，不再深算研究分）；红灯未过再评黄灯，
+黄灯从"不考虑风险研究分"（L1+L2+L3 加权）往下扣，得出最终**研究分**。
 
-| # | Dimension | Weight | Deduction Rules |
-|---|-----------|--------|-----------------|
-| 4A | Fundamental Risk | 8% | **−3** if a single external variable (commodity price, FX, regulation) dominates >50% of profit variance. **−2** if supply-side overcapacity is building (industry capacity growth > demand growth). **−2** if cost structure has significant pass-through risk. **−1** for each additional material risk factor. **Must provide quantified sensitivity**: "every $X change in [variable] = ±¥Y impact on annual profit." |
-| 4B | Sentiment & Capital Risk | 6% | **−2** if shareholder count increased >50% in past year (retail stampede). **−2** if institutional ownership <5%. **−1** if margin debt is elevated. **−1** if historical max drawdown in similar setups >30%. |
-| 4C | Growth Risk | 6% | **−2** if growth beyond 3 years depends on unapproved projects. **−2** if core business faces structural decline (not just cyclical). **−1** if project execution history is mixed. **−1** if growth ceiling visible within 5 years with no diversification path. |
+**红灯（致命风险 → 直接回避，不看分数）**，命中任一即触发：
 
-**L4 Pre-mortem（MANDATORY — 扣分之后执行）**：
+| 红灯项 | 判定口径 |
+|--------|---------|
+| a) 财务造假/极高杠杆 | 财务造假实锤；商誉/净资产 >50%且标的严重不达标；控股股东质押>80%；连续亏损 ST 带帽/*ST；**审计意见否定或无法表示意见** |
+| b) 立案调查/重大违规 | 实控人或公司被立案调查、重大非法违规，可能导致经营问题甚至退市 |
+| c) 主营不可逆衰退 | 核心产品被禁/被主要市场抛弃（药明康德式）、行业政策毁灭性打击（新东方式）、主营业务不可逆衰退（诺基亚式） |
 
-扣分清单防的是已知风险，pre-mortem 防的是"我没看见的风险"。完成 4A-4C 评分后，
+**黄灯（可控风险 → 扣分制，从研究分往下扣）**：不改变长期内在价值、不造成永久损害，
+但提升波动/不确定性、拉长持股周期、降低胜率。**单项上限 1 分，黄灯累计扣分上限 2 分；
+累计 >2 分或命中 ≥4 项 → 升红灯（直接回避）。** 四大类：
+
+- **a) 交易与股东行为风险**（限售解禁为主；减持区分：经营者减持留 1E、财务投资人减持归 2C、大股东/实控人减持归此类）：
+  解禁占总股本 <1%（0.1）/ 1-5% 普通机构（0.4）/ >5% 首发原始股东或定增深度获利盘（0.8）
+- **b) 行业与政策环境风险**：政策边际收紧（传闻 0.2 / 落地影响盈利 5-10% 0.5 / 超预期收紧影响 >10% 0.9）；
+  竞争格局恶化（0.2/0.5/0.8）；上游成本大幅波动（0.2/0.4/0.7）
+- **c) 盈利与财务质量风险**（**评"边际恶化信号"，与 1D 的"现状体检"区分**）：
+  业绩不及一致预期（0.3/0.6/1.0）；盈利能力持续下滑（0.2/0.5/0.8）；
+  经营现金流恶化（0.2/0.4/0.7）；商誉减值潜在风险（0.2/0.4/0.7）
+- **d) 经营与公司治理风险**：重大诉讼仲裁（0.2/0.5/0.8）；**关联交易占比过高（0.2/0.4/0.6，从 1E 移入）**；
+  公司治理瑕疵（0.2/0.4/0.7）；客户/产品集中度风险（0.2/0.4/0.7）
+
+**L4 Pre-mortem（MANDATORY — 红/黄灯评估之后执行）**：
+
+红/黄灯清单防的是已知风险，pre-mortem 防的是"我没看见的风险"。完成评估后，
 必须写一段 3-5 句的叙事性压力测试：
 
 > **假设两年后这笔投资亏损 30%，最可能的故事是什么？**
 
 从第一个字开始强迫自己站在空头立场叙事（"2026年10月，XX事件发生，市场发现……"），
-写完回答一个问题：**这个故事和 4A-4C 清单里的风险是同一件事的概率有多大？**
-如果是清单里已有风险的复述 → 说明风险识别充分；如果是清单外的新风险 → 回到 4A-4C
-补扣分。L4 答"有哪些风险"，pre-mortem 答"哪个风险最可能真的杀死我"。
+写完回答一个问题：**这个故事和红/黄灯清单里的风险是同一件事的概率有多大？**
+如果是清单里已有风险的复述 → 说明风险识别充分；如果是清单外的新风险 → 回到红/黄灯
+补评。红/黄灯答"有哪些风险"，pre-mortem 答"哪个风险最可能真的杀死我"。
 
 ---
 
@@ -747,7 +766,7 @@ Define specific thresholds that should trigger a full re-analysis:
 |----------|------|------------|
 | [Primary driver] 突破 | [价格/水平] | 重新计算三情景利润 |
 | [Key event] 发生 | [具体事件] | 调整PE校准参照时段 |
-| [Sentiment indicator] 变化 | [阈值] | 重评L2市场时机得分 |
+| [Sentiment indicator] 变化 | [阈值] | 重评 2C 筹码面得分（时机分） |
 | 财报发布 | 季报/年报 | 更新L1财务数据+重算L3利润预测 |
 | [Catalyst] 兑现/失效 | — | 更新L3催化剂得分 |
 
@@ -755,20 +774,29 @@ Define specific thresholds that should trigger a full re-analysis:
 
 Schedule the next full review: `[Date]` (after [next key event, e.g., Q3 earnings]).
 
-#### 6.4 Position Sizing Map
+#### 6.4 Position Sizing Map（仓位与时机决策）
 
-Map the combined score and risk level to a suggested position cap. This is a guideline,
-not advice — the user adjusts based on their own risk tolerance and portfolio context.
+**v2.0：仓位由"研究分 + 时机分"双输入决定，不再用单一综合得分。**
+研究分（L1 50+L2 30+L3 20−黄灯扣分）回答"值不值得拥有"；时机分（筹码 67% + 技术 33%）
+回答"现在该不该伸手"。This is a guideline, not advice — the user adjusts based on their own
+risk tolerance and portfolio context.
 
-| 综合得分 | L4 风险等级 | 仓位建议 | 逻辑 |
-|----------|------------|----------|------|
-| ≥7.0 | 低 (L4≥7) | 可重仓，单一股票上限 20% | 公司质量好 + 风险可控，高置信度 |
-| 5.5–7.0 | 中 (L4 4–7) | 标准仓，单一股票上限 10% | 有吸引力但存在不可忽视的风险 |
-| 4.0–5.5 | 高 (L4<4) | 轻仓试探，单一股票上限 5% | 赔率可能吸引但风险显著 |
-| <4.0 或 L1<3.5 | 任意 | **不建议参与** | 基本面致命缺陷或综合质量过低 |
+**先过红灯**：命中红灯（财务造假/立案/主营衰退/审计非标）→ **不建议参与**，无论研究分多高。
 
-**仓位逻辑说明**：得分越高、风险越低，可配置比例越高。L1<3.5 的公司（基本面致命缺陷）
-无论其他层得分如何，一律不建议参与——烂公司在任何价格都不值得买。
+**双输入仓位矩阵（红灯未命中时）**：
+
+| 研究分 | 时机分 | 判定 | 仓位建议 |
+|--------|--------|------|----------|
+| ≥7.0 | ≥6 | 好公司·好时机 | 可重仓，单一股票上限 20% |
+| ≥7.0 | 4–6 | 好公司·中性时机 | 标准仓，上限 10% |
+| ≥7.0 | <4 | 好公司·差时机 | **观察池**：轻仓 ≤5% 试探或空仓等价格/筹码修复 |
+| 5.5–7.0 | ≥6 | 质地中上·好时机 | 标准仓，上限 10% |
+| 5.5–7.0 | <6 | 质地中上·时机欠佳 | 轻仓试探，上限 5% |
+| 4.0–5.5 | 任意 | 质地一般 | 轻仓试探，上限 5% |
+| <4.0 或 红灯 | 任意 | **不建议参与** | 研究价值不足或致命风险 |
+
+**仓位逻辑说明**：研究分定"入池资格"（质地不够格则任何时机都不碰），时机分定"建仓节奏"
+（质地够格但时机差则等）。黄灯扣分已在研究分里体现（扣完 <5.5 → 自动落入轻仓/回避档）。
 
 **离散度调节（MANDATORY）**：上表给出基准仓位，再用 Phase 3 的情景离散度修正——
 - 离散度 >60%：仓位上限**降一档**（重仓→标准仓、标准仓→轻仓、轻仓→回避或保持轻仓观望）
@@ -795,7 +823,7 @@ not advice — the user adjusts based on their own risk tolerance and portfolio 
 |--------|---------|---------|------|------|
 | 利润 | [三情景净利预测] | [实际财报] | 落在哪个情景？ | 哪个变量看错了？ |
 | 股价 | [三情景目标价] | [实际股价路径] | 中枢收益兑现了多少？ | 利润偏差 or PE偏差？ |
-| 评分 | [14维度得分] | — | 哪些维度看对/看错？ | 逐维度简评 |
+| 评分 | [各维度得分] | — | 哪些维度看对/看错？ | 逐维度简评 |
 | 离散度 | [当时估计的离散度] | [实际波动幅度] | 估计过宽还是过窄？ | 校准下次离散度 |
 
 **归因纪律**：每个偏差必须归因到具体原因，禁止写"市场不可预测"。
@@ -809,19 +837,19 @@ not advice — the user adjusts based on their own risk tolerance and portfolio 
 
 ### Phase 7: Assemble the Final Report
 
-**⚠️ L1 致命缺陷检查（在输出报告前执行）：**
+**⚠️ 红灯熔断检查（在输出报告前执行，对应 L4 红灯层）：**
 
 ```
-if L1_综合得分 < 3.5:
+if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计非标）:
     → 核心结论段开头必须加此警告：
-    "⚠️ 公司基本面存在致命缺陷（L1得分 [X]/10），不建议以投资为目的持有。
+    "🔴 命中红灯风险（[具体项]），触发直接回避，不建议以投资为目的持有。
        以下报告仍完整呈现分析过程，供研究和学习参考。"
-    → 仓位映射自动归入"不建议参与"
+    → 仓位与时机决策自动归入"不建议参与"
     → 报告其余部分正常输出，不隐藏分析内容
 
-例外：Phase 0.5 分型为「困境反转」的股票豁免此检查
-（财务恶化是其前提而非缺陷），改为在核心结论中明示
-"本报告为困境反转框架，L1 低分是前提而非否决项"。
+例外：Phase 0.5 分型为「困境反转」的股票豁免红灯 a 类中的"连续亏损/ST"项
+（财务恶化是其前提而非缺陷），但造假/立案/退市风险不豁免；
+改为在核心结论中明示"本报告为困境反转框架，财务恶化是前提而非否决项"。
 ```
 
 ## Report Output Format
@@ -835,10 +863,11 @@ if L1_综合得分 < 3.5:
    ```bash
    python "<skill目录>/scripts/render_report.py" "_fill_[代码].json"
    ```
-   脚本完成：14维评分×权重计算（层分/总分/徽章色全自动）、占位符替换、
+   脚本完成：三层评分×权重计算（不考虑风险研究分=L1 50+L2 30+L3 20）、扣黄灯得研究分、
+   时机分（筹码67+技术33）、徽章色全自动、占位符替换、
    残留校验（发现 `{{}}` 或 `【】` 残留即报错）、按规范自动命名输出
-   `{公司名}_{代码}_{总分}_{日期}.html`。
-3. **完成后**：删除 `_fill_[代码].json` 临时文件，告知用户报告路径和综合得分。
+   `{公司名}_{代码}_{研究分}_{日期}.html`。
+3. **完成后**：删除 `_fill_[代码].json` 临时文件，告知用户报告路径和研究分+时机分。
 
 **为什么不用 Edit 写 HTML**：每次 Edit 都要重发整个会话上下文（实证：国电南瑞 18 次
 Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节的模型开销降为**零**——
@@ -848,11 +877,13 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 - 禁止用 Edit 逐段改 HTML（上面的 token 实证）
 - 禁止单次 Write 全文 HTML（阳光电源实证：654 秒/23k tokens）
 - 禁止 Read 模板来"学习结构"（结构骨架在 fill-schema.md 里，读它不要读模板）
-- 禁止手算综合得分/层分（脚本算，手算易错；文件名里的总分也来自脚本计算）
+- 禁止手算研究分/时机分/层分（脚本算，手算易错；文件名里的研究分也来自脚本计算）
 
-**评分数据流**：你在 JSON 里只填 14 维原始得分（`scores`）+ 可选权重覆盖（`weights`，
-分型调整时用）。层分、总分、徽章色、加权列、评分汇总表全部由脚本生成——
-报告里的数字与文件名里的总分必然一致。
+**评分数据流**：你在 JSON 里填研究层各维原始得分（`scores`：1A-1E/2A/3A-3C）+
+时机层得分（`timing_scores`：2B/2C）+ 黄灯扣分明细（`yellow_deductions`）+
+红灯标记（`red_flag`）+ 可选权重覆盖（`weights`，分型调整时用）。
+层分、不考虑风险研究分、研究分、时机分、徽章色、加权列、评分汇总表全部由脚本生成——
+报告里的数字与文件名里的研究分必然一致。
 
 报告结构按以下顺序（每个大章节是一张 `.section` 卡片，Topbar/Hero/Disclaimer 除外；
 各片段应包含的要素按此清单写入对应 `_html` 字段）：
@@ -871,14 +902,17 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
   1. 当前股价（sub 行放今日涨跌幅，涨 `.up` 绿 / 跌 `.down` 红）
   2. 总市值（sub 行放总股本）
   3. PE(TTM)（sub 行放历史分位）
-  4. 综合得分（badge-lg 徽章）+ sub 行放 L1-L4 各层分数
+  4. **研究分**（badge-lg 徽章）+ sub 行放"不考虑风险研究分 − 黄灯扣分"；**时机分**（badge-lg 徽章）+ sub 行放"技术×33% / 筹码×67%"
+     ——两张卡并列（研究分钢蓝框 / 时机分红绿按值），替代旧单一综合得分卡
   5. 目标价区间（sub 行放涨跌幅范围）
 
 ### 3. 00 核心结论（`.section`）
 
 - 3-5 句总结：公司关键优势、关键弱点、当前市场认知、核心投资逻辑
-- 若 L1 < 3.5：开头插入 `.danger-card`，写明"⚠️ 公司基本面存在致命缺陷（L1得分 X/10），不建议以投资为目的持有"
-  （困境反转型豁免此规则，改为明示"本报告为困境反转框架，L1 低分是前提而非否决项"）
+- **开头放双轨判词卡**（`.info-card`）：研究分（不考虑风险研究分 − 黄灯扣分）× 时机分，
+  一句话判定（好公司·好时机/差时机、观察池、回避等）
+- 若命中红灯：开头插入 `.danger-card`，写明"🔴 命中红灯风险（[具体项]），触发直接回避"
+  （困境反转型仅豁免财务类红灯，改为明示"本报告为困境反转框架"）
 - 若盈利质量红旗命中 ≥2 项：插入 `.danger-card`，写明"⚠️ 盈利质量存在红旗（[具体项]），利润真实性存疑"
 - 若有显著情绪/筹码风险：用 `.warning-card` 单独提示
 
@@ -892,18 +926,21 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 
 卡片头 `.section-header`：
 - `.section-num`：L1 / L2 / L3 / L4
-- `.section-title`：层名 + 权重 + 一句设问（如"公司本质（35%）— 什么成色"）
-  （分型调整权重时，标题中写调整后的权重，如"公司本质（40%）"）
-- `.section-meta`：`<span class="badge badge-blue">L1 X.XX</span>`（L4 用 badge-red）
+- `.section-title`：层名 + 权重 + 一句设问（如"公司本质（50%）— 什么成色"）
+  （分型调整权重时，标题中写调整后的权重；L4 标题为"风险评估（红/黄灯）— 什么会让你亏钱"，不写权重）
+- `.section-meta`：L1/L2/L3 用 `<span class="badge badge-blue">L1 X.XX</span>`；
+  L4 改为 `<span class="badge badge-red">扣 X.X 分</span>` 或 `<span class="badge badge-red">红灯回避</span>`
 
 卡片体 `.section-body`：
-- 每个维度一个 `.dim-block`：`.dim-header`（维度名 + 权重 + 徽章右置）+ 分析正文 + `.verdict` 斜体判词
-- **1D 财务健康**：① 盈利质量红旗清单五项检查表（每项标注"通过 ✓ / 红旗 ✗"）② 3-5 年财务
-  数据表 + `.source` ③ 重资产公司附增量 ROIC 计算（投资额/年增净利/增量ROIC vs WACC）
-- **2A/2C**：估值表、筹码情绪表 + `.source`
+- 每个维度一个 `.dim-block`：`.dim-header`（维度名 + 权重 + 徽章右置）+ 分析正文 + `.verdict` 判词
+- **1D 财务健康**：① 盈利质量红旗清单五项检查表（每项标注 ✓/✗/△ 三态，行首用 `.flag-ok/.flag-bad/.flag-na` 色）
+  ② 3-5 年财务数据表 + `.source` ③ 重资产公司附增量 ROIC 计算（投资额/年增净利/增量ROIC vs WACC）
+- **L2 估值**：估值表 + PE/PB 分位（em_fetch 输出）+ `.source`；得分注明"由 05 三情景中枢与分位推导"
 - **L3 开头**：预测前提用 `<ul>` 列 2-3 条已确认事实
-- **L4 扣分制**：每个维度用 `.deduction` 逐条列出扣分项（−X + 原因），`.verdict` 写明"总计扣减X分，得Y分"；
-  **L4 末尾加 Pre-mortem 卡片**（`.danger-card`）："假设两年后亏损30%，最可能的故事是……" 3-5 句空头叙事
+- **L4 红/黄灯双层**：先列红灯 checklist（逐项"未触发 ✓ / 命中 🔴"），再列黄灯扣分表
+  （四类 a/b/c/d，每类用 `.deduction` 逐条列扣分项）；`.verdict` 写明"未命中红灯；
+  黄灯共扣 X.X 分（命中 N 项）"；**L4 末尾加 Pre-mortem 卡片**（`.danger-card`）：
+  "假设两年后亏损30%，最可能的故事是……" 3-5 句空头叙事
 - 每层末尾 `.layer-summary`：1-2 句层小结
 
 ### 9. 05 估值三情景（`.section`）
@@ -941,8 +978,14 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 
 ### 13. 09 评分汇总（`.section`）
 
-- 14 维度加权表：层级列用 `rowspan` 合并（L1 rowspan=5，L2/L3/L4 rowspan=3），
-  得分列一律用 badge 徽章，综合得分行 `style="border-top:2px solid #dde3ea;"` + badge-lg
+- **研究层加权表**：三层（L1 本质 50% / L2 估值 30% / L3 预期 20%），L1/L3 按维度列行
+  （1A-1E、3A-3C 各维度 + 徽章），L2 单行（2A 独占）；层级列用 `rowspan` 合并；
+  得分列一律 badge 徽章
+- **不考虑风险研究分行**（L1+L2+L3 加权小计）→ **黄灯扣分行**（−X.X，列明命中项）→
+  **研究分行**（最终，`style="border-top:2px solid #dde3ea;"` + badge-lg）
+- **时机轨表**（独立小表）：筹码面（67%）/ 技术面（33%）→ 时机分（badge-lg），
+  注明"不入研究分，仅供 11 仓位与时机决策"
+- 若命中红灯：表首加 `.danger-card` "🔴 红灯回避"，研究分仍列示但标注"仅作研究参考"
 
 ### 14. 10 跟踪仪表盘（`.section`）
 
@@ -952,17 +995,19 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 - **复盘占位提示**：写明"到达审查日或触发条件兑现时，按 Phase 6.5 复盘四格表执行复盘，
   生成 `[公司名]_[代码]_复盘_[日期].md`"
 
-### 15. 11 仓位映射（`.section`）
+### 15. 11 仓位与时机决策（`.section`）
 
-- 映射表（综合得分徽章 / L4风险等级 / 基准仓位）
+- **时机判定小表**（先于仓位表）：技术面（得分×33%）/ 筹码面（得分×67%）/ 时机分；
+  2B/2C 的分析过程在此呈现（趋势/均线/支撑压力表 + 户数/北向/机构/减持表 + `.source`）
+- **双输入仓位映射表**：研究分（徽章）/ 时机分（徽章）/ 双轨判定 / 基准仓位
 - **调整行**：离散度调节（>60% 降档 /<30% 升档）+ 赔率调节（∞ 升档 / 中枢收益为负→回避），
   列出最终仓位建议
-- `.info-card`：一句话仓位逻辑（含离散度和赔率的理由）
+- `.info-card`：一句话决策逻辑（研究分定入池资格、时机分定建仓节奏 + 离散度/赔率理由）
 
 ### 16. 跨股对比（`.section`，条件触发）
 
 仅当用户请求对比多只股票、或工作目录中已有多份本框架报告时输出（可独立生成）。
-表格列：股票 / 分型 / 综合得分 / L1质量 / **年化中枢期望收益** / 赔率 / 离散度 / 悲观回撤 / 仓位建议。
+表格列：股票 / 分型 / **研究分** / **时机分** / L1本质 / **年化中枢期望收益** / 赔率 / 离散度 / 悲观回撤 / 仓位建议。
 注意：跨股对比只在同一年化口径下有意义；分型不同的股票，评分本身不完全可比，
 表中必须保留分型列提醒读者。
 不给出唯一"标准答案"——用 `.conclusion-box` 分列两种偏好的选择：

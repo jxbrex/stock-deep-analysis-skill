@@ -20,24 +20,24 @@ import re
 import sys
 
 # 维度元数据：key -> (层, 显示名, 默认权重)
+# v2.0 研究层：L1 本质 50（1A-1E 各10）+ L2 估值 30（2A 独占）+ L3 预期 20（3A8/3B7/3C5）
 DIMS = [
-    ("1A", "L1", "1A 赛道与宏观", 7),
-    ("1B", "L1", "1B 产业链位置", 7),
-    ("1C", "L1", "1C 商业模式与护城河", 7),
-    ("1D", "L1", "1D 财务健康", 6),
-    ("1E", "L1", "1E 管理团队", 8),
-    ("2A", "L2", "2A 估值吸引力", 16),
-    ("2B", "L2", "2B 技术面", 3),
-    ("2C", "L2", "2C 筹码与情绪", 6),
+    ("1A", "L1", "1A 赛道与宏观", 10),
+    ("1B", "L1", "1B 产业链位置", 10),
+    ("1C", "L1", "1C 商业模式与护城河", 10),
+    ("1D", "L1", "1D 财务健康", 10),
+    ("1E", "L1", "1E 管理团队", 10),
+    ("2A", "L2", "2A 估值水平", 30),
     ("3A", "L3", "3A 利润增长", 8),
     ("3B", "L3", "3B 项目确定性", 7),
     ("3C", "L3", "3C 催化剂", 5),
-    ("4A", "L4", "4A 基本面风险", 8),
-    ("4B", "L4", "4B 情绪与筹码风险", 6),
-    ("4C", "L4", "4C 增长风险", 6),
 ]
-LAYER_NAMES = {"L1": "公司本质", "L2": "市场时机", "L3": "未来预期", "L4": "风险评估"}
-# 模板中徽章槽位
+# 时机层（不入研究分）：筹码 67% / 技术 33%
+TIMING_DIMS = [
+    ("2C", "筹码与情绪", 67),
+    ("2B", "技术面", 33),
+]
+LAYER_NAMES = {"L1": "公司本质", "L2": "估值水平", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 
 
@@ -200,7 +200,10 @@ def fix_table_alignment(html: str) -> str:
 
 
 def compute_scores(fill: dict):
-    """返回 (rows_html, layer_scores, layer_weights, total)。校验权重和=100。"""
+    """v2.0 三层研究层 + 黄灯扣分 + 时机分。
+    返回 dict：rows_html / layer_scores / pre_risk_research / yellow_total /
+    research（最终研究分）/ timing_rows_html / timing（时机分）/ red_flag。
+    校验：研究层权重和=100；时机层权重和=100。"""
     scores = fill.get("scores") or {}
     w_override = fill.get("weights") or {}
     missing = [d[0] for d in DIMS if d[0] not in scores]
@@ -211,11 +214,11 @@ def compute_scores(fill: dict):
         weights[key] = float(w_override.get(key, default_w))
     total_w = sum(weights.values())
     if abs(total_w - 100.0) > 0.01:
-        raise ValueError(f"权重总和 = {total_w}，必须为 100（分型调整时各维度权重之和仍须等于100）")
+        raise ValueError(f"研究层权重总和 = {total_w}，必须为 100（分型调整时各维度权重之和仍须等于100）")
 
     layer_scores, layer_weights = {}, {}
     rows = []
-    for layer in ["L1", "L2", "L3", "L4"]:
+    for layer in ["L1", "L2", "L3"]:
         dims = [d for d in DIMS if d[1] == layer]
         layer_w = sum(weights[d[0]] for d in dims)
         layer_s = sum(float(scores[d[0]]) * weights[d[0]] for d in dims) / layer_w
@@ -233,8 +236,41 @@ def compute_scores(fill: dict):
                 f'<td class="center score-cell"><span class="badge {badge}">{s:.1f}</span></td>'
                 f'<td class="num">{w:.0f}%</td><td class="num">{wtd:.2f}</td></tr>'
             )
-    total = sum(float(scores[d[0]]) * weights[d[0]] for d in DIMS) / 100.0
-    return "\n".join(rows), layer_scores, layer_weights, total
+    # 不考虑风险研究分（L1+L2+L3 加权）
+    pre_risk = sum(float(scores[d[0]]) * weights[d[0]] for d in DIMS) / 100.0
+
+    # 黄灯扣分（模型填 yellow_deductions 明细：[{label, points}]）
+    yellow = fill.get("yellow_deductions") or []
+    yellow_total = round(sum(float(y.get("points", 0)) for y in yellow), 2)
+    research = round(pre_risk - yellow_total, 2)  # 最终研究分
+
+    # 时机分（2C 筹码 67% + 2B 技术 33%）
+    t_scores = fill.get("timing_scores") or {}
+    t_weights = {k: float((fill.get("timing_weights") or {}).get(k, dw)) for k, _n, dw in TIMING_DIMS}
+    tw_sum = sum(t_weights.values())
+    if abs(tw_sum - 100.0) > 0.01:
+        raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")
+    timing = None
+    timing_rows = []
+    if t_scores:
+        timing = sum(float(t_scores.get(k, 0)) * t_weights[k] for k, _n, _w in TIMING_DIMS) / 100.0
+        for k, name, _dw in TIMING_DIMS:
+            s = float(t_scores.get(k, 0))
+            w = t_weights[k]
+            timing_rows.append(
+                f'<tr><td>{name}</td>'
+                f'<td class="center score-cell"><span class="badge {badge_class(s)}">{s:.1f}</span></td>'
+                f'<td class="num">{w:.0f}%</td></tr>'
+            )
+
+    red_flag = (fill.get("red_flag") or "").strip()
+    return {
+        "rows_html": "\n".join(rows), "layer_scores": layer_scores,
+        "layer_weights": layer_weights, "pre_risk_research": pre_risk,
+        "yellow_total": yellow_total, "research": research,
+        "timing_rows_html": "\n".join(timing_rows), "timing": timing,
+        "red_flag": red_flag,
+    }
 
 
 def render(fill_path: str, out_path: str = None) -> str:
@@ -243,7 +279,28 @@ def render(fill_path: str, out_path: str = None) -> str:
         if not fill.get(k):
             raise ValueError(f"缺必填字段: {k}")
 
-    rows_html, layer_scores, layer_weights, total = compute_scores(fill)
+    sc = compute_scores(fill)
+    layer_scores = sc["layer_scores"]
+    layer_weights = sc["layer_weights"]
+    pre_risk = sc["pre_risk_research"]
+    yellow_total = sc["yellow_total"]
+    research = sc["research"]
+    timing = sc["timing"]
+    red_flag = sc["red_flag"]
+
+    # 双轨判定词（研究分定资格、时机分定节奏；红灯优先）
+    if red_flag:
+        verdict = f"🔴 红灯回避（{red_flag}）"
+    elif research >= 7 and (timing is not None and timing >= 6):
+        verdict = "好公司·好时机 → 可进攻"
+    elif research >= 7 and (timing is not None and timing < 5):
+        verdict = "好公司·差时机 → 观察池等价格"
+    elif research >= 7:
+        verdict = "好公司·时机中性 → 标准仓"
+    elif research >= 5.5:
+        verdict = "质地中上 → 轻仓/标准仓"
+    else:
+        verdict = "研究价值不足 → 回避"
 
     date = fill["date"]
     repl = {
@@ -282,14 +339,22 @@ def render(fill_path: str, out_path: str = None) -> str:
         "POSITION_HTML": fill.get("position_html", ""),
         "GEN_TIME": fill.get("gen_time", date),
         "CALIB_NOTE": fill.get("calib_note", ""),
-        "SCORE_TABLE_ROWS": rows_html,
-        "TOTAL_SCORE": f"{total:.2f}",
-        "TOTAL_BADGE_CLASS": badge_class(total),
-        "SCORE_SUB": "｜".join(f"{l} {layer_scores[l]:.2f}" for l in ["L1", "L2", "L3", "L4"]),
+        "SCORE_TABLE_ROWS": sc["rows_html"],
+        "TIMING_TABLE_ROWS": sc["timing_rows_html"],
+        # 研究分（不考虑风险 → 扣黄灯 → 最终研究分）
+        "PRE_RISK_RESEARCH": f"{pre_risk:.2f}",
+        "YELLOW_TOTAL": f"{yellow_total:.1f}",
+        "RESEARCH_SCORE": f"{research:.2f}",
+        "RESEARCH_BADGE_CLASS": badge_class(research),
+        # 时机分
+        "TIMING_SCORE": (f"{timing:.2f}" if timing is not None else "—"),
+        "TIMING_BADGE_CLASS": (badge_class(timing) if timing is not None else "badge-blue"),
+        "VERDICT_DUAL": verdict,
+        "RED_FLAG_HTML": (f'<div class="danger-card">🔴 <strong>红灯回避</strong>：{red_flag}</div>' if red_flag else ""),
+        "SCORE_SUB": "｜".join(f"{l} {layer_scores[l]:.2f}" for l in ["L1", "L2", "L3"]),
         "L1_SCORE": f"{layer_scores['L1']:.2f}", "L1_W": f"{layer_weights['L1']:.0f}",
         "L2_SCORE": f"{layer_scores['L2']:.2f}", "L2_W": f"{layer_weights['L2']:.0f}",
         "L3_SCORE": f"{layer_scores['L3']:.2f}", "L3_W": f"{layer_weights['L3']:.0f}",
-        "L4_SCORE": f"{layer_scores['L4']:.2f}", "L4_W": f"{layer_weights['L4']:.0f}",
     }
 
     tmpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "report-template.html")
@@ -318,7 +383,7 @@ def render(fill_path: str, out_path: str = None) -> str:
 
     if not out_path:
         out_path = os.path.join(os.path.dirname(os.path.abspath(fill_path)),
-                                f"{fill['company']}_{fill['code']}_{total:.2f}_{date}.html")
+                                f"{fill['company']}_{fill['code']}_{research:.2f}_{date}.html")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -326,7 +391,11 @@ def render(fill_path: str, out_path: str = None) -> str:
                          "L4_HTML", "VALUATION_HTML", "GAP_HTML", "PEERS_HTML",
                          "DASH_HTML", "POSITION_HTML") if not repl.get(k)]
     print(f"OK → {out_path}")
-    print(f"综合得分 {total:.2f} | " + " ".join(f"{l} {layer_scores[l]:.2f}" for l in ["L1", "L2", "L3", "L4"]))
+    timing_s = f"{timing:.2f}" if timing is not None else "—"
+    print(f"研究分 {research:.2f}（不考虑风险 {pre_risk:.2f} − 黄灯 {yellow_total:.1f}）| "
+          f"时机分 {timing_s} | " +
+          " ".join(f"{l} {layer_scores[l]:.2f}" for l in ["L1", "L2", "L3"]) +
+          (f" | 🔴红灯: {red_flag}" if red_flag else ""))
     if empty:
         print(f"⚠️ 以下章节片段为空（如非故意请检查 fill JSON）: {empty}")
     return out_path

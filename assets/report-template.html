@@ -141,10 +141,15 @@ td.center, th.center { text-align: center; }
       <div class="value">{{PE_TTM}}<span class="unit"> 倍</span></div>
       <div class="sub">{{PE_SUB}}</div>
     </div>
+    <div class="metric-card" style="border-color:#4a6fa5; border-width:2px;">
+      <div class="label">研究分</div>
+      <div class="value"><span class="badge {{RESEARCH_BADGE_CLASS}} badge-lg">{{RESEARCH_SCORE}}</span></div>
+      <div class="sub">不考虑风险 {{PRE_RISK_RESEARCH}} − 黄灯 {{YELLOW_TOTAL}}</div>
+    </div>
     <div class="metric-card">
-      <div class="label">综合得分</div>
-      <div class="value"><span class="badge {{TOTAL_BADGE_CLASS}} badge-lg">{{TOTAL_SCORE}}</span></div>
-      <div class="sub">{{SCORE_SUB}}</div>
+      <div class="label">时机分</div>
+      <div class="value"><span class="badge {{TIMING_BADGE_CLASS}} badge-lg">{{TIMING_SCORE}}</span></div>
+      <div class="sub">筹码×67% / 技术×33%</div>
     </div>
     <div class="metric-card">
       <div class="label">目标价区间（{{HORIZON}}）</div>
@@ -159,7 +164,7 @@ td.center, th.center { text-align: center; }
   <div class="section-header">
     <span class="section-num">00</span>
     <span class="section-title">核心结论</span>
-    <span class="section-meta">综合评分 {{TOTAL_SCORE}} / 10.00</span>
+    <span class="section-meta">研究分 {{RESEARCH_SCORE}} ｜ 时机分 {{TIMING_SCORE}}</span>
   </div>
   <div class="section-body">
     {{CONCLUSION_HTML}}
@@ -189,11 +194,11 @@ td.center, th.center { text-align: center; }
   </div>
 </div>
 
-<!-- L2 市场时机 -->
+<!-- L2 估值水平 -->
 <div class="section">
   <div class="section-header">
     <span class="section-num">L2</span>
-    <span class="section-title">市场时机（{{L2_W}}%）— 现在是不是好价格</span>
+    <span class="section-title">估值水平（{{L2_W}}%）— 现在贵不贵</span>
     <span class="section-meta"><span class="badge badge-blue">L2 {{L2_SCORE}}</span></span>
   </div>
   <div class="section-body">
@@ -217,8 +222,8 @@ td.center, th.center { text-align: center; }
 <div class="section">
   <div class="section-header">
     <span class="section-num">L4</span>
-    <span class="section-title">风险评估（{{L4_W}}%）— 什么会让你亏钱（扣分制）</span>
-    <span class="section-meta"><span class="badge badge-red">L4 {{L4_SCORE}}</span></span>
+    <span class="section-title">风险评估（红/黄灯）— 什么会让你亏钱</span>
+    <span class="section-meta"><span class="badge badge-red">扣 {{YELLOW_TOTAL}} 分</span></span>
   </div>
   <div class="section-body">
     {{L4_HTML}}
@@ -279,15 +284,25 @@ td.center, th.center { text-align: center; }
 <div class="section">
   <div class="section-header">
     <span class="section-num">09</span>
-    <span class="section-title">评分汇总（14维度加权）</span>
+    <span class="section-title">研究层评分汇总（三层制）</span>
     <span class="section-meta">脚本计算·算术保证</span>
   </div>
   <div class="section-body">
+    {{RED_FLAG_HTML}}
     <div class="table-scroll">
     <table>
       <tr><th>层级</th><th>维度</th><th class="center">得分</th><th class="num">权重</th><th class="num">加权</th></tr>
       {{SCORE_TABLE_ROWS}}
-      <tr style="border-top:2px solid #dde3ea;"><td colspan="2"><strong>综合得分</strong></td><td class="center"><span class="badge {{TOTAL_BADGE_CLASS}} badge-lg">{{TOTAL_SCORE}}</span></td><td class="num">100%</td><td class="num" style="font-weight:700;">{{TOTAL_SCORE}}</td></tr>
+      <tr style="border-top:1px solid #dde3ea;"><td colspan="2"><strong>不考虑风险研究分</strong>（L1+L2+L3）</td><td class="center">—</td><td class="num">100%</td><td class="num" style="font-weight:700;">{{PRE_RISK_RESEARCH}}</td></tr>
+      <tr><td colspan="2"><strong>黄灯扣分</strong>（L4 风险双层）</td><td class="center">—</td><td class="num">—</td><td class="num" style="color:#c75b5b; font-weight:700;">−{{YELLOW_TOTAL}}</td></tr>
+      <tr style="border-top:2px solid #dde3ea;"><td colspan="2"><strong>研究分</strong>（最终）</td><td class="center"><span class="badge {{RESEARCH_BADGE_CLASS}} badge-lg">{{RESEARCH_SCORE}}</span></td><td class="num">—</td><td class="num" style="font-weight:700;">{{RESEARCH_SCORE}}</td></tr>
+    </table>
+    </div>
+    <div class="table-scroll" style="margin-top:16px;">
+    <table>
+      <tr><th>时机轨（不入研究分，仅供 11 决策）</th><th class="center">得分</th><th class="num">权重</th></tr>
+      {{TIMING_TABLE_ROWS}}
+      <tr style="border-top:2px solid #dde3ea;"><td><strong>时机分</strong></td><td class="center"><span class="badge {{TIMING_BADGE_CLASS}} badge-lg">{{TIMING_SCORE}}</span></td><td class="num">100%</td></tr>
     </table>
     </div>
   </div>
@@ -305,11 +320,12 @@ td.center, th.center { text-align: center; }
   </div>
 </div>
 
-<!-- 11 仓位映射 -->
+<!-- 11 仓位与时机决策 -->
 <div class="section">
   <div class="section-header">
     <span class="section-num">11</span>
-    <span class="section-title">仓位映射</span>
+    <span class="section-title">仓位与时机决策</span>
+    <span class="section-meta">研究分 {{RESEARCH_SCORE}} ｜ 时机分 {{TIMING_SCORE}}</span>
   </div>
   <div class="section-body">
     {{POSITION_HTML}}

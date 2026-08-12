@@ -92,16 +92,15 @@ reference report.
 
 | Element | Font | Size | Weight |
 |---------|------|------|--------|
-| 汉字 | `"STKaiti", "KaiTi"`（华文楷体） | 14px body | 400 |
-| 英文/数字 | `"Times New Roman"` | same | 400/700 |
-| 统一 font stack | `"Times New Roman", "STKaiti", "KaiTi", serif` | — | Times 无中文字形，汉字自动落到楷体 |
-| H1 | 同上 | 24px | 700 |
+| 统一 font stack | `-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`（系统无衬线栈） | 14px body | 400 |
+| 说明 | 数据密集报告不用衬线/楷体正文（楷体小字号可读性差、数字非等宽）；数字列依赖 `font-variant-numeric: tabular-nums` | — | — |
+| H1 | 同上 | 26px | 700 |
 | Section title | 同上 | 15px | 600 |
 | 指标卡大数字 | 同上 | 24px | 700 |
 | Meta/Source | 同上 | 11-12px | 400, muted |
 
 **Number convention**: 金额统一用 ¥/亿 或 ¥/万——同一张表内不混用单位。
-Times New Roman 非等宽字体，数字列右对齐即可，不追求小数点严格对齐。
+数字列右对齐 + tabular-nums，不追求小数点严格对齐。
 
 #### Layout Structure
 
@@ -125,7 +124,8 @@ Times New Roman 非等宽字体，数字列右对齐即可，不追求小数点�
 - `.layer-summary` — 层小结（`#f0f5fa` 底 + 钢蓝左竖线）
 - `.info-card` / `.warning-card` / `.danger-card` — 蓝/橙/红三种提示卡（左竖线）
 - `.conclusion-box` — 结论框（`#f8fafc` 底 + 边框）
-- `.matrix-table` — 估值-质量矩阵（HTML表格实现，表头/表体一律居中，`.target` 格钢蓝高亮）
+- `.matrix-table` — 估值-质量矩阵**表格兜底**（优先用 `peers_plot` 字段让脚本生成散点图；表格仅在数据不足时手写，表头/表体一律居中，`.target` 格钢蓝高亮）
+- `.plot-wrap` — 脚本生成图形（05 目标价走廊 / 07 估值-质量散点）的容器，模型从不手写 SVG
 - `.flag-ok` / `.flag-bad` / `.flag-na` — 红旗三态色（✓绿 / ✗红 / △橙），1D 红旗清单行首用
 - `.freeze-first` — 宽表首列冻结（≥5 列数据表如 07 同业指标表，横向滚动时首列常驻）
 - `.source` — 数据来源标注（表格正下方，11px 斜体灰字）
@@ -249,8 +249,7 @@ defined by where these 1-2 key variables go, not by arbitrary profit ranges.
 
 ```bash
 python "<skill目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[peer3],[peer4]
-# 例: python "<skill目录>\scripts\em_fetch.py" 600989 --peers=600309,002001
-#      <skill目录> = 本 SKILL.md 所在目录（技能安装位置，因人而异）
+# 例: python "C:\Users\rexji\.agents\skills\stock-deep-analysis\scripts\em_fetch.py" 600989 --peers=600309,002001
 ```
 
 **妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp-stdio__mx_*` 在工具列表，脚本盲区/增强项）：
@@ -697,24 +696,23 @@ or losing competitive position relative to peers?
 
 #### 4.3 Valuation-Quality Matrix
 
-Plot peers on a conceptual ROE (quality) vs PE (valuation) matrix:
+每家同业的 ROE 与 PE 都是精确值（em_fetch 已输出），不要只归入九宫格——
+在 fill JSON 顶层填 `peers_plot` 字段，由渲染脚本生成**直角坐标系散点图**
+（横轴 PE、纵轴 ROE，3×3 分带背景 + 每家公司精确点位 + 目标公司高亮）：
 
-```
-高 ROE ↑
-      │  ★ [Peer A]          ★ [Target Company]
-      │  高ROE·低PE           高ROE·高PE
-      │  ← 潜在低估            ← 合理/偏贵
-      │
-      │  ★ [Peer B]          ★ [Peer C]
-      │  低ROE·低PE           低ROE·高PE
-      │  ← 价值陷阱?           ← 最差组合
-      │
-      └──────────────────────────────────→ 高 PE
+```json
+"peers_plot": {"points": [
+  {"name": "目标公司", "roe": 24.7, "pe": 21.3, "target": true},
+  {"name": "同业A", "roe": 15.1, "pe": 29.8}
+], "pe_bands": [15, 25], "roe_bands": [8, 15]}
 ```
 
-Describe the matrix in text form (no need to generate an actual image — use ASCII art or
-descriptive text). Identify: who sits in the "high quality + low valuation" sweet spot?
-Where does the target company sit relative to the fair-value line?
+分带阈值可按行业调整（`pe_bands` / `roe_bands` 可省，默认 PE 15/25、ROE 8/15）。
+仅当同业数据不足以给出精确 ROE/PE 时，才退化为在 `peers_html` 里手写 `.matrix-table` 九宫格。
+
+分析要点不变：谁落在"高质量 + 低估值"甜区？目标公司相对公允价值线偏左还是偏右？
+散点图能看出象限内的细分位置（如同样"高ROE·中PE"，贴左缘与贴右缘的性价比完全不同），
+结论里要点名这种位置差异。
 
 ---
 
@@ -867,6 +865,8 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
    时机分（筹码67+技术33）、徽章色全自动、占位符替换、
    残留校验（发现 `{{}}` 或 `【】` 残留即报错）、按规范自动命名输出
    `{公司名}_{代码}_{研究分}_{日期}.html`。
+   **渲染后检查警告**：若输出含 `⚠️ fill JSON 缺图形字段`（scenarios / peers_plot），
+   必须补上字段重新渲染后再交付——缺失时 05 目标价走廊 / 07 散点图会被静默跳过。
 3. **完成后**：删除 `_fill_[代码].json` 临时文件，告知用户报告路径和研究分+时机分。
 
 **为什么不用 Edit 写 HTML**：每次 Edit 都要重发整个会话上下文（实证：国电南瑞 18 次
@@ -938,18 +938,27 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 - **L2 估值**：估值表 + PE/PB 分位（em_fetch 输出）+ `.source`；得分注明"由 05 三情景中枢与分位推导"
 - **L3 开头**：预测前提用 `<ul>` 列 2-3 条已确认事实
 - **L4 红/黄灯双层**：先列红灯 checklist（逐项"未触发 ✓ / 命中 🔴"），再列黄灯扣分表
-  （四类 a/b/c/d，每类用 `.deduction` 逐条列扣分项）；`.verdict` 写明"未命中红灯；
+  （四类**固定 a→b→c→d 顺序**，乱序会触发渲染器告警；每类用 `.deduction` 逐条列扣分项，
+  多条之间**不要加 `<br>`**）；`.verdict` 写明"未命中红灯；
   黄灯共扣 X.X 分（命中 N 项）"；**L4 末尾加 Pre-mortem 卡片**（`.danger-card`）：
   "假设两年后亏损30%，最可能的故事是……" 3-5 句空头叙事
 - 每层末尾 `.layer-summary`：1-2 句层小结
 
 ### 9. 05 估值三情景（`.section`）
 
+本章是全文亮点，视觉锚点 + 逻辑链缺一不可：
+
+- **目标价走廊（视觉锚点，脚本生成）**：fill JSON 顶层填 `scenarios` 字段
+  （`[{"key":"pess","low":294,"high":331}, {"key":"base",...}, {"key":"opt",...}]`），
+  脚本在章节顶部自动生成三情景竖向柱图——x 轴=悲观/基础/乐观三列（与三情景表列方向一致），
+  y 轴=价格，柱体=目标价区间、横刻=中枢、钢蓝水平虚线=现价、柱顶=中枢值与较现价涨跌幅
+  （全部脚本计算，模型不手算）
 - 开头标注分型对应的估值方法（如"本报告按周期股框架，采用 PE 历史时段匹配法"）
-- **三情景对比表**：悲观（`.scenario-pess`）/ 基础（`.scenario-base`）/ 乐观（`.scenario-opt`），
+- **三情景对比表**（`table class="scenario-table"`，首列指标名不换行）：
+  悲观（`.scenario-pess`）/ 基础（`.scenario-base`）/ 乐观（`.scenario-opt`），
   **统一纵向列排列（指标在行、情景在列，参照中国移动报告）**——首列指标名，
   后续三列悲观/基础/乐观；行含：时间维度、触发条件、关键变量、净利、EPS、PE、目标市值、目标价、较现价；
-  数值行 `<td class="num">`、纯文字行不加类、情景列表头 `th class="center"`（骨架见 fill-schema）
+  **数据格一律不加类，对齐由渲染器统一**（数字/短值右、长文左；骨架见 fill-schema）
 - `.info-card`：**PE校准逻辑**——历史时段匹配法推导过程（参照时段、当时PE、增速、体量折扣）；
   非周期股替换为对应方法说明（PB-ROE / rNPV / PEG / 正常化利润PE）
 - **三指标卡条**（`.metric-row`，3 张 `.metric-card`）：
@@ -970,7 +979,10 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 - **当前指标表**：目标公司列加粗 + 钢蓝色（`style="color:#4a6fa5;font-weight:700;"`），4-5 家可比公司 + `.source`；
   **纯文字行（如"核心业务"）单元格不加 num/center 类**——渲染器会把 num 列中的纯文字格自动纠偏为左对齐
 - **3年趋势表**：ROE/毛利率/负债率变化方向（↑绿 ↓红）+ `.source`
-- **估值-质量矩阵**：`.matrix-table`，3×3 网格（ROE 高中低 × PE 低中高），目标公司格用 `.target` 高亮
+- **估值-质量散点图**：填顶层 `peers_plot` 字段（格式见 §4.3），脚本在章节顶部生成
+  直角坐标系散点图（ROE × PE 精确点位，3×3 分带，目标公司钢蓝高亮）；
+  **填了 peers_plot 就不要再写 matrix-table 九宫格**（两图并存冗余，渲染器检测到会直接删除并告警）；
+  数据不足时才允许手写 `.matrix-table` 兜底（目标公司格用 `.target` 高亮）
 - `.conclusion-box`：3-5 条同业对比结论（① ② ③ 编号列表）
 
 ### 12. 08 周期规律（`.section`，条件触发）
@@ -986,8 +998,8 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
   得分列一律 badge 徽章
 - **不考虑风险研究分行**（L1+L2+L3 加权小计）→ **黄灯扣分行**（−X.X，列明命中项）→
   **研究分行**（最终，`style="border-top:2px solid #dde3ea;"` + badge-lg）
-- **时机轨表**（独立小表）：筹码面（67%）/ 技术面（33%）→ 时机分（badge-lg），
-  注明"不入研究分，仅供 11 仓位与时机决策"
+- **本章只放研究层**：时机轨表不在此重复（时机分已在 Hero 双分、00 meta、11 时机判定小表呈现；
+  研究分是"质"，时机分是"节奏"，混在一章会误导读者以为时机分入研究分）
 - 若命中红灯：表首加 `.danger-card` "🔴 红灯回避"，研究分仍列示但标注"仅作研究参考"
 
 ### 14. 10 跟踪仪表盘（`.section`）

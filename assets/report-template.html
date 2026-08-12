@@ -12,11 +12,17 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: "Times New Roman", "STKaiti", "KaiTi", serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 14px; line-height: 1.7; color: #2c3e50;
   background: #eef1f5; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
-.mono { font-family: "Times New Roman", serif; }
+.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.up { color: #6ba86b; }
+.down { color: #c75b5b; }
+/* 脚本生成图形（目标价走廊 / 估值-质量散点）的容器 */
+.plot-wrap { margin: 4px 0 6px; border: 1px solid #eef1f5; border-radius: 6px; background: #fbfcfd; padding: 12px 10px 6px; }
+/* SVG 按 1000px 宽度设计，超过即居中停放，避免文字随容器放大而大于正文 */
+.plot-wrap svg { max-width: 1000px; margin: 0 auto; }
 .topbar { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 24px; margin-bottom: 16px; }
 .topbar-left { display: flex; align-items: center; gap: 12px; }
 .topbar-icon { width: 36px; height: 36px; background: #4a6fa5; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 15px; }
@@ -25,10 +31,34 @@ body {
 .topbar-right { display: flex; align-items: center; gap: 16px; }
 .topbar-tag { font-size: 11px; color: #8899a6; border: 1px solid #dde3ea; border-radius: 4px; padding: 3px 8px; }
 .topbar-tag.active { background: #4a6fa5; color: #fff; border-color: #4a6fa5; }
-.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 28px 32px; margin-bottom: 16px; }
-.hero h1 { font-size: 24px; font-weight: 700; color: #1a2b4a; margin: 0 0 6px; }
-.hero .subtitle { font-size: 13px; color: #8899a6; margin-bottom: 20px; }
-.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 24px; }
+.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 26px 32px 22px; margin-bottom: 16px; }
+.hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 28px; margin-bottom: 18px; }
+.hero-id { min-width: 0; }
+.hero h1 { font-size: 26px; font-weight: 700; color: #1a2b4a; margin: 0 0 4px; }
+.hero .subtitle { font-size: 12.5px; color: #8899a6; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 18px; max-width: 75ch; }
+/* Hero 双分（视觉焦点）：研究分=钢蓝主色（框架结论），时机分按值取信号色 */
+.hero-scores { display: flex; border: 1px solid #dde3ea; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.hero-score { padding: 14px 24px; text-align: center; min-width: 118px; }
+.hero-score.research { background: #f0f5fa; }
+.hero-score.timing { background: #fff; border-left: 1px solid #dde3ea; }
+.hero-score .s-label { font-size: 11px; color: #8899a6; letter-spacing: 1.5px; margin-bottom: 2px; }
+.hero-score .s-value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.hero-score.research .s-value { color: #4a6fa5; }
+.hero-score .s-value.score-good { color: #6ba86b; }
+.hero-score .s-value.score-mid { color: #c08a2e; }
+.hero-score .s-value.score-bad { color: #c75b5b; }
+.hero-score .s-sub { font-size: 11px; color: #8899a6; margin-top: 3px; }
+/* Hero 数据条（次要信息去卡片化）：label/value/sub 三层竖排，均分横排 */
+.hero-data-strip { display: flex; border-top: 1px solid #eef1f5; padding-top: 14px; }
+.hero-data-strip .d-item { flex: 1; min-width: 0; }
+.hero-data-strip .d-item + .d-item { border-left: 1px solid #eef1f5; padding-left: 18px; margin-left: 18px; }
+.hero-data-strip .d-label { font-size: 11px; color: #8899a6; margin-bottom: 3px; }
+.hero-data-strip .d-value { font-size: 17px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
+.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #8899a6; }
+.hero-data-strip .d-sub { font-size: 11px; color: #8899a6; margin-top: 3px; }
+.hero-data-strip .d-sub .up { color: #6ba86b; }
+.hero-data-strip .d-sub .down { color: #c75b5b; }
 .metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
 .metric-card { flex: 1; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 16px 18px; }
 .metric-card .label { font-size: 11px; color: #8899a6; margin-bottom: 4px; }
@@ -70,6 +100,10 @@ td.center, th.center { text-align: center; }
 .danger-card { background: #fdf0f0; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .info-card { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .deduction { color: #c75b5b; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
+/* .deduction 是块级元素，模型若在两条之间塞 <br> 会多出空行——直接隐藏 */
+.deduction + br { display: none; }
+/* 05 三情景表：首列指标名短（时间维度/触发条件/目标价…），不允许折行 */
+.scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
 .scenario-pess { color: #c75b5b; }
 .scenario-base { color: #c08a2e; }
 .scenario-opt { color: #6ba86b; }
@@ -91,6 +125,13 @@ td.center, th.center { text-align: center; }
   .metric-row { flex-wrap: wrap; }
   .metric-card { min-width: calc(50% - 6px); }
   .hero { padding: 20px; }
+  .hero-top { flex-direction: column; gap: 14px; }
+  .hero-scores { align-self: stretch; }
+  .hero-score { flex: 1; min-width: 0; padding: 12px 14px; }
+  .hero-score .s-value { font-size: 26px; }
+  .hero-data-strip { flex-wrap: wrap; }
+  .hero-data-strip .d-item { flex: 1 1 calc(50% - 12px); margin-top: 10px; }
+  .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
   .section-body { padding: 14px 16px; }
 }
 @media print {
@@ -120,41 +161,47 @@ td.center, th.center { text-align: center; }
 
 <!-- Hero -->
 <div class="hero">
-  <h1>{{COMPANY}}（{{CODE}}）</h1>
-  <div class="subtitle">{{SUBTITLE}}｜报告日期：{{DATE}}</div>
+  <div class="hero-top">
+    <div class="hero-id">
+      <h1>{{COMPANY}}（{{CODE}}）</h1>
+      <div class="subtitle">{{SUBTITLE}}｜报告日期：{{DATE}}</div>
+    </div>
+    <div class="hero-scores">
+      <div class="hero-score research">
+        <div class="s-label">研究分</div>
+        <div class="s-value">{{RESEARCH_SCORE}}</div>
+        <div class="s-sub">不考虑风险 {{PRE_RISK_RESEARCH}} − 黄灯 {{YELLOW_TOTAL}}</div>
+      </div>
+      <div class="hero-score timing">
+        <div class="s-label">时机分</div>
+        <div class="s-value {{TIMING_VALUE_CLASS}}">{{TIMING_SCORE}}</div>
+        <div class="s-sub">筹码×67% / 技术×33%</div>
+      </div>
+    </div>
+  </div>
   <div class="thesis">
     {{THESIS_HTML}}
   </div>
-  <div class="metric-row">
-    <div class="metric-card">
-      <div class="label">当前股价（{{DATE}} 收盘）</div>
-      <div class="value">{{PRICE}}<span class="unit"> 元</span></div>
-      <div class="sub">{{PRICE_SUB_HTML}}</div>
+  <div class="hero-data-strip">
+    <div class="d-item">
+      <div class="d-label">当前股价（{{DATE}} 收盘）</div>
+      <div class="d-value">{{PRICE}}<span class="unit"> 元</span></div>
+      <div class="d-sub">{{PRICE_SUB_HTML}}</div>
     </div>
-    <div class="metric-card">
-      <div class="label">总市值</div>
-      <div class="value">{{MCAP}}<span class="unit"> 亿</span></div>
-      <div class="sub">{{MCAP_SUB}}</div>
+    <div class="d-item">
+      <div class="d-label">总市值</div>
+      <div class="d-value">{{MCAP}}<span class="unit"> 亿</span></div>
+      <div class="d-sub">{{MCAP_SUB}}</div>
     </div>
-    <div class="metric-card">
-      <div class="label">PE(TTM)</div>
-      <div class="value">{{PE_TTM}}<span class="unit"> 倍</span></div>
-      <div class="sub">{{PE_SUB}}</div>
+    <div class="d-item">
+      <div class="d-label">PE(TTM)</div>
+      <div class="d-value">{{PE_TTM}}<span class="unit"> 倍</span></div>
+      <div class="d-sub">{{PE_SUB}}</div>
     </div>
-    <div class="metric-card" style="border-color:#4a6fa5; border-width:2px;">
-      <div class="label">研究分</div>
-      <div class="value"><span class="badge {{RESEARCH_BADGE_CLASS}} badge-lg">{{RESEARCH_SCORE}}</span></div>
-      <div class="sub">不考虑风险 {{PRE_RISK_RESEARCH}} − 黄灯 {{YELLOW_TOTAL}}</div>
-    </div>
-    <div class="metric-card">
-      <div class="label">时机分</div>
-      <div class="value"><span class="badge {{TIMING_BADGE_CLASS}} badge-lg">{{TIMING_SCORE}}</span></div>
-      <div class="sub">筹码×67% / 技术×33%</div>
-    </div>
-    <div class="metric-card">
-      <div class="label">目标价区间（{{HORIZON}}）</div>
-      <div class="value">{{TARGET_RANGE}}<span class="unit"> 元</span></div>
-      <div class="sub">{{TARGET_SUB_HTML}}</div>
+    <div class="d-item">
+      <div class="d-label">目标价区间（{{HORIZON}}）</div>
+      <div class="d-value">{{TARGET_RANGE}}<span class="unit"> 元</span></div>
+      <div class="d-sub">{{TARGET_SUB_HTML}}</div>
     </div>
   </div>
 </div>
@@ -238,6 +285,9 @@ td.center, th.center { text-align: center; }
     <span class="section-meta">{{STOCK_TYPE}}</span>
   </div>
   <div class="section-body">
+    <!--IF:SCENARIO_SPECTRUM_HTML-->
+    {{SCENARIO_SPECTRUM_HTML}}
+    <!--ENDIF-->
     {{VALUATION_HTML}}
   </div>
 </div>
@@ -262,6 +312,9 @@ td.center, th.center { text-align: center; }
     <span class="section-meta">{{PEERS_META}}</span>
   </div>
   <div class="section-body">
+    <!--IF:PEERS_PLOT_HTML-->
+    {{PEERS_PLOT_HTML}}
+    <!--ENDIF-->
     {{PEERS_HTML}}
   </div>
 </div>
@@ -296,13 +349,6 @@ td.center, th.center { text-align: center; }
       <tr style="border-top:1px solid #dde3ea;"><td colspan="2"><strong>不考虑风险研究分</strong>（L1+L2+L3）</td><td class="center">—</td><td class="num">100%</td><td class="num" style="font-weight:700;">{{PRE_RISK_RESEARCH}}</td></tr>
       <tr><td colspan="2"><strong>黄灯扣分</strong>（L4 风险双层）</td><td class="center">—</td><td class="num">—</td><td class="num" style="color:#c75b5b; font-weight:700;">−{{YELLOW_TOTAL}}</td></tr>
       <tr style="border-top:2px solid #dde3ea;"><td colspan="2"><strong>研究分</strong>（最终）</td><td class="center"><span class="badge {{RESEARCH_BADGE_CLASS}} badge-lg">{{RESEARCH_SCORE}}</span></td><td class="num">—</td><td class="num" style="font-weight:700;">{{RESEARCH_SCORE}}</td></tr>
-    </table>
-    </div>
-    <div class="table-scroll" style="margin-top:16px;">
-    <table>
-      <tr><th>时机轨（不入研究分，仅供 11 决策）</th><th class="center">得分</th><th class="num">权重</th></tr>
-      {{TIMING_TABLE_ROWS}}
-      <tr style="border-top:2px solid #dde3ea;"><td><strong>时机分</strong></td><td class="center"><span class="badge {{TIMING_BADGE_CLASS}} badge-lg">{{TIMING_SCORE}}</span></td><td class="num">100%</td></tr>
     </table>
     </div>
   </div>

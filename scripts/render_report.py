@@ -79,13 +79,15 @@ def _align_class(attrs: str):
 
 
 def _set_th_align(attrs: str, align: str) -> str:
-    """给 th 属性串设置对齐类（幂等：已有正确类则原样返回）。"""
+    """给 th 属性串设置对齐类（幂等：已有正确类则原样返回；已有另一类则替换而非叠加，
+    避免 class="center num" 双类共存导致对齐结果取决于 CSS 声明顺序）。"""
     cls = _classes_of(attrs)
-    if align in cls:
+    if align in cls and not (cls & {"num", "center"} - {align}):
         return attrs
     m = _CLASS_ATTR.search(attrs or "")
     if m:
-        new_cls = (m.group(1).strip() + " " + align).strip()
+        kept = [c for c in m.group(1).split() if c not in ("num", "center")]
+        new_cls = " ".join(kept + [align])
         return (attrs[:m.start()] + f'class="{new_cls}"' + attrs[m.end():])
     return (attrs.rstrip() + f' class="{align}"')
 
@@ -110,12 +112,23 @@ def _is_plain_text(s: str) -> bool:
     t = re.sub(r"<[^>]+>", "", s or "").strip()
     if not t:
         return False
-    if re.search(r"[★☆◆●■▲▶▼↑↓→≈∞×÷±+]", t):  # 含星级/箭头/数学符号 → 保留原类
+    if re.search(r"[★☆◆●■▲▶▼↑↓→≈∞×÷±]", t):  # 含星级/箭头/数学符号 → 保留原类
+        # 注："+" 不在此列——"+30%" 类含数字会被下方数字检查拦截，
+        # 而"动力+储能电池"这类纯文字描述里的 + 不应阻止纠偏
         return False
     t2 = re.sub(r"[（(][^）)]*[）)]", "", t)  # 剥离括号及其内容（占比/说明性数字）
     if re.search(r"\d", t2):
         return False
     return True
+
+
+def _is_prose_cell(s: str) -> bool:
+    """num 列中应左对齐的文字格：含句读符号，或超 4 字的纯文字。
+    ≤4 字短标记（"基础""偏多"）随列右对齐，长数值串（"13,600-15,300亿"）因含数字天然右对齐。"""
+    t = re.sub(r"<[^>]+>", "", s or "").strip()
+    if re.search(r"[，。；、：]", t):
+        return True
+    return len(t) > 4 and _is_plain_text(s)
 
 
 def fix_table_alignment(html: str) -> str:
@@ -175,7 +188,7 @@ def fix_table_alignment(html: str) -> str:
         for trm in _TR.finditer(tbl):
             tr_parts.append(tbl[last:trm.start()])
             row = trm.group(0)
-            # 逐单元格重建（所有行都走，td 纯文字纠偏对无 th 的数据行同样生效；
+            # 逐单元格重建（所有行都走，td 纠偏对无 th 的数据行同样生效；
             # 无改动需求时重建结果=原文，无损）
             cells = list(_CELL.finditer(row))
             rebuilt = []
@@ -195,12 +208,15 @@ def fix_table_alignment(html: str) -> str:
                     rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
                     if rs and int(rs.group(1)) > 1:
                         rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
-                    # td 纠偏：被投票为 num 的列中，纯文字格剔除误加的 num/center → 左对齐
+                    # td 对齐统一（num 列）：长文格（含句读 / 超 4 字纯文字）→ 去类左对齐；
+                    # 数字、含数字短值、≤4 字短标记（"基础""12个月"）→ 统一 num 右对齐
                     if colspan == 1 and decided.get(col) == "num":
                         inner_end = cells[i + 1].start() if i + 1 < len(cells) else len(row)
                         inner = row[cm.end():inner_end]
-                        if _is_plain_text(inner):
-                            attrs = _strip_th_align(attrs)  # 剔除 num/center
+                        if _is_prose_cell(inner):
+                            attrs = _strip_th_align(attrs)  # 剔除 num/center → 左
+                        else:
+                            attrs = _set_th_align(attrs, "num")  # 随列右对齐
                 rebuilt.append(f"<{tag}{attrs}>")
                 last_in_row = cm.end()
                 col += colspan
@@ -215,10 +231,64 @@ def fix_table_alignment(html: str) -> str:
     return "".join(out)
 
 
+_SCENARIO_ROW_LABELS = ("悲观", "基础", "乐观")
+
+
+def _transpose_scenario_table(html: str) -> str:
+    """05 三情景表方向兜底：检测到旧模式（表体前 3+ 行首列恰为 悲观/基础/乐观，
+    表头首格为"情景"或空、各行格数一致）→ 自动转置为纵向列排列
+    （指标在行、情景在列，参照中国移动报告）并向 stderr 告警。
+    已正确的表（首列为指标名）不命中，原样返回。"""
+    for tm in re.finditer(r'<table\b[^>]*>.*?</table>', html, flags=re.I | re.S):
+        tbl = tm.group(0)
+        rows = list(_TR.finditer(tbl))
+        if len(rows) < 4:
+            continue
+        parsed = []
+        for rm in rows:
+            matches = list(_CELL.finditer(rm.group(1)))
+            segs = []
+            for i, cm in enumerate(matches):
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(rm.group(1))
+                inner = re.sub(r"</t[hd]>\s*$", "", rm.group(1)[cm.end():end], flags=re.I)
+                segs.append({"tag": cm.group(1).lower(), "attrs": cm.group(2), "inner": inner})
+            parsed.append(segs)
+        header, body = parsed[0], parsed[1:]
+        ncols = len(header)
+        if ncols < 3 or any(len(r) != ncols for r in parsed):
+            continue
+        corner = re.sub(r"<[^>]+>", "", header[0]["inner"]).strip()
+        if corner not in ("", "情景"):
+            continue
+        labels = []
+        for r in body[:3]:
+            t = re.sub(r"<[^>]+>", "", r[0]["inner"]).strip()
+            t = t[:-2] if t.endswith("情景") else t
+            if t not in _SCENARIO_ROW_LABELS:
+                break
+            labels.append(t)
+        else:
+            if len(body) >= 3 and len(labels) == 3:
+                # 命中旧模式：转置（单元格 attrs/inner 原样搬运，对齐类交给 fix_table_alignment）
+                new_head = "<tr><th>指标</th>" + "".join(
+                    f'<th class="center">{lab}情景</th>' for lab in labels) + "</tr>"
+                new_rows = []
+                for j in range(1, ncols):
+                    row_name = re.sub(r"<[^>]+>", "", header[j]["inner"]).strip()
+                    cells = "".join(f'<td{r[j]["attrs"]}>{r[j]["inner"]}</td>' for r in body)
+                    new_rows.append(f"<tr><td>{row_name}</td>{cells}</tr>")
+                new_tbl = ('<table class="scenario-table"><thead>' + new_head + "</thead><tbody>"
+                           + "".join(new_rows) + "</tbody></table>")
+                print("⚠️ 05 三情景表为旧方向（情景在行），已自动转置为纵向列排列；"
+                      "下次请按 fill-schema 骨架直接写对（指标在行、情景在列）", file=sys.stderr)
+                return html[:tm.start()] + new_tbl + html[tm.end():]
+    return html
+
+
 def compute_scores(fill: dict):
     """v2.0 三层研究层 + 黄灯扣分 + 时机分。
     返回 dict：rows_html / layer_scores / pre_risk_research / yellow_total /
-    research（最终研究分）/ timing_rows_html / timing（时机分）/ red_flag。
+    research（最终研究分）/ timing（时机分）/ red_flag。
     校验：研究层权重和=100；时机层权重和=100。"""
     scores = fill.get("scores") or {}
     w_override = fill.get("weights") or {}
@@ -260,31 +330,22 @@ def compute_scores(fill: dict):
     yellow_total = round(sum(float(y.get("points", 0)) for y in yellow), 2)
     research = round(pre_risk - yellow_total, 2)  # 最终研究分
 
-    # 时机分（2C 筹码 67% + 2B 技术 33%）
+    # 时机分（2C 筹码 67% + 2B 技术 33%；只算分值，时机轨表在 11 由模型呈现，09 不再重复）
     t_scores = fill.get("timing_scores") or {}
     t_weights = {k: float((fill.get("timing_weights") or {}).get(k, dw)) for k, _n, dw in TIMING_DIMS}
     tw_sum = sum(t_weights.values())
     if abs(tw_sum - 100.0) > 0.01:
         raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")
     timing = None
-    timing_rows = []
     if t_scores:
         timing = sum(float(t_scores.get(k, 0)) * t_weights[k] for k, _n, _w in TIMING_DIMS) / 100.0
-        for k, name, _dw in TIMING_DIMS:
-            s = float(t_scores.get(k, 0))
-            w = t_weights[k]
-            timing_rows.append(
-                f'<tr><td>{name}</td>'
-                f'<td class="center score-cell"><span class="badge {badge_class(s)}">{s:.1f}</span></td>'
-                f'<td class="num">{w:.0f}%</td></tr>'
-            )
 
     red_flag = (fill.get("red_flag") or "").strip()
     return {
         "rows_html": "\n".join(rows), "layer_scores": layer_scores,
         "layer_weights": layer_weights, "pre_risk_research": pre_risk,
         "yellow_total": yellow_total, "research": research,
-        "timing_rows_html": "\n".join(timing_rows), "timing": timing,
+        "timing": timing,
         "red_flag": red_flag,
     }
 
@@ -317,11 +378,225 @@ def _load_fill(fill_path: str) -> dict:
         return fill
 
 
+# ---------- 图形组件（脚本生成 SVG：模型只填数据，坐标/百分比一律脚本计算） ----------
+
+def _num(v):
+    """"390.40" / "18,062.5" / 390.4 → float；取首个数字串，失败返回 None"""
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.search(r"-?\d[\d,]*\.?\d*", str(v))
+    return float(m.group(0).replace(",", "")) if m else None
+
+
+def _fmt(v):
+    """390.4 → "390.4"；294.0 → "294" """
+    return f"{v:g}"
+
+
+def _esc(s) -> str:
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+_SCENARIO_COLORS = {"pess": "#c75b5b", "base": "#c08a2e", "opt": "#6ba86b"}
+_SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
+
+
+def build_scenario_spectrum(fill: dict) -> str:
+    """05 目标价走廊：竖向柱版——x 轴=悲观/基础/乐观（与三情景表列方向一致），y 轴=价格，
+    区间竖条 + 中枢横刻 + 现价水平虚线 + 中枢较现价涨跌幅（全部脚本计算）。
+    输入 fill["scenarios"] = [{"key":"pess|base|opt","label":"悲观","low":294,"high":331}, ...]，
+    现价取 fill["price"]。缺数据 → 返回空串（模板条件块整块删除）。"""
+    price = _num(fill.get("price"))
+    cols = []
+    for s in fill.get("scenarios") or []:
+        lo, hi = _num(s.get("low")), _num(s.get("high"))
+        if lo is None or hi is None or hi <= lo:
+            continue
+        key = str(s.get("key") or "").lower()
+        cols.append({"key": key,
+                     "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
+                     "low": lo, "high": hi, "mid": (lo + hi) / 2,
+                     "color": _SCENARIO_COLORS.get(key, "#8899a6")})
+    if not cols or not price:
+        return ""
+    order = {"pess": 0, "base": 1, "opt": 2}
+    cols.sort(key=lambda r: order.get(r["key"], 1))  # 悲观/基础/乐观 从左到右
+
+    W, H, L, R, T, B = 1000, 400, 64, 24, 46, 64
+    lo_d = min([c["low"] for c in cols] + [price])
+    hi_d = max([c["high"] for c in cols] + [price])
+    pad = (hi_d - lo_d) * 0.08 or 1
+    lo_d -= pad
+    hi_d += pad
+
+    def Y(v):
+        return T + (hi_d - v) / (hi_d - lo_d) * (H - T - B)
+
+    n = len(cols)
+    plot_w = W - L - R
+    col_w = plot_w / n
+    bar_w = min(80, col_w * 0.42)
+
+    parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="目标价走廊" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    # 价格轴（左侧刻度 + 横向浅网格线）
+    for i in range(5):
+        v = lo_d + (hi_d - lo_d) * i / 4
+        gy = Y(v)
+        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="#eef1f5" stroke-width="1"/>')
+        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v))}</text>')
+    # 现价水平虚线 + 右端标签
+    py = Y(price)
+    parts.append(f'<line x1="{L}" y1="{py:.1f}" x2="{W - R}" y2="{py:.1f}" '
+                 f'stroke="#4a6fa5" stroke-width="1.5" stroke-dasharray="5 4"/>')
+    parts.append(f'<text x="{W - R}" y="{py - 8:.1f}" text-anchor="end" font-size="12" '
+                 f'font-weight="700" fill="#4a6fa5">现价 {_fmt(price)}</text>')
+    # 情景柱
+    for i, c in enumerate(cols):
+        cx = L + col_w * (i + 0.5)
+        y_hi, y_lo, y_mid = Y(c["high"]), Y(c["low"]), Y(c["mid"])
+        pct = c["mid"] / price - 1
+        pct_color = "#6ba86b" if pct >= 0 else "#c75b5b"
+        parts.append(f'<rect x="{cx - bar_w / 2:.1f}" y="{y_hi:.1f}" width="{bar_w:.1f}" height="{y_lo - y_hi:.1f}" rx="8" '
+                     f'fill="{c["color"]}" fill-opacity="0.14" stroke="{c["color"]}" stroke-width="1.5"/>')
+        parts.append(f'<line x1="{cx - bar_w / 2 - 5:.1f}" y1="{y_mid:.1f}" x2="{cx + bar_w / 2 + 5:.1f}" y2="{y_mid:.1f}" '
+                     f'stroke="{c["color"]}" stroke-width="2.5"/>')
+        parts.append(f'<text x="{cx:.1f}" y="{y_hi - 24:.1f}" text-anchor="middle" font-size="13" '
+                     f'font-weight="700" fill="{c["color"]}">{_fmt(c["mid"])}</text>')
+        parts.append(f'<text x="{cx:.1f}" y="{y_hi - 9:.1f}" text-anchor="middle" font-size="11.5" '
+                     f'font-weight="700" fill="{pct_color}">{pct * 100:+.1f}%</text>')
+        parts.append(f'<text x="{cx:.1f}" y="{H - B + 20}" text-anchor="middle" font-size="13" '
+                     f'font-weight="600" fill="#2c3e50">{_esc(c["label"])}</text>')
+        parts.append(f'<text x="{cx:.1f}" y="{H - B + 37}" text-anchor="middle" font-size="11" '
+                     f'fill="#8899a6">{_fmt(c["low"])} - {_fmt(c["high"])}</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">目标价走廊（脚本按 scenarios 字段生成）：竖条=情景目标价区间，'
+                 '横刻=区间中枢，虚线=现价；柱顶=中枢值与较现价涨跌幅</span>')
+    return "".join(parts)
+
+
+def build_peers_plot(fill: dict) -> str:
+    """07 估值-质量散点图：直角坐标系精确点位（x=PE, y=ROE），3×3 分带背景，
+    目标公司钢蓝大点 + 白色描边。输入 fill["peers_plot"]：
+    {"points":[{"name":"宁德时代","roe":24.7,"pe":21.3,"target":true}, ...],
+     "pe_bands":[15,25], "roe_bands":[8,15]}（bands 可省，数组形式亦可）。
+    缺数据 → 返回空串（peers_html 里的 matrix-table 兜底）。"""
+    pp = fill.get("peers_plot")
+    if not pp:
+        return ""
+    if isinstance(pp, list):
+        points, pe_bands, roe_bands = pp, [15.0, 25.0], [8.0, 15.0]
+    else:
+        points = pp.get("points") or []
+        pe_bands = pp.get("pe_bands") or [15.0, 25.0]
+        roe_bands = pp.get("roe_bands") or [8.0, 15.0]
+    pts = []
+    for p in points:
+        roe, pe = _num(p.get("roe")), _num(p.get("pe"))
+        if roe is None or pe is None:
+            continue
+        pts.append({"name": str(p.get("name") or "?"), "roe": roe, "pe": pe,
+                    "target": bool(p.get("target"))})
+    if len(pts) < 2:
+        return ""
+
+    W, H, L, R, T, B = 1000, 460, 64, 30, 34, 52
+    pe_lo = min([p["pe"] for p in pts] + pe_bands)
+    pe_hi = max([p["pe"] for p in pts] + pe_bands)
+    roe_lo = min([p["roe"] for p in pts] + roe_bands)
+    roe_hi = max([p["roe"] for p in pts] + roe_bands)
+    pe_pad = (pe_hi - pe_lo) * 0.10 or 1
+    roe_pad = (roe_hi - roe_lo) * 0.12 or 1
+    pe_lo -= pe_pad
+    pe_hi += pe_pad
+    roe_lo = max(0.0, roe_lo - roe_pad)
+    roe_hi += roe_pad
+
+    def X(pe):
+        return L + (pe - pe_lo) / (pe_hi - pe_lo) * (W - L - R)
+
+    def Y(roe):
+        return T + (roe_hi - roe) / (roe_hi - roe_lo) * (H - T - B)
+
+    xb = [X(b) for b in pe_bands]
+    yb = [Y(b) for b in roe_bands]  # roe_bands[0]=8 → 下方线 yb[0] 更大；[1]=15 → 上方线
+
+    parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="估值-质量散点图" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    # 最优/最差象限底色（高ROE·低PE = 左上绿；低ROE·高PE = 右下红）
+    parts.append(f'<rect x="{L}" y="{T}" width="{xb[0] - L:.1f}" height="{yb[1] - T:.1f}" fill="#6ba86b" fill-opacity="0.06"/>')
+    parts.append(f'<rect x="{xb[1]:.1f}" y="{yb[0]:.1f}" width="{W - R - xb[1]:.1f}" height="{H - B - yb[0]:.1f}" fill="#c75b5b" fill-opacity="0.06"/>')
+    # 象限角标签
+    parts.append(f'<text x="{L + 8}" y="{T + 16}" font-size="11" fill="#8899a6">高质量 · 低估值</text>')
+    parts.append(f'<text x="{W - R - 8}" y="{T + 16}" text-anchor="end" font-size="11" fill="#8899a6">高质量 · 高估值</text>')
+    parts.append(f'<text x="{L + 8}" y="{H - B - 8}" font-size="11" fill="#8899a6">低质量 · 低估值</text>')
+    parts.append(f'<text x="{W - R - 8}" y="{H - B - 8}" text-anchor="end" font-size="11" fill="#8899a6">低质量 · 高估值</text>')
+    # 分带虚线
+    for bx in xb:
+        parts.append(f'<line x1="{bx:.1f}" y1="{T}" x2="{bx:.1f}" y2="{H - B}" stroke="#d7dee6" stroke-width="1" stroke-dasharray="4 4"/>')
+    for by in yb:
+        parts.append(f'<line x1="{L}" y1="{by:.1f}" x2="{W - R}" y2="{by:.1f}" stroke="#d7dee6" stroke-width="1" stroke-dasharray="4 4"/>')
+    # 坐标轴 + 刻度
+    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
+    parts.append(f'<line x1="{L}" y1="{T}" x2="{L}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
+    for i in range(5):
+        v = pe_lo + (pe_hi - pe_lo) * i / 4
+        parts.append(f'<text x="{X(v):.1f}" y="{H - B + 18}" text-anchor="middle" font-size="11" fill="#8899a6">{_fmt(round(v))}x</text>')
+        v2 = roe_lo + (roe_hi - roe_lo) * i / 4
+        parts.append(f'<text x="{L - 8}" y="{Y(v2) + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v2))}%</text>')
+    parts.append(f'<text x="{W - R}" y="{H - 8}" text-anchor="end" font-size="11" fill="#8899a6">PE(TTM)</text>')
+    parts.append(f'<text x="{L}" y="{T - 12}" font-size="11" fill="#8899a6">ROE</text>')
+    # 数据点（直接标注，免图例；点位于右半区时文字放左侧防溢出）
+    for p in pts:
+        cx, cy = X(p["pe"]), Y(p["roe"])
+        label = f'{p["name"]} {_fmt(p["roe"])}%/{_fmt(p["pe"])}x'
+        if p["target"]:
+            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="#4a6fa5" stroke="#fff" stroke-width="2">'
+                         f'<title>{_esc(label)}</title></circle>')
+            parts.append(f'<text x="{cx:.1f}" y="{cy - 14:.1f}" text-anchor="middle" font-size="12" '
+                         f'font-weight="700" fill="#4a6fa5">{_esc(label)}</text>')
+        else:
+            anchor, lx = ("end", cx - 12) if cx > L + (W - L - R) * 0.68 else ("start", cx + 12)
+            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="6" fill="#9aa7b4">'
+                         f'<title>{_esc(label)}</title></circle>')
+            parts.append(f'<text x="{lx:.1f}" y="{cy + 4:.1f}" text-anchor="{anchor}" font-size="11.5" '
+                         f'fill="#5a6b7d">{_esc(label)}</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">估值-质量散点图（脚本按 peers_plot 字段生成）：横轴 PE(TTM)、纵轴 ROE，'
+                 '虚线为低/中/高分带；左上绿底=优质低估区，右下红底=低质高估区</span>')
+    return "".join(parts)
+
+
+def _check_l4_order(l4_html: str) -> None:
+    """黄灯四类须固定 a→b→c→d 顺序（SKILL.md L4 规范）；检出乱序则告警，由模型修正后重渲。
+    不做自动重排——四类内容块结构多变（有/无命中、合并段落），程序重排太脆。"""
+    seq = re.findall(r"<strong>\s*([abcd])\s*[)）]", l4_html or "")
+    if seq and seq != sorted(seq):
+        print(f"⚠️ L4 黄灯扣分四类顺序应为 a→b→c→d，当前为 {'→'.join(seq)}；"
+              f"请调整 l4_html 顺序后重新渲染", file=sys.stderr)
+
+
 def render(fill_path: str, out_path: str = None) -> str:
     fill = _load_fill(fill_path)
     for k in REQUIRED_SCALAR:
         if not fill.get(k):
             raise ValueError(f"缺必填字段: {k}")
+
+    _check_l4_order(fill.get("l4_html", ""))
+
+    # 图形组件（脚本生成 SVG；数据缺省时为空串 → 模板条件块整块删除）
+    spectrum_html = build_scenario_spectrum(fill)
+    peers_plot_html = build_peers_plot(fill)
+    peers_html = fill.get("peers_html", "")
+    if peers_plot_html and "matrix-table" in peers_html:
+        # 散点图已生成 → 手写九宫格冗余，自动删除（含"估值-质量矩阵："引导句）
+        cleaned = re.sub(r'<p[^>]*>\s*<strong>\s*估值[-—]质量矩阵[^<]*</strong>\s*</p>\s*', "", peers_html)
+        cleaned = re.sub(r'<table\b[^>]*class="matrix-table"[^>]*>.*?</table>\s*', "", cleaned, flags=re.I | re.S)
+        if cleaned != peers_html:
+            print("⚠️ 已提供 peers_plot 散点图，peers_html 中手写的 matrix-table 九宫格冗余，已自动删除",
+                  file=sys.stderr)
+        peers_html = cleaned
 
     sc = compute_scores(fill)
     layer_scores = sc["layer_scores"]
@@ -371,11 +646,13 @@ def render(fill_path: str, out_path: str = None) -> str:
         "L4_HTML": fill.get("l4_html", ""),
         "VALUATION_METHOD": fill.get("valuation_method", ""),
         "STOCK_TYPE": fill.get("stock_type", ""),
-        "VALUATION_HTML": fill.get("valuation_html", ""),
+        "VALUATION_HTML": _transpose_scenario_table(fill.get("valuation_html", "")),
         "GAP_TIER": fill.get("gap_tier", "—"),
         "GAP_HTML": fill.get("gap_html", ""),
         "PEERS_META": fill.get("peers_meta", ""),
-        "PEERS_HTML": fill.get("peers_html", ""),
+        "PEERS_HTML": peers_html,
+        "SCENARIO_SPECTRUM_HTML": spectrum_html,
+        "PEERS_PLOT_HTML": peers_plot_html,
         "CYCLE_META": fill.get("cycle_meta", ""),
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
@@ -384,7 +661,6 @@ def render(fill_path: str, out_path: str = None) -> str:
         "GEN_TIME": fill.get("gen_time", date),
         "CALIB_NOTE": fill.get("calib_note", ""),
         "SCORE_TABLE_ROWS": sc["rows_html"],
-        "TIMING_TABLE_ROWS": sc["timing_rows_html"],
         # 研究分（不考虑风险 → 扣黄灯 → 最终研究分）
         "PRE_RISK_RESEARCH": f"{pre_risk:.2f}",
         "YELLOW_TOTAL": f"{yellow_total:.1f}",
@@ -393,6 +669,8 @@ def render(fill_path: str, out_path: str = None) -> str:
         # 时机分
         "TIMING_SCORE": (f"{timing:.2f}" if timing is not None else "—"),
         "TIMING_BADGE_CLASS": (badge_class(timing) if timing is not None else "badge-blue"),
+        "TIMING_VALUE_CLASS": ("score-good" if timing >= 6 else "score-mid" if timing >= 4
+                               else "score-bad") if timing is not None else "score-mid",
         "VERDICT_DUAL": verdict,
         "RED_FLAG_HTML": (f'<div class="danger-card">🔴 <strong>红灯回避</strong>：{red_flag}</div>' if red_flag else ""),
         "SCORE_SUB": "｜".join(f"{l} {layer_scores[l]:.2f}" for l in ["L1", "L2", "L3"]),
@@ -434,6 +712,15 @@ def render(fill_path: str, out_path: str = None) -> str:
     empty = [k for k in ("CONCLUSION_HTML", "P0_HTML", "L1_HTML", "L2_HTML", "L3_HTML",
                          "L4_HTML", "VALUATION_HTML", "GAP_HTML", "PEERS_HTML",
                          "DASH_HTML", "POSITION_HTML") if not repl.get(k)]
+    # 图形字段缺失要"响亮"：缺 scenarios/peers_plot 时条件块是静默删除的，必须显式提醒
+    missing_plots = []
+    if not repl["SCENARIO_SPECTRUM_HTML"]:
+        missing_plots.append("scenarios（05 目标价走廊未生成）")
+    if not repl["PEERS_PLOT_HTML"]:
+        missing_plots.append("peers_plot（07 散点图未生成，仅 peers_html 手写 matrix-table 兜底）")
+    if missing_plots:
+        print(f"⚠️ fill JSON 缺图形字段: {'；'.join(missing_plots)}。"
+              f"请补充字段后重新渲染（格式见 fill-schema.md 顶层字段表）", file=sys.stderr)
     print(f"OK → {out_path}")
     timing_s = f"{timing:.2f}" if timing is not None else "—"
     print(f"研究分 {research:.2f}（不考虑风险 {pre_risk:.2f} − 黄灯 {yellow_total:.1f}）| "

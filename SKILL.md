@@ -253,7 +253,7 @@ python "<skill目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[pee
 ```
 
 **妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp-stdio__mx_*` 在工具列表，脚本盲区/增强项）：
-- **筹码分布（2C）**：tushare `cyq_*` 无权限 → `mx_ashare_finance_data(query="[公司] 最新获利比例、90%成本区间、平均成本、筹码集中度")`（实测返回平均成本/集中度）
+- **筹码分布（筹码面）**：tushare `cyq_*` 无权限 → `mx_ashare_finance_data(query="[公司] 最新获利比例、90%成本区间、平均成本、筹码集中度")`（实测返回平均成本/集中度）
 - **行业估值水位（2A）**：`mx_index_block_finance_data(query="[申万煤炭/对应行业] 最新 PE PB 及历史分位")`——从"跟自己历史比"升级为"跟行业当前比"
 - **大宗商品价格（P0 第一变量）**：`mx_macro_data(query="[动力煤/布伦特原油/对应品种] 最新价格及近30日走势")`
 - **港股盈利预测（E5 港股补位）**：`mx_hk_finance_data(query="[公司] 券商盈利预测 目标价")`
@@ -474,7 +474,7 @@ evidence determine the score.
 | 正向锚 | 分红率连续3年>40%，或近12个月有回购 | +0.5（正向合计封顶 +0.5） |
 
 （v2.0 变更：关联交易从 1E 移出，统一归黄灯 d 类评估；减持区分——经营者减持留 1E，
-财务投资人减持归 2C/时机层，大股东/实控人减持归黄灯 a 类。）
+财务投资人减持归筹码面/时机层，大股东/实控人减持归黄灯 a 类。）
 
 *整体判断调整（±1 分以内）*：用于清单无法覆盖的治理风险或优势——治理文化、
 一言堂倾向、历史污点、继任安排质量、战略定力。调整必须在报告中写明理由；
@@ -514,7 +514,7 @@ evidence determine the score.
 但提升波动/不确定性、拉长持股周期、降低胜率。**单项上限 1 分，黄灯累计扣分上限 2 分；
 累计 >2 分或命中 ≥4 项 → 升红灯（直接回避）。** 四大类：
 
-- **a) 交易与股东行为风险**（限售解禁为主；减持区分：经营者减持留 1E、财务投资人减持归 2C、大股东/实控人减持归此类）：
+- **a) 交易与股东行为风险**（限售解禁为主；减持区分：经营者减持留 1E、财务投资人减持归筹码面、大股东/实控人减持归此类）：
   解禁占总股本 <1%（0.1）/ 1-5% 普通机构（0.4）/ >5% 首发原始股东或定增深度获利盘（0.8）
 - **b) 行业与政策环境风险**：政策边际收紧（传闻 0.2 / 落地影响盈利 5-10% 0.5 / 超预期收紧影响 >10% 0.9）；
   竞争格局恶化（0.2/0.5/0.8）；上游成本大幅波动（0.2/0.4/0.7）
@@ -764,7 +764,7 @@ Define specific thresholds that should trigger a full re-analysis:
 |----------|------|------------|
 | [Primary driver] 突破 | [价格/水平] | 重新计算三情景利润 |
 | [Key event] 发生 | [具体事件] | 调整PE校准参照时段 |
-| [Sentiment indicator] 变化 | [阈值] | 重评 2C 筹码面得分（时机分） |
+| [Sentiment indicator] 变化 | [阈值] | 重评筹码面得分（时机分） |
 | 财报发布 | 季报/年报 | 更新L1财务数据+重算L3利润预测 |
 | [Catalyst] 兑现/失效 | — | 更新L3催化剂得分 |
 
@@ -880,7 +880,7 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 - 禁止手算研究分/时机分/层分（脚本算，手算易错；文件名里的研究分也来自脚本计算）
 
 **评分数据流**：你在 JSON 里填研究层各维原始得分（`scores`：1A-1E/2A/3A-3C）+
-时机层得分（`timing_scores`：2B/2C）+ 黄灯扣分明细（`yellow_deductions`）+
+时机层得分（`timing_scores`：技术面/筹码面）+ 黄灯扣分明细（`yellow_deductions`）+
 红灯标记（`red_flag`）+ 可选权重覆盖（`weights`，分型调整时用）。
 层分、不考虑风险研究分、研究分、时机分、徽章色、加权列、评分汇总表全部由脚本生成——
 报告里的数字与文件名里的研究分必然一致。
@@ -961,7 +961,8 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
   **数据格一律不加类，对齐由渲染器统一**（数字/短值右、长文左；骨架见 fill-schema）
 - `.info-card`：**PE校准逻辑**——历史时段匹配法推导过程（参照时段、当时PE、增速、体量折扣）；
   非周期股替换为对应方法说明（PB-ROE / rNPV / PEG / 正常化利润PE）
-- **三指标卡条**（`.metric-row`，3 张 `.metric-card`）：
+- **三指标卡条**（`.metric-row` + 3 张 `.metric-card`，内层固定 `label`/`value`/`sub` 三类名——
+  骨架见 fill-schema；渲染器会把幻觉类名 metric-label/value/sub 自动归一，但应直接写对）：
   1. **年化中枢期望收益**（sub 行同时显示未年化总值 + 时间维度；负值红色并标注"回避"）
   2. **赔率**（公式见 Phase 3；悲观下限>现价时显示 ∞，绿色）
   3. **情景离散度**（<30% 绿色"可预测"/30-60% 橙色"中不确定"/>60% 红色"高发散"）
@@ -978,7 +979,9 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 
 - **当前指标表**：目标公司列加粗 + 钢蓝色（`style="color:#4a6fa5;font-weight:700;"`），4-5 家可比公司 + `.source`；
   **纯文字行（如"核心业务"）单元格不加 num/center 类**——渲染器会把 num 列中的纯文字格自动纠偏为左对齐
-- **3年趋势表**：ROE/毛利率/负债率变化方向（↑绿 ↓红）+ `.source`
+- **3年趋势表**：ROE/毛利率/净利率/负债率变化，方向**一律用文字标注**（升/降/缓升/缓降/大升/大降/平，
+  幅度约定与骨架见 fill-schema），不用单个箭头；方向词用 `up/down` 着色，**按指标语义定色**
+  （盈利指标升绿降红，负债率降绿升红）+ `.source`
 - **估值-质量散点图**：填顶层 `peers_plot` 字段（格式见 §4.3），脚本在章节顶部生成
   直角坐标系散点图（ROE × PE 精确点位，3×3 分带，目标公司钢蓝高亮）；
   **填了 peers_plot 就不要再写 matrix-table 九宫格**（两图并存冗余，渲染器检测到会直接删除并告警）；
@@ -1013,7 +1016,7 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 ### 15. 11 仓位与时机决策（`.section`）
 
 - **时机判定小表**（先于仓位表）：技术面（得分×33%）/ 筹码面（得分×67%）/ 时机分；
-  2B/2C 的分析过程在此呈现（趋势/均线/支撑压力表 + 户数/北向/机构/减持表 + `.source`）
+  技术面/筹码面的分析过程在此呈现（趋势/均线/支撑压力表 + 户数/北向/机构/减持表 + `.source`）
 - **双输入仓位映射表**：研究分（徽章）/ 时机分（徽章）/ 双轨判定 / 基准仓位
 - **调整行**：离散度调节（>60% 降档 /<30% 升档）+ 赔率调节（∞ 升档 / 中枢收益为负→回避），
   列出最终仓位建议
@@ -1106,7 +1109,7 @@ em_fetch.py（data-sources.md，首选：tushare 优先、东财自动兜底）
 | **PE/PB data missing** | Try PB or PS as fallback valuation metric. Note: "PE数据不可得，以PB [X]x 替代评估。" |
 | **Financial history < 3 years** | Work with available years. Note: "仅有[N]年财务数据，趋势判断受限。" |
 | **Peer data limited** | Reduce to 2-3 best-known peers. Note: "可比公司数据有限，对比仅供参考。" |
-| **Shareholder count unavailable** | Skip 2C shareholder count analysis. Use institutional ownership as partial signal. Note the gap. |
+| **Shareholder count unavailable** | Skip 筹码面 shareholder count analysis. Use institutional ownership as partial signal. Note the gap. |
 | **Historical PE range unclear** | Use sector average PE as anchor. Flag: "历史PE数据不足，以行业均值[X]x为参照。" |
 | **Key profit driver sensitivity unknown** | Estimate from business logic (cost structure, revenue mix). Mark: "敏感性为基于业务结构估算，非精确值。" |
 | **Critical data missing (>40% of checklist)** | Narrow the scope: produce a "快速评估" instead of full report. State what's missing and why the analysis is limited. Offer to redo when data becomes available. |

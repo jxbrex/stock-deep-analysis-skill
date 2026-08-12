@@ -39,11 +39,28 @@ DIMS = [
     ("3B", "L3", "3B 项目确定性", 7),
     ("3C", "L3", "3C 催化剂", 5),
 ]
-# 时机层（不入研究分）：筹码 67% / 技术 33%
+# 时机层（不入研究分）：筹码面 67% / 技术面 33%
 TIMING_DIMS = [
-    ("2C", "筹码与情绪", 67),
-    ("2B", "技术面", 33),
+    ("筹码面", "筹码面", 67),
+    ("技术面", "技术面", 33),
 ]
+# 旧版键名兼容（v2.1 前：2C=筹码面、2B=技术面）
+_TIMING_LEGACY = {"2C": "筹码面", "2B": "技术面"}
+
+
+def _timing_field(fill: dict, name: str) -> dict:
+    """读取时机层字段（timing_scores / timing_weights），旧键名 2B/2C 自动映射并告警。"""
+    src = fill.get(name) or {}
+    out, legacy = {}, []
+    for k, v in src.items():
+        nk = _TIMING_LEGACY.get(k, k)
+        if nk != k:
+            legacy.append(k)
+        out[nk] = v
+    if legacy:
+        print(f"⚠️ {name} 使用了旧版键名 {sorted(legacy)}，已按 2C→筹码面 / 2B→技术面 映射；"
+              f"请改用新键名（fill-schema 已更新）", file=sys.stderr)
+    return out
 LAYER_NAMES = {"L1": "公司本质", "L2": "估值水平", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 
@@ -54,6 +71,19 @@ def badge_class(score: float) -> str:
     if score >= 4.0:
         return "badge-orange"
     return "badge-red"
+
+
+_CLASS_ALIASES = {"metric-label": "label", "metric-value": "value", "metric-sub": "sub"}
+
+
+def _normalize_class_aliases(html: str) -> str:
+    """模型偶发的幻觉类名归一：metric-label/metric-value/metric-sub → label/value/sub
+    （模板只定义后者；前者无样式，三指标卡条会塌成无样式文本）。仅限 class 属性值内替换。"""
+    def fix(m):
+        quote, val = m.group(1), m.group(2)
+        tokens = [_CLASS_ALIASES.get(t, t) for t in val.split()]
+        return f"class={quote}{' '.join(tokens)}{quote}"
+    return re.sub(r"class\s*=\s*([\"'])([^\"']*)\1", fix, html)
 
 
 _TD_CELL = re.compile(r'<td\b([^>]*)>', re.I)
@@ -330,9 +360,9 @@ def compute_scores(fill: dict):
     yellow_total = round(sum(float(y.get("points", 0)) for y in yellow), 2)
     research = round(pre_risk - yellow_total, 2)  # 最终研究分
 
-    # 时机分（2C 筹码 67% + 2B 技术 33%；只算分值，时机轨表在 11 由模型呈现，09 不再重复）
-    t_scores = fill.get("timing_scores") or {}
-    t_weights = {k: float((fill.get("timing_weights") or {}).get(k, dw)) for k, _n, dw in TIMING_DIMS}
+    # 时机分（筹码面 67% + 技术面 33%；只算分值，时机轨表在 11 由模型呈现，09 不再重复）
+    t_scores = _timing_field(fill, "timing_scores")
+    t_weights = {k: float(_timing_field(fill, "timing_weights").get(k, dw)) for k, _n, dw in TIMING_DIMS}
     tw_sum = sum(t_weights.values())
     if abs(tw_sum - 100.0) > 0.01:
         raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")
@@ -691,6 +721,9 @@ def render(fill_path: str, out_path: str = None) -> str:
 
     for k, v in repl.items():
         html = html.replace("{{" + k + "}}", v)
+
+    # 幻觉类名归一（metric-label/value/sub → label/value/sub），在表格对齐修正前执行
+    html = _normalize_class_aliases(html)
 
     # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
     html = fix_table_alignment(html)

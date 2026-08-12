@@ -89,7 +89,7 @@ https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f
 
 **用法**：
 - `klt=103` + beg=5年前 → 历史 PE/价格区间、周期分析（Phase 5）、离散度参照
-- `klt=101` + beg=近6个月 → MA60/MA120、近期高低点（2B 技术面）
+- `klt=101` + beg=近6个月 → MA60/MA120、近期高低点（技术面）
 - PE 历史序列 ≈ 每月收盘价 × 总股本 ÷ 对应时点 TTM 净利（净利从 E3 取）
 
 **覆盖清单项**：历史 PE 区间、关键价位、周期阶段（Checklist #9 #10）
@@ -145,7 +145,7 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_HOLDE
 | HOLDER_NUM_RATIO | 户数变化率 % |
 | END_DATE / PRE_END_DATE | 截止日 / 上期截止日 |
 
-pageSize=8 → 近两年户数趋势（2C 筹码分析需要"趋势"而非单点）
+pageSize=8 → 近两年户数趋势（筹码面分析需要"趋势"而非单点）
 
 **覆盖清单项**：股东户数及变化趋势（Checklist #7 部分）
 
@@ -159,8 +159,8 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_WEB_R
 
 | 字段 | 含义 | 用途 |
 |------|------|------|
-| RATING_ORG_NUM | 覆盖机构数 | 2C |
-| RATING_BUY_NUM / RATING_ADD_NUM / RATING_NEUTRAL_NUM / RATING_REDUCE_NUM | 买入/增持/中性/减持家数 | 2C |
+| RATING_ORG_NUM | 覆盖机构数 | 筹码面 |
+| RATING_BUY_NUM / RATING_ADD_NUM / RATING_NEUTRAL_NUM / RATING_REDUCE_NUM | 买入/增持/中性/减持家数 | 筹码面 |
 | YEAR1-4 + YEAR_MARK1-4 + EPS1-4 | 各年度一致 EPS（A=实际 E=预测） | **预期差拆解档位B** |
 | DEC_AIMPRICEMAX / DEC_AIMPRICEMIN | 券商目标价最高/最低 | **预期差拆解档位B** |
 | INDUSTRY_BOARD | 所属行业板块 | 1A |

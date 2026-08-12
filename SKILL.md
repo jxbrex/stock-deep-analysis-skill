@@ -946,8 +946,10 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 ### 9. 05 估值三情景（`.section`）
 
 - 开头标注分型对应的估值方法（如"本报告按周期股框架，采用 PE 历史时段匹配法"）
-- 三情景对比表：悲观（`.scenario-pess`）/ 基础（`.scenario-base`）/ 乐观（`.scenario-opt`），
-  行含：**时间维度**、触发条件、关键变量、净利、EPS、PE、目标市值、目标价、较现价
+- **三情景对比表**：悲观（`.scenario-pess`）/ 基础（`.scenario-base`）/ 乐观（`.scenario-opt`），
+  **统一纵向列排列（指标在行、情景在列，参照中国移动报告）**——首列指标名，
+  后续三列悲观/基础/乐观；行含：时间维度、触发条件、关键变量、净利、EPS、PE、目标市值、目标价、较现价；
+  数值行 `<td class="num">`、纯文字行不加类、情景列表头 `th class="center"`（骨架见 fill-schema）
 - `.info-card`：**PE校准逻辑**——历史时段匹配法推导过程（参照时段、当时PE、增速、体量折扣）；
   非周期股替换为对应方法说明（PB-ROE / rNPV / PEG / 正常化利润PE）
 - **三指标卡条**（`.metric-row`，3 张 `.metric-card`）：
@@ -965,7 +967,8 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 
 ### 11. 07 同业横向对比（`.section`）
 
-- **当前指标表**：目标公司列加粗 + 钢蓝色（`style="color:#4a6fa5;font-weight:700;"`），4-5 家可比公司 + `.source`
+- **当前指标表**：目标公司列加粗 + 钢蓝色（`style="color:#4a6fa5;font-weight:700;"`），4-5 家可比公司 + `.source`；
+  **纯文字行（如"核心业务"）单元格不加 num/center 类**——渲染器会把 num 列中的纯文字格自动纠偏为左对齐
 - **3年趋势表**：ROE/毛利率/负债率变化方向（↑绿 ↓红）+ `.source`
 - **估值-质量矩阵**：`.matrix-table`，3×3 网格（ROE 高中低 × PE 低中高），目标公司格用 `.target` 高亮
 - `.conclusion-box`：3-5 条同业对比结论（① ② ③ 编号列表）

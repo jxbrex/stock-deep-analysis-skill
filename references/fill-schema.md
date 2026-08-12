@@ -3,6 +3,14 @@
 渲染流程：模型把全部分析内容写成一个 JSON 文件 → `python render_report.py fill.json`
 → 脚本完成评分计算 + 占位符替换 + 校验 + 自动命名输出。**模型不需要碰 HTML 文件本身。**
 
+## JSON 书写硬规则（违反即解析失败）
+
+- **禁止裸反斜杠**：fragment 里任何 `\` 在 JSON 字符串中必须写成 `\\`（`\ `、`\P` 等都是非法转义）。
+  表头、分隔符一律用全角 `＼` 或 `/`，从源头避开反斜杠（见 07 矩阵示例）。
+- 字符串内换行用 `\n`，不要直接回车；双引号用 `\"` 或改用中文引号「」。
+- 写完后可用 `python -c "import json;json.load(open('fill.json',encoding='utf-8'))"` 自检。
+- render_report.py 已带非法转义自动修复（兜底+告警），但不保证覆盖所有写法，仍以写对为准。
+
 ## 顶层字段
 
 | 字段 | 必填 | 说明 |
@@ -74,8 +82,11 @@
 **表格**：`<div class="table-scroll"><table>…</table></div>`，数字列 `<td class="num">`，居中列 `<td class="center">`。
 **表头必须与数据列同对齐**：数字列表头 `<th class="num">`、居中列表头 `<th class="center">`（与对应 `<td>` 同规则）；
 纯文字列表头保持默认左对齐，不要加类。
-**渲染器已加对齐自动修正**（按列统计 td 类给 th 配对，行头 th/rowspan/colspan 均处理）——
+**渲染器已加对齐自动修正**（按列统计 td 类给 th 配对，行头 th/rowspan/colspan 均处理；
+纯文字单元格自动剔除误加的 num/center 类改左对齐，单双引号均支持）——
 模型写错表头类不再影响最终输出，但仍建议按规则写对（保持 fragment 自描述）。
+**纯文字单元格（如同业表"核心业务"行）不要加 num/center 类**——默认左对齐即可，
+即使加了渲染器也会自动纠偏。
 **宽表首列冻结**（≥5 列的数据表，如 07 同业当前指标表必用）：`<table class="freeze-first">`——窄屏横向滚动时首列常驻。
 
 **数字千位符**：金额/户数类数值 ≥1000 必须带千位符（`2,949.2 亿`、`9,536.8 亿`、`188,153 户`）；
@@ -85,7 +96,7 @@
 
 ```html
 <table class="matrix-table">
-  <thead><tr><th>ROE \ PE</th><th>低PE(&lt;12x)</th><th>中PE(12-20x)</th><th>高PE(&gt;20x)</th></tr></thead>
+  <thead><tr><th>ROE＼PE</th><th>低PE(&lt;12x)</th><th>中PE(12-20x)</th><th>高PE(&gt;20x)</th></tr></thead>
   <tbody>
     <tr><td><strong>高ROE(&gt;15%)</strong></td><td>—</td><td>—</td><td>同业A(16%/40x)</td></tr>
     <tr><td><strong>中ROE(8-15%)</strong></td><td class="target">目标公司(9%/11x)</td><td>同业B(11%/15x)</td><td>同业C(11%/21x)</td></tr>
@@ -93,6 +104,25 @@
   </tbody>
 </table>
 ```
+
+**估值三情景表**（05，**统一纵向列排列**——指标在行、情景在列，参照中国移动报告）：
+数值行 `<td class="num">`，纯文字行（时间维度/触发条件）不加类，情景列表头 `th class="center"`：
+
+```html
+<div class="table-scroll"><table>
+  <thead><tr><th>指标</th><th class="center">悲观情景</th><th class="center">基础情景</th><th class="center">乐观情景</th></tr></thead>
+  <tbody>
+    <tr><td>时间维度</td><td class="center">12个月</td><td class="center">12个月</td><td class="center">12-24个月</td></tr>
+    <tr><td>触发条件</td><td>……</td><td>……</td><td>……</td></tr>
+    <tr><td>2026E净利</td><td class="num">1,300 亿（-5.2%）</td><td class="num">1,350 亿（-1.5%）</td><td class="num">1,400 亿（+2.1%）</td></tr>
+    <tr><td>EPS</td><td class="num">6.00</td><td class="num">6.23</td><td class="num">6.46</td></tr>
+    <tr><td>PE</td><td class="num">17x</td><td class="num">15x</td><td class="num">14x</td></tr>
+    <tr><td>目标价</td><td class="num">……</td><td class="num">……</td><td class="num">……</td></tr>
+    <tr><td>较现价</td><td class="num">……</td><td class="num">……</td><td class="num">……</td></tr>
+  </tbody>
+</table></div>
+```
+（禁止把情景放成行、指标放成列——统一指标纵列、情景横排。）
 
 ## 评分计算规则（脚本执行，模型不要手算）
 

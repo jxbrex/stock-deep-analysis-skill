@@ -19,6 +19,13 @@ import os
 import re
 import sys
 
+# Windows GBK 控制台打印 ⚠️/−/🔴 等字符会 UnicodeEncodeError，统一降级为 replace
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 # 维度元数据：key -> (层, 显示名, 默认权重)
 # v2.0 研究层：L1 本质 50（1A-1E 各10）+ L2 估值 30（2A 独占）+ L3 预期 20（3A8/3B7/3C5）
 DIMS = [
@@ -53,7 +60,7 @@ _TD_CELL = re.compile(r'<td\b([^>]*)>', re.I)
 _TH_CELL = re.compile(r'<th\b([^>]*)>', re.I)
 _CELL = re.compile(r'<(t[hd])\b([^>]*)>', re.I)
 _TR = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.I | re.S)
-_CLASS_ATTR = re.compile(r'class\s*=\s*"([^"]*)"', re.I)
+_CLASS_ATTR = re.compile(r'class\s*=\s*["\']([^"\']*)["\']', re.I)
 
 
 def _classes_of(attrs: str) -> set:
@@ -94,6 +101,21 @@ def _strip_th_align(attrs: str) -> str:
     if new_cls:
         return attrs[:cm.start()] + f'class="{new_cls}"' + attrs[cm.end():]
     return _CLASS_ATTR.sub("", attrs).rstrip()
+
+
+def _is_plain_text(s: str) -> bool:
+    """判断单元格文本是否为纯文字（无数字、无★等特殊符号）——纯文字格应左对齐，
+    剔除被误加的 num/center 类（如同业表"核心业务"行被复制成 class=num）。
+    占比括号剥离："纯制冷剂(85%)"→"纯制冷剂" 判为文字；"1,350 亿（-1.5%）" 判为数值。"""
+    t = re.sub(r"<[^>]+>", "", s or "").strip()
+    if not t:
+        return False
+    if re.search(r"[★☆◆●■▲▶▼↑↓→≈∞×÷±+]", t):  # 含星级/箭头/数学符号 → 保留原类
+        return False
+    t2 = re.sub(r"[（(][^）)]*[）)]", "", t)  # 剥离括号及其内容（占比/说明性数字）
+    if re.search(r"\d", t2):
+        return False
+    return True
 
 
 def fix_table_alignment(html: str) -> str:
@@ -153,25 +175,13 @@ def fix_table_alignment(html: str) -> str:
         for trm in _TR.finditer(tbl):
             tr_parts.append(tbl[last:trm.start()])
             row = trm.group(0)
-            if not _TH_CELL.search(row):
-                tr_parts.append(row)
-                # 仍要推进 rowspan（该行无 th 但可能有 td 的 rowspan，且上方 rowspan 继续消耗）
-                col = 0
-                for cm in _CELL.finditer(trm.group(1)):
-                    while any(c == col and rem > 0 for c, rem in rowspans2):
-                        col += 1
-                    rs = re.search(r'rowspan\s*=\s*"?(\d+)', cm.group(2))
-                    if rs and int(rs.group(1)) > 1:
-                        rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
-                    col += 1
-                rowspans2 = [(c, rem - 1) for c, rem in rowspans2 if rem - 1 > 0]
-                last = trm.end()
-                continue
-            # 该行有 th：逐单元格重建（保持列对齐，含 rowspan/colspan 补偿）
+            # 逐单元格重建（所有行都走，td 纯文字纠偏对无 th 的数据行同样生效；
+            # 无改动需求时重建结果=原文，无损）
+            cells = list(_CELL.finditer(row))
             rebuilt = []
             last_in_row = 0
             col = 0
-            for cm in _CELL.finditer(row):
+            for i, cm in enumerate(cells):
                 while any(c == col and rem > 0 for c, rem in rowspans2):
                     col += 1
                 rebuilt.append(row[last_in_row:cm.start()])
@@ -185,6 +195,12 @@ def fix_table_alignment(html: str) -> str:
                     rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
                     if rs and int(rs.group(1)) > 1:
                         rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
+                    # td 纠偏：被投票为 num 的列中，纯文字格剔除误加的 num/center → 左对齐
+                    if colspan == 1 and decided.get(col) == "num":
+                        inner_end = cells[i + 1].start() if i + 1 < len(cells) else len(row)
+                        inner = row[cm.end():inner_end]
+                        if _is_plain_text(inner):
+                            attrs = _strip_th_align(attrs)  # 剔除 num/center
                 rebuilt.append(f"<{tag}{attrs}>")
                 last_in_row = cm.end()
                 col += colspan
@@ -273,8 +289,36 @@ def compute_scores(fill: dict):
     }
 
 
+def _load_fill(fill_path: str) -> dict:
+    r"""读取 fill JSON。模型手写 JSON 常带非法转义（如表头 "ROE \ PE" 的裸反斜杠），
+    先标准解析；失败则把不属于合法转义（\\ \" \/ \b \f \n \r \t \uXXXX）的反斜杠
+    自动转义后重试并告警；仍失败则抛出带行号/列号/片段上下文的错误。"""
+    with open(fill_path, encoding="utf-8") as f:
+        text = f.read()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as first_err:
+        repaired = re.sub(r'\\(?![\\"/bfnrtu])', r"\\\\", text)
+        try:
+            fill = json.loads(repaired)
+        except json.JSONDecodeError:
+            line, col = first_err.lineno, first_err.colno
+            lines = text.splitlines()
+            excerpt = lines[line - 1] if 0 < line <= len(lines) else ""
+            raise ValueError(
+                f"fill JSON 解析失败: {first_err.msg}（第 {line} 行第 {col} 列）\n"
+                f"  出错行: {excerpt.strip()[:200]}\n"
+                f"  常见原因: 字符串内含裸反斜杠（须写 \\\\ 或改用全角＼）、"
+                f"未转义的双引号、直接回车换行。"
+            ) from None
+        print(f"⚠️ fill JSON 含非法反斜杠转义（如 \\ 后接空格/字母），已自动修复并继续；"
+              f"请检查 fragment 中的反斜杠写法（详见 fill-schema.md「JSON 书写硬规则」）",
+              file=sys.stderr)
+        return fill
+
+
 def render(fill_path: str, out_path: str = None) -> str:
-    fill = json.load(open(fill_path, encoding="utf-8"))
+    fill = _load_fill(fill_path)
     for k in REQUIRED_SCALAR:
         if not fill.get(k):
             raise ValueError(f"缺必填字段: {k}")

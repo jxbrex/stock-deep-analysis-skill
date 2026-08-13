@@ -104,6 +104,13 @@ td.center, th.center { text-align: center; }
 .deduction + br { display: none; }
 /* 05 三情景表：首列指标名短（时间维度/触发条件/目标价…），不允许折行 */
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
+/* 11 时机判定小表：除末列（依据长文）外一律不换行（维度/得分×权重列窄，折行难看） */
+.timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
+/* 回测模式：Hero 对比条 + 复盘更新标签 + 变更高亮 */
+.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eef1f5; font-size: 12px; color: #5a6b7d; }
+.prev-tag { display: inline-block; background: #eef2f7; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
+.rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
+td.rev, th.rev { padding: 8px 12px; }
 .scenario-pess { color: #c75b5b; }
 .scenario-base { color: #c08a2e; }
 .scenario-opt { color: #6ba86b; }
@@ -204,6 +211,9 @@ td.center, th.center { text-align: center; }
       <div class="d-sub">{{TARGET_SUB_HTML}}</div>
     </div>
   </div>
+  <!--IF:PREV_HTML-->
+  {{PREV_HTML}}
+  <!--ENDIF-->
 </div>
 
 <!-- 00 核心结论 -->
@@ -353,6 +363,20 @@ td.center, th.center { text-align: center; }
     </div>
   </div>
 </div>
+
+<!--IF:REVIEW_HTML-->
+<!-- R 回测复盘（条件章节：fill 带 review_html 时存在；回测模式专属） -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">R</span>
+    <span class="section-title">回测复盘</span>
+    <span class="section-meta">基于 {{PREV_DATE}} 版报告</span>
+  </div>
+  <div class="section-body">
+    {{REVIEW_HTML}}
+  </div>
+</div>
+<!--ENDIF-->
 
 <!-- 10 跟踪仪表盘 -->
 <div class="section">

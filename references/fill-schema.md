@@ -30,23 +30,25 @@
 | `price_sub_html` / `mcap_sub` / `pe_sub` | ✓ | 指标卡 sub 行（可含 `<span class="up/down">`） |
 | `horizon` | ✓ | 目标价时间维度（如 "12个月"） |
 | `target_range` / `target_sub_html` | ✓ | 目标价区间卡 |
-| `conclusion_html` | ✓ | 00 核心结论正文（HTML 片段，**开头放双轨判词卡**——研究分×时机分判定） |
+| `conclusion_html` | ✓ | 00 核心结论正文（HTML 片段，**开头放双轨判词卡**——研究分×时机分判定；命中红灯 → 首部 `.danger-card`；红旗命中≥2 项 → `.danger-card` 置顶"利润真实性存疑"；显著情绪/筹码风险 → `.warning-card`） |
 | `p0_html` | ✓ | P0 关键利润驱动（含分型声明+敏感性表+info-card） |
-| `l1_html` … `l3_html` | ✓ | L1-L3 研究层评分正文片段 |
+| `l1_html` … `l3_html` | ✓ | L1-L3 研究层评分正文片段（1D 含红旗五项三态表+财务年表；L2 得分注明"由 05 中枢与分位推导"；L3 开头 `<ul>` 列 2-3 条已确认事实） |
 | `l4_html` | ✓ | **L4 风险双层**正文片段（红灯 checklist + 黄灯扣分表 + Pre-mortem 卡） |
 | `valuation_method` / `stock_type` | ✓ | 05 卡片头（如 "PE历史时段匹配法" / "周期股"） |
 | `scenarios` | ✓ | **三情景结构化数据**（脚本生成 05 顶部"目标价走廊"图；**缺失=图不生成+渲染器警告**）：`[{"key":"pess","label":"悲观","low":294,"high":331},{"key":"base","label":"基础","low":442,"high":502},{"key":"opt","label":"乐观","low":562,"high":648}]`；现价自动取 `price`，中枢/涨跌幅脚本计算 |
 | `valuation_html` | ✓ | 05 正文（三情景表+校准逻辑+三指标卡条） |
-| `gap_tier` / `gap_html` | ✓ | 06 预期差（档位 A/B/C + 正文） |
-| `peers_meta` / `peers_html` | ✓ | 07 同业对比 |
+| `gap_tier` / `gap_html` | ✓ | 06 预期差（档位 A/B/C + 正文；卖方假设必须带来源；**末尾一句话总结**：比卖方更乐观/悲观/一致 + 证伪时修正方向） |
+| `peers_meta` / `peers_html` | ✓ | 07 同业对比（当前指标表+趋势表+`.conclusion-box` 3-5 条结论；目标公司列 `style="color:#4a6fa5;font-weight:700;"`） |
 | `peers_plot` | ✓ | **估值-质量散点图数据**（脚本生成 07 顶部 SVG 散点，替代 3×3 表格矩阵；**缺失=图不生成+渲染器警告**，仅同业数据实在凑不齐时才允许省略并手写 matrix-table 兜底）：`{"points":[{"name":"宁德时代","roe":24.7,"pe":21.3,"target":true},{"name":"比亚迪","roe":15.1,"pe":29.8}],"pe_bands":[15,25],"roe_bands":[8,15]}`；bands 可省（默认 PE 15/25、ROE 8/15），直接给数组亦可 |
-| `cycle_html` | 条件 | 08 周期规律；**空字符串或省略 → 整张卡片自动删除** |
+| `cycle_html` | 条件 | 08 周期规律（阶段拆解表 + `.conclusion-box` 可复用规律）；**空字符串或省略 → 整张卡片自动删除** |
 | `cycle_meta` | 条件 | 08 触发条件说明 |
-| `next_review` / `dash_html` | ✓ | 10 跟踪仪表盘 |
-| `position_html` | ✓ | 11 仓位与时机决策（**先时机判定小表（技术面/筹码面分析），再双输入仓位映射表**） |
+| `next_review` / `dash_html` | ✓ | 10 跟踪仪表盘（跟踪指标表+触发条件表；**回测模式第一段固定为旧触发条件核对表**；末尾复盘占位提示指向 SKILL.md 6.5/6.6） |
+| `position_html` | ✓ | 11 仓位与时机决策（**先时机判定小表（技术面/筹码面分析），再双输入仓位映射表**；时机判定小表无需手动加类，渲染器自动补 `timing-table`——除末列"依据"外不换行。**跨股对比**（条件触发，见 SKILL.md 输出要点）附加在本字段末尾） |
 | `top_icon` | 可选 | 顶部色块单字（默认取 company 首字） |
 | `gen_time` | 可选 | 默认用 date |
 | `calib_note` | 可选 | 免责声明后缀（如 "PE估值经历史时段匹配法回测校准"） |
+| `prev` | 回测必填 | **回测模式上版锚点**：`{"date":"2026-08-08","research":7.87,"timing":5.50,"target_range":"396-832"}`；填入即进入回测模式（文件名自动加"复盘"，Hero 自动生成对比条，差值脚本计算） |
+| `review_html` | 回测必填 | **R 回测复盘章节**正文（复盘四格表 + 新财报关键数据 vs 原假设对比表）；prev 与 review_html 必须成对出现，缺一则渲染器告警 |
 
 ## 片段内 HTML 骨架（模型在 fragment 里照用）
 
@@ -78,6 +80,10 @@
 ```
 
 **提示卡**：`.info-card`（蓝/逻辑说明）`.warning-card`（橙/警示）`.danger-card`（红/致命警告+pre-mortem）
+
+**变更高亮 `.rev`**（回测模式专属，淡黄底）：只标三类——**评分变化**（旧→新+一句原因）、
+**被验证/被证伪的关键假设**、**新增重大变量**。用法：行内 `<span class="rev">2026E净利 930→985亿</span>`，
+表格整格 `<td class="rev">`。满屏高亮=没高亮，宁缺毋滥。
 
 **指标卡条**（05 三指标卡、Hero 数据卡同款骨架；**内层类名是 `label`/`value`/`sub`，
 不要自创 metric-label/metric-value——渲染器虽会归一，但写对才是自描述**）：
@@ -185,6 +191,7 @@ x 轴=悲观/基础/乐观三列，与三情景表列方向一致；y 轴=价格
 
 ## 输出
 
-- 自动命名：`{company}_{code}_{研究分}_{date}.html`，写在 fill JSON 同目录
+- 自动命名：`{company}-{code}-{研究分}-{时机分}-{date}.html`，写在 fill JSON 同目录；
+  回测模式（填了 `prev`）自动变为 `{company}-{code}-{研究分}-{时机分}-复盘-{date}.html`
 - 残留 `{{...}}` 或 `【...】` → 脚本报错退出，报告不生成
 - 章节片段为空 → 脚本警告列出（CYCLE_HTML 除外，空=删章节）

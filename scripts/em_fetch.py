@@ -13,7 +13,7 @@ tushare 不可用时自动回落东财野生端点（curl 传输，防 TLS 指�
     python em_fetch.py 600989 --kline-years=5    # 月K线回溯年数（默认5）
     python em_fetch.py 600989 --search="收购,减持,新华三"  # E7 定性站内搜索（可多关键词，逗号分隔）
 
-输出: 紧凑 Markdown 摘要到 stdout（约 2KB），原始 JSON 不落盘不进上下文。
+输出: 紧凑 Markdown 摘要到 stdout（实测约 3.5KB/股），原始 JSON 不落盘不进上下文。
 覆盖: E1 行情估值 / E2 月线 / E3 F10 主要指标 / E4 股东户数 / E5 一致预期 / E6 主营构成
       / 盈利质量红旗（审计意见 tushare fina_audit 自动填）
 """

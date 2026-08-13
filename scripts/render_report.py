@@ -10,7 +10,7 @@ render_report.py — 用 fill-data JSON 渲染个股深度分析 HTML 报告（�
 fill JSON 契约见 references/fill-schema.md。
 核心特性：
 - 评分汇总表由脚本计算（14维度得分×权重→加权→层分→总分→自动徽章色），消除模型算术错误
-- 文件名自动生成：{公司名}_{代码}_{综合得分}_{日期}.html（总分是算出来的，不是模型填的）
+- 文件名自动生成：{公司名}-{代码}-{研究分}-{时机分}-{日期}.html（分数是算出来的，不是模型填的）
 - 条件章节：模板中 <!--IF:CYCLE_HTML--> 包裹的块在该键为空时整块删除
 - 渲染后校验：残留 {{...}} 或 【...】 占位符即报错退出
 """
@@ -584,7 +584,14 @@ def build_peers_plot(fill: dict) -> str:
         if p["target"]:
             parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="#4a6fa5" stroke="#fff" stroke-width="2">'
                          f'<title>{_esc(label)}</title></circle>')
-            parts.append(f'<text x="{cx:.1f}" y="{cy - 14:.1f}" text-anchor="middle" font-size="12" '
+            # 靠近顶部/右侧时标签改放下方/左侧，避免与象限角标、图边重叠
+            if cy < T + 50:
+                lx, ly, anchor = cx, cy + 24, "middle"
+            elif cx > L + (W - L - R) * 0.75:
+                lx, ly, anchor = cx - 14, cy + 4, "end"
+            else:
+                lx, ly, anchor = cx, cy - 14, "middle"
+            parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" font-size="12" '
                          f'font-weight="700" fill="#4a6fa5">{_esc(label)}</text>')
         else:
             anchor, lx = ("end", cx - 12) if cx > L + (W - L - R) * 0.68 else ("start", cx + 12)
@@ -598,6 +605,25 @@ def build_peers_plot(fill: dict) -> str:
     return "".join(parts)
 
 
+def _tag_timing_table(html: str) -> str:
+    """11 时机判定小表（表体含 技术面/筹码面 行的表）自动补 class="timing-table"——
+    模板 CSS 对该表除末列（依据长文）外强制不换行，防止"技术面/筹码面/时机分"折行。"""
+    def repl_table(m):
+        tbl = m.group(0)
+        if "技术面" not in tbl or "筹码面" not in tbl or "timing-table" in tbl:
+            return tbl
+        open_m = re.match(r"<table\b([^>]*)>", tbl, re.I)
+        attrs = open_m.group(1)
+        cm = re.search(r'class\s*=\s*(["\'])([^"\']*)\1', attrs, re.I)
+        if cm:
+            new_attrs = (attrs[:cm.start()] + f'class={cm.group(1)}{cm.group(2)} timing-table{cm.group(1)}'
+                         + attrs[cm.end():])
+        else:
+            new_attrs = attrs.rstrip() + ' class="timing-table"'
+        return f"<table{new_attrs}>" + tbl[open_m.end():]
+    return re.sub(r"<table\b[^>]*>.*?</table>", repl_table, html, flags=re.I | re.S)
+
+
 def _check_l4_order(l4_html: str) -> None:
     """黄灯四类须固定 a→b→c→d 顺序（SKILL.md L4 规范）；检出乱序则告警，由模型修正后重渲。
     不做自动重排——四类内容块结构多变（有/无命中、合并段落），程序重排太脆。"""
@@ -605,6 +631,25 @@ def _check_l4_order(l4_html: str) -> None:
     if seq and seq != sorted(seq):
         print(f"⚠️ L4 黄灯扣分四类顺序应为 a→b→c→d，当前为 {'→'.join(seq)}；"
               f"请调整 l4_html 顺序后重新渲染", file=sys.stderr)
+
+
+def build_prev_strip(prev: dict, research: float, timing, target_range: str) -> str:
+    """回测模式的 Hero 对比条：基于上版日期 + 研究分/时机分/目标价 旧→新。
+    分数差值脚本计算，模型只在 prev 里给上版锚点数据。prev 为空 → 返回空串（非回测模式）。"""
+    if not prev:
+        return ""
+    items = []
+    for label, old, new in (("研究分", _num(prev.get("research")), research),
+                            ("时机分", _num(prev.get("timing")), timing)):
+        if old is not None and new is not None:
+            d = new - old
+            cls = "up" if d >= 0 else "down"
+            items.append(f'{label} {old:.2f}→{new:.2f} <span class="{cls}">({d:+.2f})</span>')
+    if prev.get("target_range"):
+        items.append(f'目标价 {_esc(str(prev["target_range"]))} → {_esc(str(target_range))}')
+    body = ' ｜ '.join(items)
+    return (f'<div class="prev-strip"><span class="prev-tag">复盘更新</span>'
+            f'基于 {_esc(str(prev.get("date", "?")))} 版' + (f' ｜ {body}' if body else '') + '</div>')
 
 
 def render(fill_path: str, out_path: str = None) -> str:
@@ -636,6 +681,14 @@ def render(fill_path: str, out_path: str = None) -> str:
     research = sc["research"]
     timing = sc["timing"]
     red_flag = sc["red_flag"]
+
+    # 回测模式：fill 带 prev 字段（上版锚点）→ Hero 对比条 + R 复盘章节 + 文件名加"复盘"
+    prev = fill.get("prev") or None
+    review_html = fill.get("review_html", "")
+    if prev and not review_html:
+        print("⚠️ 回测模式（prev 已填）但 review_html 为空：R 回测复盘章节将缺失", file=sys.stderr)
+    if review_html and not prev:
+        print("⚠️ 有 review_html 但未填 prev：文件名与 Hero 不会标记「复盘」，请补 prev 字段", file=sys.stderr)
 
     # 双轨判定词（研究分定资格、时机分定节奏；红灯优先）
     if red_flag:
@@ -687,7 +740,11 @@ def render(fill_path: str, out_path: str = None) -> str:
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
         "DASH_HTML": fill.get("dash_html", ""),
-        "POSITION_HTML": fill.get("position_html", ""),
+        "POSITION_HTML": _tag_timing_table(fill.get("position_html", "")),
+        # 回测模式（prev 存在时生效，否则条件块自动删除）
+        "PREV_HTML": build_prev_strip(prev, research, timing, fill.get("target_range", "—")),
+        "PREV_DATE": str((prev or {}).get("date", "—")),
+        "REVIEW_HTML": review_html,
         "GEN_TIME": fill.get("gen_time", date),
         "CALIB_NOTE": fill.get("calib_note", ""),
         "SCORE_TABLE_ROWS": sc["rows_html"],
@@ -737,8 +794,10 @@ def render(fill_path: str, out_path: str = None) -> str:
         raise ValueError(f"残留中文占位符: {sorted(set(leftover_cn))}")
 
     if not out_path:
+        timing_s = f"{timing:.2f}" if timing is not None else "NA"
+        review_tag = "-复盘" if prev else ""
         out_path = os.path.join(os.path.dirname(os.path.abspath(fill_path)),
-                                f"{fill['company']}_{fill['code']}_{research:.2f}_{date}.html")
+                                f"{fill['company']}-{fill['code']}-{research:.2f}-{timing_s}{review_tag}-{date}.html")
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 

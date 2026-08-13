@@ -4,10 +4,11 @@ description: >
   📊 Generate a comprehensive four-layer deep analysis report for any publicly traded company.
   Use when the user asks for stock analysis, company deep dive, 深度分析, 股票分析,
   公司研究, investment research report, or wants a Baofeng Energy-style scoring report.
-  Produces a structured report with L1 Company Essence, L2 Market Timing, L3 Future
-  Expectations, L4 Risk Assessment scoring framework, three-scenario valuation with
-  historical-PE calibration, peer comparison with trend + quality-value matrix, and
-  a post-analysis monitoring dashboard. Triggers on mentions of stock tickers, company
+  Produces a structured report with L1 Company Essence, L2 Valuation, L3 Future
+  Expectations, L4 Risk（红/黄灯双层）scoring framework + 独立时机轨（技术面/筹码面）,
+  three-scenario valuation with historical-PE calibration, peer comparison with
+  trend + 估值-质量散点图, and a post-analysis monitoring dashboard. 同股再分析自动进入
+  回测模式（复盘章节+变更高亮）。Triggers on mentions of stock tickers, company
   names with 分析/报告/研究, or explicit requests for deep analysis.
 metadata:
   clawdbot:
@@ -48,141 +49,27 @@ reference report.
 
 ## Output Method & File Naming
 
-- **Default**: Write the report as a **single self-contained HTML file** in the current working
-  directory. All CSS embedded in `<style>`, no external dependencies. Openable in any browser.
-- **File naming convention**: `[公司名]_[股票代码]_[研究分]_[YYYY-MM-DD].html`
-  - 研究分保留两位小数，如 `7.24`
-  - Example: `宝丰能源_600989_5.66_2026-07-22.html`
-  - English stocks: `Apple_AAPL_6.20_2026-07-22.html`
-  - **港股**：代码用 5 位数字不带后缀，如 `壁仞科技_06082_5.95_2026-07-30.html`（不要写成
-    `06082HK` 或 `06082.HK`——统一 5 位数字，与脚本 secid_of 识别规则一致）
-- **Fallback**: If the user explicitly requests Markdown ("输出md" / "markdown格式"), write `.md` instead.
-  Markdown 版按 Report Output Format 的同一章节顺序输出（H1=公司名、H2=各章节、
-  表格用标准 md 表格、评分用 🟢🟡🔴 emoji 徽章、扣分项用红色文字标注"−X"），
-  内容结构与 HTML 版完全一致，仅排版降级。
-- **When to output inline**: If the user asks for a quick summary or "直接输出", output directly
-  in the conversation. Otherwise always write the file.
-- **After writing**: Inform the user of the file path and offer to adjust any section.
+- **Default**: 单文件自包含 HTML，写在当前工作目录（fill→render 工作流，见 Report Output Format）。
+- **文件命名由脚本完成**：`{公司名}-{代码}-{研究分}-{时机分}-{日期}.html`
+  （回测模式 `…-{时机分}-复盘-{日期}.html`；港股代码 5 位数字不带后缀，如 `06082`）。
+  模型不要自己命名文件。
+- **Fallback**: 用户明确要求 Markdown 时输出 `.md`，章节顺序与 HTML 版一致（评分用 🟢🟡🔴 徽章 emoji）。
+- 用户要求"直接输出/快速总结"时才在对话内联输出，否则一律写文件。
+- **完成后**：告知用户报告路径和研究分+时机分。
 
 ### HTML Styling — 浅色卡片建模风
 
-**Design language**: 浅灰背景 + 白色卡片 + 钢蓝点缀的投资研究报告风格。顶部导航条、
-指标卡条、编号分区卡片。Dense data, no decoration. 参考样式：LBO 模型分析报告（浅色版）。
+**Design language**: 浅灰底 + 白色卡片 + 钢蓝（`#4a6fa5`）点缀的投资研究报告风。
+Dense data, no decoration。**色值/字体/布局的全部权威定义在 `assets/report-template.html`，
+模型从不手写 CSS，也不许 Read 模板"学习结构"**——写 fragment 需要的全部类名与骨架
+（dim-block/badge/table/metric-card/提示卡/高亮等）见 `references/fill-schema.md`，以其为唯一契约。
 
-#### Color Palette
-
-| Role | Color | Usage |
-|------|-------|-------|
-| Page background | `#eef1f5` | 页面底色（浅灰） |
-| Card background | `#ffffff` | 所有内容卡片 |
-| Table header bg | `#f5f7fa` | `<th>` 背景 |
-| Border | `#dde3ea` | 卡片边框、表格分隔线 |
-| Inner divider | `#eef1f5` | 卡片内部细分隔、斑马纹 |
-| Primary text | `#2c3e50` | 正文 |
-| Heading text | `#1a2b4a` | H1、卡片标题 |
-| Muted text | `#8899a6` | 标签、来源标注、辅助信息 |
-| Steel blue accent | `#4a6fa5` | 唯一主强调色：编号标签、图标、目标公司列、矩阵高亮 |
-| Steel blue tint bg | `#eef2f7` | 强调底色（编号标签底、矩阵 target 格） |
-| Info card bg | `#f0f5fa` | 层小结、PE校准逻辑卡 |
-| Positive green | `#6ba86b` | 评分≥7、上涨、利多 |
-| Warning orange | `#d4a24c` | 评分4.0-6.9、中性警示 |
-| Danger red | `#c75b5b` | 评分<4、风险扣分、利空 |
-
-#### Typography
-
-| Element | Font | Size | Weight |
-|---------|------|------|--------|
-| 统一 font stack | `-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`（系统无衬线栈） | 14px body | 400 |
-| 说明 | 数据密集报告不用衬线/楷体正文（楷体小字号可读性差、数字非等宽）；数字列依赖 `font-variant-numeric: tabular-nums` | — | — |
-| H1 | 同上 | 26px | 700 |
-| Section title | 同上 | 15px | 600 |
-| 指标卡大数字 | 同上 | 24px | 700 |
-| Meta/Source | 同上 | 11-12px | 400, muted |
-
-**Number convention**: 金额统一用 ¥/亿 或 ¥/万——同一张表内不混用单位。
-数字列右对齐 + tabular-nums，不追求小数点严格对齐。
-
-#### Layout Structure
-
-报告由以下结构组成（自上至下）：
-
-1. **Topbar** — logo色块（36×36, `#4a6fa5`, 内放公司名首字）+ 标题 + 右侧标签组（报告类型/框架/日期）
-2. **Hero** — H1公司名 + 副标题 + 一句话结论（钢蓝左竖线引用块 `.thesis`）+ **5张指标卡**
-   （股价/市值/PE/研究分+时机分/目标价区间，`.metric-row` + `.metric-card`）
-3. **Section cards** — 每个大章节一张白色卡片 `.section`：
-   - 卡片头 `.section-header`：`.section-num` 编号标签（00/P0/L1-L4/05-10）+ 标题 + 右侧meta
-   - 卡片体 `.section-body`：维度块 `.dim-block`（`.dim-header` 一行排开：维度名+权重+徽章，
-     徽章用 `margin-left:auto` 推到右侧）、表格、`.deduction` 扣分项、`.layer-summary` 小结
-4. **Disclaimer** — `.disclaimer` 底部细字
-
-关键 CSS 类：
-- `.metric-row` + `.metric-card` — 指标卡条（flex，label/value/sub 三层）
-- `.section` / `.section-header` / `.section-body` — 章节卡片
-- `.section-num` — 编号标签（`#eef2f7` 底 + `#4a6fa5` 字）
-- `.dim-header` — 维度头（名称+权重+徽章横排）
-- `.deduction` — 扣分行（红色 `#c75b5b`，左竖线 `#f0d0d0`，每条独立一行）
-- `.layer-summary` — 层小结（`#f0f5fa` 底 + 钢蓝左竖线）
-- `.info-card` / `.warning-card` / `.danger-card` — 蓝/橙/红三种提示卡（左竖线）
-- `.conclusion-box` — 结论框（`#f8fafc` 底 + 边框）
-- `.matrix-table` — 估值-质量矩阵**表格兜底**（优先用 `peers_plot` 字段让脚本生成散点图；表格仅在数据不足时手写，表头/表体一律居中，`.target` 格钢蓝高亮）
-- `.plot-wrap` — 脚本生成图形（05 目标价走廊 / 07 估值-质量散点）的容器，模型从不手写 SVG
-- `.flag-ok` / `.flag-bad` / `.flag-na` — 红旗三态色（✓绿 / ✗红 / △橙），1D 红旗清单行首用
-- `.freeze-first` — 宽表首列冻结（≥5 列数据表如 07 同业指标表，横向滚动时首列常驻）
-- `.source` — 数据来源标注（表格正下方，11px 斜体灰字）
-- `.verdict` — 维度判词（斜体灰字）
-
-#### CSS Skeleton
-
-**不再内嵌在 SKILL.md**——完整 CSS 以 `assets/report-template.html` 内嵌样式为唯一权威版本
-（fill→render 工作流下模型从不手写 CSS）。如需调整样式，直接改模板文件。
-模板与本文档的配色/字体规则如有冲突，以模板为准。
-
-#### Score Badge Convention
-
-| Range | Class | Output |
-|-------|-------|--------|
-| ≥ 7.0 | `badge-green` | `<span class="badge badge-green">8.0</span>` |
-| 4.0–6.9 | `badge-orange` | `<span class="badge badge-orange">5.5</span>` |
-| < 4.0 | `badge-red` | `<span class="badge badge-red">3.2</span>` |
-| Layer scores | `badge-blue` | `<span class="badge badge-blue">L1 7.2</span>` |
-
-Badge 放在维度头 `.dim-header` 行内右侧（`margin-left:auto`），不单独占行：
-
-```html
-<div class="dim-header">
-  <span class="dim-name">1A 赛道与宏观</span>
-  <span class="dim-weight">7%</span>
-  <span class="score-line" style="margin-left:auto;margin-bottom:0;"><span class="badge badge-green">8.0</span></span>
-</div>
-```
-
-#### Data Source Attribution
-
-Every table with financial data must include a source note directly below:
-
-```html
-<table>...</table>
-<span class="source">数据来源：公司2025年年报（2026-03披露），Wind，2026-07-22查询</span>
-```
-
-If data is estimated or from secondary sources: `估算` or `来源：XX，未经审计`.
-
-#### Anti-Patterns (DO NOT)
-
-- No dark background — 本风格是浅色卡片风，页面底色固定 `#eef1f5`
-- No gradients, no `box-shadow`（卡片用 1px border，不用投影）, no rounded corners >8px
-- No emoji in headers — 用 `.section-num` 编号标签
-- No multi-color accent schemes — steel blue (`#4a6fa5`) 是唯一主强调色（绿/橙/红仅用于评分与信号）
-- No `text-shadow` or `transform` effects
-- No external fonts, CDN links, or JavaScript — pure HTML+CSS
-- 评分不允许裸数字，必须带 `.badge` 徽章
-- 表格不允许缺表头、不允许同表混用金额单位；**表头必须与数据列同对齐**——数字列表头
-  `<th class="num">`、居中列表头 `<th class="center">`（与对应 `<td>` 同规则，禁止裸 `<th>`
-  配带类 `<td>`，否则表头左/数据右中对不齐）；矩阵表 `.matrix-table` 表头不加类
-  （CSS 强制居中，见 fill-schema）
-- 金额/户数类数值 ≥1000 必须带千位符（`2,949.2 亿`、`188,153 户`）；
-  年份、PE/PB 倍数、百分比、股价、EPS、评分不加
-- 禁止省略 `.section` 卡片包装——裸文本不配出现在 `.topbar` / `.hero` / `.disclaimer` 之外
+**写作期只需记住的硬规则**：
+- 评分数字一律用 `.badge` 徽章（色阶脚本自动，手写 fragment 时：≥7 绿 / 4.0-6.9 橙 / <4 红）
+- 每张数据表正下方必须有 `<span class="source">数据来源：…</span>`；估算值标 `估算`
+- 金额/户数 ≥1000 带千位符；年份、PE/PB 倍数、百分比、股价、EPS、评分不加
+- 数据表格尽量不加对齐类，交给渲染器统一（数字右/长文左/短标记随列）
+- 禁止暗色背景、渐变、投影、外部字体/CDN/JS
 
 ---
 
@@ -235,10 +122,7 @@ defined by where these 1-2 key variables go, not by arbitrary profit ranges.
 
 ### Phase 1: Research (MANDATORY — do NOT skip)
 
-**数据获取优先级：取数脚本（首选）→ 环境自适应定性搜索 → 委派（极少用）。**
-历史教训：紫光/阳光电源会话里子代理脱离技能上下文 + 环境无 WebSearch，退化为
-74 次 WebFetch 抓搜索页、烧穿额度；"定性搜索只许用 WebSearch"这条规则本身
-是错的——它假设了一个环境未必满足的前提。
+**数据获取优先级：取数脚本（首选）→ 环境自适应定性搜索 → 委派（仅限机械子任务，见 Step 1.3）。**
 
 #### Step 1.0: Structured API Fetch（首选，一条命令完成）
 
@@ -367,15 +251,10 @@ E5 已给出一致 EPS 和目标价（档位B）。若要升级档位A（具体�
 
 #### Step 1.3: 委派子代理（极少用，定性调研禁止委派）
 
-**定性调研一律在主会话内完成，禁止委派子代理。** 实证：紫光/阳光电源两次委派，
-子代理脱离本技能上下文 + 环境无 WebSearch → 自动退化为 74 次 WebFetch 抓搜索页 +
-烧穿额度。委派是最大效率陷阱。
+**定性调研一律在主会话内完成**（子代理脱离技能上下文会退化为抓搜索页，见上方纪律）。
+委派仅允许边界清晰的**机械子任务**（下载指定公告 PDF 并提取某张表、抓取指定 URL 列表的结构化字段），
+且 prompt 必须逐字写入工具限制：
 
-委派仅在以下边界清晰的**机械子任务**才允许，且 prompt 必须逐字写入工具限制：
-- 下载某指定公告 PDF 并提取某张表
-- 抓取某指定 URL 列表的结构化字段
-
-委派 prompt 必须包含（逐字）：
 ```
 你只能使用：curl（东方财富 API）、WebFetch（仅已知 URL）、Read。
 禁止：mcporter、r.jina.ai/s.jina.ai、抓取搜索引擎结果页、加载 agent-reach 技能、
@@ -813,9 +692,9 @@ risk tolerance and portfolio context.
 没有复盘，框架用一百次也不会变好；有了复盘，用户会攒出"个人偏差档案"——
 信息劣势只能靠更快的自我修正弥补。
 
-**触发时机**：到达 6.3 的审查日期、或 6.2 任一触发条件兑现时执行。
+**触发时机**：到达 6.3 的审查日期、或 6.2 任一触发条件兑现时执行（回测模式下执行，见 6.6）。
 
-**复盘四格表**（写入报告附录或独立复盘文件 `[公司名]_[代码]_复盘_[YYYY-MM-DD].md`）：
+**复盘四格表**（写入报告 **R 回测复盘章节**，不再生成独立 `_复盘.md`——两处维护必然不一致，md 已废止）：
 
 | 复盘项 | 当时预测 | 实际结果 | 偏差 | 归因 |
 |--------|---------|---------|------|------|
@@ -830,6 +709,28 @@ risk tolerance and portfolio context.
 
 **偏差档案**：连续多份复盘后，总结反复出现的偏差模式（如"系统性高估项目确定性"
 "系统性低估散户踩踏深度"），并在下一次分析对应维度时主动修正。
+
+#### 6.6 回测模式（MANDATORY — 同股再分析时自动启用）
+
+**触发**：用户要求深度分析的公司，工作目录已存在**同代码**的旧报告
+（文件名 `公司名-代码-研究分-时机分-日期.html` 可解析，取日期最新者）→ 进入回测模式；
+仅当用户明确要求"重新做一份全新报告"时豁免。
+
+**执行顺序（防锚定纪律，写死）**：
+1. **先独立取数、独立打分**——按正常流程跑完数据管线，不许先读旧报告的结论；
+2. 再读旧报告（及同股历史复盘章节），提取：关键假设清单、偏差模式、触发条件清单；
+3. **全量重写报告**（不是局部改写旧文），最后才做新旧对比标注。
+
+**输出差异（相对正常模式）**：
+- fill JSON 加 `prev`（上版 date/research/timing/target_range）+ `review_html`，两者必须成对；
+- 文件名自动变为 `公司名-代码-研究分-时机分-复盘-日期.html`（脚本处理）；
+- Hero 数据条下自动生成「复盘更新」对比条：研究分/时机分（含差值，脚本算）+ 目标价区间 旧→新；
+- **变更高亮纪律**：用 `<span class="rev">` / `<td class="rev">`，只标三类——
+  评分变化（旧→新+一句原因）、被验证/被证伪的关键假设、新增重大变量；宁缺毋滥；
+- **R 回测复盘章节**（09 评分汇总后、10 跟踪仪表盘前）：复盘四格表（6.5）+
+  新财报关键数据 vs 原假设对比表（项目/实际值/原假设/判定）；
+- **10 跟踪仪表盘**：第一段固定为「旧触发条件核对表」（条件/阈值/实际/结论），其后才是新仪表盘；
+- 旧报告文件保留不覆盖（版本链是偏差档案的原始素材）。
 
 ---
 
@@ -864,7 +765,8 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
    脚本完成：三层评分×权重计算（不考虑风险研究分=L1 50+L2 30+L3 20）、扣黄灯得研究分、
    时机分（筹码67+技术33）、徽章色全自动、占位符替换、
    残留校验（发现 `{{}}` 或 `【】` 残留即报错）、按规范自动命名输出
-   `{公司名}_{代码}_{研究分}_{日期}.html`。
+   `{公司名}-{代码}-{研究分}-{时机分}-{日期}.html`
+   （回测模式自动变为 `…-{时机分}-复盘-{日期}.html`，见 6.6）。
    **渲染后检查警告**：若输出含 `⚠️ fill JSON 缺图形字段`（scenarios / peers_plot），
    必须补上字段重新渲染后再交付——缺失时 05 目标价走廊 / 07 散点图会被静默跳过。
 3. **完成后**：删除 `_fill_[代码].json` 临时文件，告知用户报告路径和研究分+时机分。
@@ -885,201 +787,44 @@ Edit 消耗 2.2M input token，占全程 73%）。fill→render 把拼装环节�
 层分、不考虑风险研究分、研究分、时机分、徽章色、加权列、评分汇总表全部由脚本生成——
 报告里的数字与文件名里的研究分必然一致。
 
-报告结构按以下顺序（每个大章节是一张 `.section` 卡片，Topbar/Hero/Disclaimer 除外；
-各片段应包含的要素按此清单写入对应 `_html` 字段）：
+报告章节顺序与**内容要点**（结构骨架/类名/字段契约一律以 `references/fill-schema.md` 为唯一权威——
+写 fragment 前读它，禁止读模板"学习结构"）：
 
-### 1. Topbar（`.topbar`）
+Topbar / Hero / 09 评分汇总 / Disclaimer 由脚本+模板自动完成（Hero 含研究分/时机分双卡，
+回测模式自动加「复盘更新」对比条），模型只需提供对应标量字段。
 
-- 左侧：`.topbar-icon`（36×36 钢蓝色块，内放一个单字如"股"）+ `.topbar-title`（如"个股深度分析引擎"）+ `.topbar-sub`（英文副标题）
-- 右侧：`.topbar-tag` 标签组（报告类型、分析框架、日期；日期用 `.active` 高亮）
-
-### 2. Hero（`.hero`）
-
-- `<h1>` 公司名 + 股票代码
-- `.subtitle`：行业标签 + 报告日期
-- `.thesis`：**一句话结论**——三情景目标价 + 核心逻辑，钢蓝左竖线引用块，涨幅用绿色标注
-- **5 张指标卡**（`.metric-row` + `.metric-card`）：
-  1. 当前股价（sub 行放今日涨跌幅，涨 `.up` 绿 / 跌 `.down` 红）
-  2. 总市值（sub 行放总股本）
-  3. PE(TTM)（sub 行放历史分位）
-  4. **研究分**（badge-lg 徽章）+ sub 行放"不考虑风险研究分 − 黄灯扣分"；**时机分**（badge-lg 徽章）+ sub 行放"技术×33% / 筹码×67%"
-     ——两张卡并列（研究分钢蓝框 / 时机分红绿按值），替代旧单一综合得分卡
-  5. 目标价区间（sub 行放涨跌幅范围）
-
-### 3. 00 核心结论（`.section`）
-
-- 3-5 句总结：公司关键优势、关键弱点、当前市场认知、核心投资逻辑
-- **开头放双轨判词卡**（`.info-card`）：研究分（不考虑风险研究分 − 黄灯扣分）× 时机分，
-  一句话判定（好公司·好时机/差时机、观察池、回避等）
-- 若命中红灯：开头插入 `.danger-card`，写明"🔴 命中红灯风险（[具体项]），触发直接回避"
-  （困境反转型仅豁免财务类红灯，改为明示"本报告为困境反转框架"）
-- 若盈利质量红旗命中 ≥2 项：插入 `.danger-card`，写明"⚠️ 盈利质量存在红旗（[具体项]），利润真实性存疑"
-- 若有显著情绪/筹码风险：用 `.warning-card` 单独提示
-
-### 4. P0 关键利润驱动识别（`.section`）
-
-- **开头声明股票分型**（`.section-tag` + 一句话理由，引用 Phase 0.5 识别特征）：
-  如 `周期股` — "利润随油价大幅波动，2022-2025归母净利在56-113亿间震荡"
-- 敏感性表格（变量/变动幅度/年利润影响/弹性等级★）+ `.source` 标注估算依据
-
-### 5-8. L1-L4 四层评分（各一张 `.section`）
-
-卡片头 `.section-header`：
-- `.section-num`：L1 / L2 / L3 / L4
-- `.section-title`：层名 + 权重 + 一句设问（如"公司本质（50%）— 什么成色"）
-  （分型调整权重时，标题中写调整后的权重；L4 标题为"风险评估（红/黄灯）— 什么会让你亏钱"，不写权重）
-- `.section-meta`：L1/L2/L3 用 `<span class="badge badge-blue">L1 X.XX</span>`；
-  L4 改为 `<span class="badge badge-red">扣 X.X 分</span>` 或 `<span class="badge badge-red">红灯回避</span>`
-
-卡片体 `.section-body`：
-- 每个维度一个 `.dim-block`：`.dim-header`（维度名 + 权重 + 徽章右置）+ 分析正文 + `.verdict` 判词
-- **1D 财务健康**：① 盈利质量红旗清单五项检查表（每项标注 ✓/✗/△ 三态，行首用 `.flag-ok/.flag-bad/.flag-na` 色）
-  ② 3-5 年财务数据表 + `.source` ③ 重资产公司附增量 ROIC 计算（投资额/年增净利/增量ROIC vs WACC）
-- **L2 估值**：估值表 + PE/PB 分位（em_fetch 输出）+ `.source`；得分注明"由 05 三情景中枢与分位推导"
-- **L3 开头**：预测前提用 `<ul>` 列 2-3 条已确认事实
-- **L4 红/黄灯双层**：先列红灯 checklist（逐项"未触发 ✓ / 命中 🔴"），再列黄灯扣分表
-  （四类**固定 a→b→c→d 顺序**，乱序会触发渲染器告警；每类用 `.deduction` 逐条列扣分项，
-  多条之间**不要加 `<br>`**）；`.verdict` 写明"未命中红灯；
-  黄灯共扣 X.X 分（命中 N 项）"；**L4 末尾加 Pre-mortem 卡片**（`.danger-card`）：
-  "假设两年后亏损30%，最可能的故事是……" 3-5 句空头叙事
-- 每层末尾 `.layer-summary`：1-2 句层小结
-
-### 9. 05 估值三情景（`.section`）
-
-本章是全文亮点，视觉锚点 + 逻辑链缺一不可：
-
-- **目标价走廊（视觉锚点，脚本生成）**：fill JSON 顶层填 `scenarios` 字段
-  （`[{"key":"pess","low":294,"high":331}, {"key":"base",...}, {"key":"opt",...}]`），
-  脚本在章节顶部自动生成三情景竖向柱图——x 轴=悲观/基础/乐观三列（与三情景表列方向一致），
-  y 轴=价格，柱体=目标价区间、横刻=中枢、钢蓝水平虚线=现价、柱顶=中枢值与较现价涨跌幅
-  （全部脚本计算，模型不手算）
-- 开头标注分型对应的估值方法（如"本报告按周期股框架，采用 PE 历史时段匹配法"）
-- **三情景对比表**（`table class="scenario-table"`，首列指标名不换行）：
-  悲观（`.scenario-pess`）/ 基础（`.scenario-base`）/ 乐观（`.scenario-opt`），
-  **统一纵向列排列（指标在行、情景在列，参照中国移动报告）**——首列指标名，
-  后续三列悲观/基础/乐观；行含：时间维度、触发条件、关键变量、净利、EPS、PE、目标市值、目标价、较现价；
-  **数据格一律不加类，对齐由渲染器统一**（数字/短值右、长文左；骨架见 fill-schema）
-- `.info-card`：**PE校准逻辑**——历史时段匹配法推导过程（参照时段、当时PE、增速、体量折扣）；
-  非周期股替换为对应方法说明（PB-ROE / rNPV / PEG / 正常化利润PE）
-- **三指标卡条**（`.metric-row` + 3 张 `.metric-card`，内层固定 `label`/`value`/`sub` 三类名——
-  骨架见 fill-schema；渲染器会把幻觉类名 metric-label/value/sub 自动归一，但应直接写对）：
-  1. **年化中枢期望收益**（sub 行同时显示未年化总值 + 时间维度；负值红色并标注"回避"）
-  2. **赔率**（公式见 Phase 3；悲观下限>现价时显示 ∞，绿色）
-  3. **情景离散度**（<30% 绿色"可预测"/30-60% 橙色"中不确定"/>60% 红色"高发散"）
-- 条件性定性概率提示（仅当有强外部证据时，`.warning-card`，只定性不定量）
-- 条件性 DCF 表（仅当过去5年 FCF/净利润>70% 且波动率<30% 时输出）
-
-### 10. 06 市场预期差拆解（`.section`）
-
-- 按 Phase 3 的三档降级输出（档位A完整对照表 / 档位B反推隐含假设 / 档位C只列分歧维度）
-- 卖方假设必须带来源；档位C明确标注"卖方假设未披露"
-- 末尾一句话总结：本文比卖方更乐观/更悲观/基本一致 + 预期差被证伪时的修正方向
-
-### 11. 07 同业横向对比（`.section`）
-
-- **当前指标表**：目标公司列加粗 + 钢蓝色（`style="color:#4a6fa5;font-weight:700;"`），4-5 家可比公司 + `.source`；
-  **纯文字行（如"核心业务"）单元格不加 num/center 类**——渲染器会把 num 列中的纯文字格自动纠偏为左对齐
-- **3年趋势表**：ROE/毛利率/净利率/负债率变化，方向**一律用文字标注**（升/降/缓升/缓降/大升/大降/平，
-  幅度约定与骨架见 fill-schema），不用单个箭头；方向词用 `up/down` 着色，**按指标语义定色**
-  （盈利指标升绿降红，负债率降绿升红）+ `.source`
-- **估值-质量散点图**：填顶层 `peers_plot` 字段（格式见 §4.3），脚本在章节顶部生成
-  直角坐标系散点图（ROE × PE 精确点位，3×3 分带，目标公司钢蓝高亮）；
-  **填了 peers_plot 就不要再写 matrix-table 九宫格**（两图并存冗余，渲染器检测到会直接删除并告警）；
-  数据不足时才允许手写 `.matrix-table` 兜底（目标公司格用 `.target` 高亮）
-- `.conclusion-box`：3-5 条同业对比结论（① ② ③ 编号列表）
-
-### 12. 08 周期规律（`.section`，条件触发）
-
-按 Phase 5 启动条件判断，不满足则整张卡片跳过。
-- 阶段拆解表：阶段/时间/股价/PE/驱动因素
-- `.conclusion-box`：3-5 条可复用规律
-
-### 13. 09 评分汇总（`.section`）
-
-- **研究层加权表**：三层（L1 本质 50% / L2 估值 30% / L3 预期 20%），L1/L3 按维度列行
-  （1A-1E、3A-3C 各维度 + 徽章），L2 单行（2A 独占）；层级列用 `rowspan` 合并；
-  得分列一律 badge 徽章
-- **不考虑风险研究分行**（L1+L2+L3 加权小计）→ **黄灯扣分行**（−X.X，列明命中项）→
-  **研究分行**（最终，`style="border-top:2px solid #dde3ea;"` + badge-lg）
-- **本章只放研究层**：时机轨表不在此重复（时机分已在 Hero 双分、00 meta、11 时机判定小表呈现；
-  研究分是"质"，时机分是"节奏"，混在一章会误导读者以为时机分入研究分）
-- 若命中红灯：表首加 `.danger-card` "🔴 红灯回避"，研究分仍列示但标注"仅作研究参考"
-
-### 14. 10 跟踪仪表盘（`.section`）
-
-- `.section-meta` 放下次审查日期
-- 关键跟踪指标表（#/指标/当前值/关注原因/更新频率）+ `.source`
-- 重新评估触发条件表（触发条件/阈值/操作）
-- **复盘占位提示**：写明"到达审查日或触发条件兑现时，按 Phase 6.5 复盘四格表执行复盘，
-  生成 `[公司名]_[代码]_复盘_[日期].md`"
-
-### 15. 11 仓位与时机决策（`.section`）
-
-- **时机判定小表**（先于仓位表）：技术面（得分×33%）/ 筹码面（得分×67%）/ 时机分；
-  技术面/筹码面的分析过程在此呈现（趋势/均线/支撑压力表 + 户数/北向/机构/减持表 + `.source`）
-- **双输入仓位映射表**：研究分（徽章）/ 时机分（徽章）/ 双轨判定 / 基准仓位
-- **调整行**：离散度调节（>60% 降档 /<30% 升档）+ 赔率调节（∞ 升档 / 中枢收益为负→回避），
-  列出最终仓位建议
-- `.info-card`：一句话决策逻辑（研究分定入池资格、时机分定建仓节奏 + 离散度/赔率理由）
-
-### 16. 跨股对比（`.section`，条件触发）
-
-仅当用户请求对比多只股票、或工作目录中已有多份本框架报告时输出（可独立生成）。
-表格列：股票 / 分型 / **研究分** / **时机分** / L1本质 / **年化中枢期望收益** / 赔率 / 离散度 / 悲观回撤 / 仓位建议。
-注意：跨股对比只在同一年化口径下有意义；分型不同的股票，评分本身不完全可比，
-表中必须保留分型列提醒读者。
-不给出唯一"标准答案"——用 `.conclusion-box` 分列两种偏好的选择：
-求稳（高L1+低离散+高赔率）vs 求弹性（高年化中枢收益+可承受离散）。
-
-### 17. Disclaimer（`.disclaimer`）
-
-```
-本报告为AI生成的研究笔记，不构成投资建议。所有数据和结论基于公开信息，
-可能存在偏差和错误。生成时间：[Timestamp]。
-```
+- **00 核心结论**：开头双轨判词卡（研究分×时机分一句话判定）；命中红灯 → 首部 `.danger-card`
+  （困境反转型改为明示框架）；盈利质量红旗命中 ≥2 项 → `.danger-card` 置顶"利润真实性存疑"；
+  显著情绪/筹码风险 → `.warning-card`
+- **P0**：开头声明分型（一句话理由）+ 敏感性表（★弹性等级）+ `.source`
+- **L1-L4**：每维度一个 dim-block（名称+权重+徽章+正文+`.verdict` 判词），层末 `.layer-summary`。
+  1D 含红旗五项三态表+3-5 年财务表（重资产附增量 ROIC）；L2 得分注明"由 05 中枢与分位推导"；
+  L3 开头 `<ul>` 列 2-3 条已确认事实；L4 红灯 checklist → 黄灯四类（**固定 a→b→c→d**，
+  deduction 间不加 `<br>`）→ verdict → 末尾 Pre-mortem `.danger-card`
+- **05 估值三情景**：填 `scenarios`（走廊图脚本生成）+ 三情景表（scenario-table 骨架）+
+  PE 校准逻辑 info-card + 三指标卡条（年化中枢/赔率/离散度）+ 条件性概率提示/DCF 表（条件见 Phase 3）
+- **06 预期差**：按 Phase 3 三档输出（卖方假设必须带来源）；末尾一句话总结（更乐观/悲观/一致
+  + 证伪时修正方向）
+- **07 同业**：当前指标表（目标公司列加粗钢蓝）+ 3年趋势表（文字方向标注，不用箭头）+
+  `peers_plot` 散点（勿再手写九宫格）+ `.conclusion-box` 3-5 条结论
+- **08 周期**：满足 Phase 5 条件才输出；阶段拆解表 + `.conclusion-box` 可复用规律
+- **R 回测复盘**（回测模式专属）：复盘四格表 + 新财报数据 vs 原假设对比表（见 6.5/6.6）
+- **10 跟踪仪表盘**：跟踪指标表 + 触发条件表；回测模式第一段固定为「旧触发条件核对表」；
+  末尾复盘占位提示（按 6.5/6.6 进入回测模式，不再生成独立 md）
+- **11 仓位与时机**：时机判定小表（技术面/筹码面/时机分，渲染器自动补 timing-table 类）→
+  双输入仓位映射表 → 离散度/赔率调整行 → `.info-card` 一句话决策逻辑
+- **跨股对比**（条件触发）：仅用户要求多股对比、或目录已有多份本框架报告时输出；
+  模板无独立章节，附加在 `position_html` 末尾。列：股票/分型/研究分/时机分/L1/年化中枢收益/
+  赔率/离散度/悲观回撤/仓位建议；只在同一年化口径下可比，分型列必须保留；
+  `.conclusion-box` 分列"求稳 vs 求弹性"两种选择，不给唯一答案
 
 ---
 
-## Analytical Tips from Historical Reports
+## Analytical Tips
 
-These insights, distilled from the Baofeng Energy analysis and applicable across companies,
-should inform scoring and reasoning throughout the report:
-
-1. **PE波动幅度远超利润波动。** 周期股最大的风险和机会都不在利润，在估值倍数。PE
-   振幅往往是利润振幅的2-3倍。分析时必须同时考虑"利润可能怎么变"和"PE可能怎么变"。
-
-2. **"事件驱动→PE先杀→利润后跌"是周期见顶的标准顺序。** PE变动领先产品价格约1-2个月。
-   当重大利空事件发生时，市场先杀估值，利润下滑随后才在财报中体现。同理，反转时
-   PE先涨、利润后涨。这意味着仅看当期利润判断估值会滞后。
-
-3. **产能扩张是穿越周期的唯一硬逻辑。** 即使吨利润腰斩，产能翻倍后的总利润可能
-   仍然高于以前。评估周期股时，产能轨迹比当期利润率更重要。
-
-4. **"业绩确认"是扭转悲观定价的关键节点。** 财报不是用来验证利润是否惊艳，而是
-   确认"结构性变化"（如产能扩张贡献）是否已经发生。一旦确认永久性因子，PE会向
-   正常化中枢回归。
-
-5. **PE历史波动范围是估值时必须尊重的"锚"。** 每只股票都有自己的PE波动区间——
-   找出过去3-5年的PE最低值和最高值，这是市场在不同环境下给予该股票的估值边界。
-   突破历史区间的PE需要"这次不一样"级别的理由。
-
-6. **PE分位在历史最低≠便宜。** 这是周期股最常见的估值陷阱——当前PE在历史最低
-   分位，仅仅是因为当前利润在历史最高。应计算"正常化利润PE"而非"峰值利润PE"。
-
-7. **周期股铁律：利润增速越高PE越低。** 暴利被市场视为"不可持续"——市场不给溢价
-   反而给折价。增速+50%时PE可能只有12-15x，而增速0%稳定利润反而能享受18-20x。
-   PE和增速呈反向关系，这是周期股区别于成长股的核心特征。
-
-8. **股东户数暴增+机构退出=典型周期股顶部信号。** 筹码结构比股价更能揭示风险。
-   散户涌入、机构退出的阶段，即使基本面良好，股价也可能因筹码松动而大幅回调。
-
-9. **筹码结构差但PE已有折价时，最惨烈的阶段可能已经过去。** 散户踩踏的杀伤力
-   在于"估值从合理杀到低估"这一段。如果PE已经跌至历史底部区域，即使筹码未改善，
-   下行空间也有限——市场已经定价了部分悲观预期。
-
-10. **任何单一外部变量主导利润的公司，本质是一个"变量看涨期权"。** 如果油价/煤价/
-    汇率/政策决定了>50%的利润方向，那么分析的核心不是公司本身，而是那个外部变量。
-    诚实面对这一点，不要把变量预判伪装成公司分析。
+宝丰能源报告提炼的 10 条分析经验（PE 波动领先利润、周期股增速与 PE 反相关、
+筹码顶部信号等），在 Phase 2 评分与 Phase 3 估值时参考——
+见 `references/analytical-tips.md`（评分前读一次即可，不必每次重读）。
 
 ---
 
@@ -1087,19 +832,8 @@ should inform scoring and reasoning throughout the report:
 
 When data is incomplete, use the following degradation ladder. **Never fabricate data.**
 Flag all uncertain numbers with explicit markers.
-
-**取数降级链（任一数据项通用）**：
-
-```
-em_fetch.py（data-sources.md，首选：tushare 优先、东财自动兜底）
-  → 超时/失败，重试一次
-    → 仍失败 → 妙想 MCP 直查（mx_ashare/hk_finance_data 等，如在工具列表；港股财务首选）
-      → 仍失败 → 东财手工 curl 补特定字段（港股财务 HKF10 等，见 data-sources.md）
-        → 仍失败 → 定性查询（有WebSearch用WebSearch；有妙想用 mx_finance_search_news/notice；都无则E7+10jqka已知URL）
-          → 仍无 → 委派仅限边界清晰机械任务（见Step 1.3，定性调研禁委派）
-            → 仍无 → 按下表降级规则处理，禁止编造
-遇 429：立即停止当前路径整条链，切下一级，禁止硬挺。
-```
+取数路径与降级顺序见 Phase 1（Step 1.0 → 妙想 MCP → 手工 curl → 定性查询 → 委派），
+遇 429 立即切下一级；本节只规定"实在拿不到"时的处理方式：
 
 ### Degradation Ladder
 

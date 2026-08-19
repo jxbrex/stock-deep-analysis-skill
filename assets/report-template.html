@@ -7,7 +7,8 @@
 <!--
   本模板由 scripts/render_report.py 渲染，占位符为双花括号唯一键（形如 COMPANY、DATE）。
   章节正文的 HTML 结构骨架见 references/fill-schema.md（dim-block/table/deduction/badge 等写法）。
-  条件章节：IF:CYCLE_HTML 包裹的块在 CYCLE_HTML 为空时整块删除。
+  条件章节：IF:CYCLE_HTML / IF:REVIEW_HTML 包裹的块在对应键为空时整块删除。
+  三轨制：质量分（L1 六维 + L3）/ 估值分（独立价格轨）/ 时机分（微调）。
 -->
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -19,9 +20,8 @@ body {
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .up { color: #6ba86b; }
 .down { color: #c75b5b; }
-/* 脚本生成图形（目标价走廊 / 估值-质量散点）的容器 */
+.mid { color: #c08a2e; }
 .plot-wrap { margin: 4px 0 6px; border: 1px solid #eef1f5; border-radius: 6px; background: #fbfcfd; padding: 12px 10px 6px; }
-/* SVG 按 1000px 宽度设计，超过即居中停放，避免文字随容器放大而大于正文 */
 .plot-wrap svg { max-width: 1000px; margin: 0 auto; }
 .topbar { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 24px; margin-bottom: 16px; }
 .topbar-left { display: flex; align-items: center; gap: 12px; }
@@ -31,42 +31,45 @@ body {
 .topbar-right { display: flex; align-items: center; gap: 16px; }
 .topbar-tag { font-size: 11px; color: #8899a6; border: 1px solid #dde3ea; border-radius: 4px; padding: 3px 8px; }
 .topbar-tag.active { background: #4a6fa5; color: #fff; border-color: #4a6fa5; }
-.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 26px 32px 22px; margin-bottom: 16px; }
-.hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 28px; margin-bottom: 18px; }
-.hero-id { min-width: 0; }
+.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
+.hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
+.hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; }
+.hero-id { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
 .hero h1 { font-size: 26px; font-weight: 700; color: #1a2b4a; margin: 0 0 4px; }
 .hero .subtitle { font-size: 12.5px; color: #8899a6; }
-.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 18px; max-width: 75ch; }
-/* Hero 双分（视觉焦点）：研究分=钢蓝主色（框架结论），时机分按值取信号色 */
-.hero-scores { display: flex; border: 1px solid #dde3ea; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
-.hero-score { padding: 14px 24px; text-align: center; min-width: 118px; }
-.hero-score.research { background: #f0f5fa; }
-.hero-score.timing { background: #fff; border-left: 1px solid #dde3ea; }
-.hero-score .s-label { font-size: 11px; color: #8899a6; letter-spacing: 1.5px; margin-bottom: 2px; }
-.hero-score .s-value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
-.hero-score.research .s-value { color: #4a6fa5; }
-.hero-score .s-value.score-good { color: #6ba86b; }
-.hero-score .s-value.score-mid { color: #c08a2e; }
-.hero-score .s-value.score-bad { color: #c75b5b; }
-.hero-score .s-sub { font-size: 11px; color: #8899a6; margin-top: 3px; }
-/* Hero 数据条（次要信息去卡片化）：label/value/sub 三层竖排，均分横排 */
-.hero-data-strip { display: flex; border-top: 1px solid #eef1f5; padding-top: 14px; }
-.hero-data-strip .d-item { flex: 1; min-width: 0; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 10px; max-width: 75ch; }
+/* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
+.hero-tracks { display: flex; gap: 16px; align-items: center; flex-shrink: 0; }
+.hero-track { text-align: center; border: 1px solid #dde3ea; border-radius: 8px; padding: 18px 34px; min-width: 150px; display: flex; flex-direction: column; justify-content: center; }
+.hero-track.quality { background: #f0f5fa; }
+.hero-track.valuation { background: #fff; }
+.hero-track .s-label { font-size: 11px; color: #8899a6; letter-spacing: 1.2px; margin-bottom: 3px; }
+.hero-track .s-value { font-size: 42px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.hero-track.quality .s-value { color: #4a6fa5; }
+.hero-track.valuation .s-value.score-good { color: #6ba86b; }
+.hero-track.valuation .s-value.score-mid { color: #c08a2e; }
+.hero-track.valuation .s-value.score-bad { color: #c75b5b; }
+.hero-track .s-sub { font-size: 11px; color: #8899a6; margin-top: 2px; }
+/* 时机分：一行灰字，弱化但可读（不偷感） */
+.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #9aa7b4; letter-spacing: 0.3px; text-align: center; }
+.hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
+.hero-data-strip { display: flex; border-top: 1px solid #eef1f5; padding-top: 10px; }
+.hero-data-strip .d-item { flex: 1; min-width: 0; text-align: center; }
 .hero-data-strip .d-item + .d-item { border-left: 1px solid #eef1f5; padding-left: 18px; margin-left: 18px; }
 .hero-data-strip .d-label { font-size: 11px; color: #8899a6; margin-bottom: 3px; }
-.hero-data-strip .d-value { font-size: 17px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
+.hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
 .hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #8899a6; }
 .hero-data-strip .d-sub { font-size: 11px; color: #8899a6; margin-top: 3px; }
-.hero-data-strip .d-sub .up { color: #6ba86b; }
-.hero-data-strip .d-sub .down { color: #c75b5b; }
 .metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
-.metric-card { flex: 1; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 16px 18px; }
+.metric-card { flex: 1; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 16px 18px; text-align: center; }
 .metric-card .label { font-size: 11px; color: #8899a6; margin-bottom: 4px; }
 .metric-card .value { font-size: 24px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
 .metric-card .value .unit { font-size: 13px; font-weight: 400; color: #8899a6; }
 .metric-card .sub { font-size: 11px; color: #8899a6; margin-top: 4px; }
-.metric-card .sub .up { color: #6ba86b; }
-.metric-card .sub .down { color: #c75b5b; }
+/* 三指标卡 value 着色（优先级高于 .metric-card .value 的默认色） */
+.metric-card .value.up { color: #6ba86b; }
+.metric-card .value.down { color: #c75b5b; }
+.metric-card .value.mid { color: #c08a2e; }
 .section { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
 .section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #eef1f5; background: #fafbfc; }
 .section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #eef2f7; border-radius: 4px; padding: 2px 8px; }
@@ -78,7 +81,9 @@ body {
 .badge-orange { background: #c08a2e; }
 .badge-red { background: #c75b5b; }
 .badge-blue { background: #4a6fa5; }
+.badge-gray { background: #b0bac4; }
 .badge-lg { font-size: 15px; padding: 3px 10px; }
+.section-tag { display: inline-block; background: #eef2f7; color: #4a6fa5; border: 1px solid #dde3ea; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
 .muted { color: #8899a6; }
 .verdict { color: #8899a6; margin: 8px 0 16px; font-size: 13px; border-left: 2px solid #dde3ea; padding-left: 10px; }
@@ -89,7 +94,6 @@ tbody tr:nth-child(even) td { background: #fafbfc; }
 tr:hover td { background: #f0f5fa; }
 td.num, th.num { text-align: right; }
 td.center, th.center { text-align: center; }
-/* 宽表首列冻结：横向滚动时首列常驻（同业对比表用 table class="freeze-first"） */
 .freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fff; z-index: 2; box-shadow: 1px 0 0 #eef1f5; }
 .freeze-first th:first-child { background: #f5f7fa; z-index: 3; }
 .freeze-first tbody tr:nth-child(even) td:first-child { background: #fafbfc; }
@@ -100,13 +104,9 @@ td.center, th.center { text-align: center; }
 .danger-card { background: #fdf0f0; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .info-card { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .deduction { color: #c75b5b; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
-/* .deduction 是块级元素，模型若在两条之间塞 <br> 会多出空行——直接隐藏 */
 .deduction + br { display: none; }
-/* 05 三情景表：首列指标名短（时间维度/触发条件/目标价…），不允许折行 */
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
-/* 11 时机判定小表：除末列（依据长文）外一律不换行（维度/得分×权重列窄，折行难看） */
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
-/* 回测模式：Hero 对比条 + 复盘更新标签 + 变更高亮 */
 .prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eef1f5; font-size: 12px; color: #5a6b7d; }
 .prev-tag { display: inline-block; background: #eef2f7; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
 .rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
@@ -114,7 +114,6 @@ td.rev, th.rev { padding: 8px 12px; }
 .scenario-pess { color: #c75b5b; }
 .scenario-base { color: #c08a2e; }
 .scenario-opt { color: #6ba86b; }
-/* 盈利质量红旗三态（红旗清单每行用 span 包裹） */
 .flag-ok { color: #6ba86b; font-weight: 600; }
 .flag-bad { color: #c75b5b; font-weight: 600; }
 .flag-na { color: #b8955a; font-weight: 600; }
@@ -125,6 +124,13 @@ td.rev, th.rev { padding: 8px 12px; }
 .dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eef1f5; }
 .dim-name { font-size: 14px; font-weight: 600; color: #2c3e50; }
 .dim-weight { font-size: 11px; color: #8899a6; }
+/* 10 三轨评分三行公式（精简汇总） */
+.track-summary { background: #f8fafc; border: 1px solid #dde3ea; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
+.ts-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
+.ts-row + .ts-row { border-top: 1px solid #eef1f5; }
+.ts-label { min-width: 48px; color: #8899a6; font-size: 12px; }
+.ts-formula { color: #5a6b7d; font-variant-numeric: tabular-nums; }
+.decision-bar { background: #f0f5fa; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
 .disclaimer { color: #8899a6; font-size: 11px; border-top: 1px solid #dde3ea; padding-top: 16px; margin-top: 24px; }
 .table-scroll { overflow-x: auto; }
 @media (max-width: 768px) {
@@ -133,9 +139,9 @@ td.rev, th.rev { padding: 8px 12px; }
   .metric-card { min-width: calc(50% - 6px); }
   .hero { padding: 20px; }
   .hero-top { flex-direction: column; gap: 14px; }
-  .hero-scores { align-self: stretch; }
-  .hero-score { flex: 1; min-width: 0; padding: 12px 14px; }
-  .hero-score .s-value { font-size: 26px; }
+  .hero-tracks { align-self: stretch; justify-content: space-around; gap: 12px; }
+  .hero-track { flex: 1; min-width: 0; }
+  .hero-track .s-value { font-size: 30px; }
   .hero-data-strip { flex-wrap: wrap; }
   .hero-data-strip .d-item { flex: 1 1 calc(50% - 12px); margin-top: 10px; }
   .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
@@ -156,34 +162,37 @@ td.rev, th.rev { padding: 8px 12px; }
     <div class="topbar-icon">{{TOP_ICON}}</div>
     <div>
       <div class="topbar-title">个股深度分析引擎</div>
-      <div class="topbar-sub">Four-Layer Scoring Framework · Equity Research</div>
+      <div class="topbar-sub">Three-Track Framework · Quality × Valuation × Timing</div>
     </div>
   </div>
   <div class="topbar-right">
     <span class="topbar-tag">深度分析</span>
-    <span class="topbar-tag">四层评分框架</span>
+    <span class="topbar-tag">三轨制</span>
     <span class="topbar-tag active">{{DATE}}</span>
   </div>
 </div>
 
-<!-- Hero -->
+<!-- Hero：三轨（质量分 + 估值分 双主分，时机分弱化） -->
 <div class="hero">
   <div class="hero-top">
     <div class="hero-id">
       <h1>{{COMPANY}}（{{CODE}}）</h1>
       <div class="subtitle">{{SUBTITLE}}｜报告日期：{{DATE}}</div>
     </div>
-    <div class="hero-scores">
-      <div class="hero-score research">
-        <div class="s-label">研究分</div>
-        <div class="s-value">{{RESEARCH_SCORE}}</div>
-        <div class="s-sub">不考虑风险 {{PRE_RISK_RESEARCH}} − 黄灯 {{YELLOW_TOTAL}}</div>
+    <div class="hero-scores-col">
+      <div class="hero-tracks">
+        <div class="hero-track quality">
+          <div class="s-label">质量分</div>
+          <div class="s-value">{{QUALITY_SCORE}}</div>
+          <div class="s-sub">L1 {{L1_W}}% + L3 {{L3_W}}% − 黄灯 {{YELLOW_TOTAL}}</div>
+        </div>
+        <div class="hero-track valuation">
+          <div class="s-label">估值分</div>
+          <div class="s-value {{VALUATION_VALUE_CLASS}}">{{VALUATION_SCORE}}</div>
+          <div class="s-sub">安全边际 · 由三情景推导</div>
+        </div>
       </div>
-      <div class="hero-score timing">
-        <div class="s-label">时机分</div>
-        <div class="s-value {{TIMING_VALUE_CLASS}}">{{TIMING_SCORE}}</div>
-        <div class="s-sub">筹码×67% / 技术×33%</div>
-      </div>
+      <div class="hero-timing-mini">时机分 <span class="tv">{{TIMING_SCORE}}</span> · 微调 ±1 档</div>
     </div>
   </div>
   <div class="thesis">
@@ -216,22 +225,23 @@ td.rev, th.rev { padding: 8px 12px; }
   <!--ENDIF-->
 </div>
 
-<!-- 00 核心结论 -->
+<!-- 1 核心结论 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">00</span>
+    <span class="section-num">1</span>
     <span class="section-title">核心结论</span>
-    <span class="section-meta">研究分 {{RESEARCH_SCORE}} ｜ 时机分 {{TIMING_SCORE}}</span>
+    <span class="section-meta">质量分 {{QUALITY_SCORE}} ｜ 估值分 {{VALUATION_SCORE}} ｜ 时机分 {{TIMING_SCORE}}</span>
   </div>
   <div class="section-body">
+    {{RED_FLAG_HTML}}
     {{CONCLUSION_HTML}}
   </div>
 </div>
 
-<!-- P0 关键利润驱动 -->
+<!-- 2 关键利润驱动 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">P0</span>
+    <span class="section-num">2</span>
     <span class="section-title">关键利润驱动识别</span>
   </div>
   <div class="section-body">
@@ -239,47 +249,35 @@ td.rev, th.rev { padding: 8px 12px; }
   </div>
 </div>
 
-<!-- L1 公司本质 -->
+<!-- 3 公司本质 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">L1</span>
-    <span class="section-title">公司本质（{{L1_W}}%）— 什么成色</span>
-    <span class="section-meta"><span class="badge badge-blue">L1 {{L1_SCORE}}</span></span>
+    <span class="section-num">3</span>
+    <span class="section-title">公司本质 — 什么成色</span>
+    <span class="section-meta"><span class="badge badge-blue badge-lg">{{L1_SCORE}}</span> 占质量分 {{L1_W}}%</span>
   </div>
   <div class="section-body">
     {{L1_HTML}}
   </div>
 </div>
 
-<!-- L2 估值水平 -->
+<!-- 4 未来预期 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">L2</span>
-    <span class="section-title">估值水平（{{L2_W}}%）— 现在贵不贵</span>
-    <span class="section-meta"><span class="badge badge-blue">L2 {{L2_SCORE}}</span></span>
-  </div>
-  <div class="section-body">
-    {{L2_HTML}}
-  </div>
-</div>
-
-<!-- L3 未来预期 -->
-<div class="section">
-  <div class="section-header">
-    <span class="section-num">L3</span>
-    <span class="section-title">未来预期（{{L3_W}}%）— 利润往哪走</span>
-    <span class="section-meta"><span class="badge badge-blue">L3 {{L3_SCORE}}</span></span>
+    <span class="section-num">4</span>
+    <span class="section-title">未来预期 — 利润往哪走</span>
+    <span class="section-meta"><span class="badge badge-blue badge-lg">{{L3_SCORE}}</span> 占质量分 {{L3_W}}%</span>
   </div>
   <div class="section-body">
     {{L3_HTML}}
   </div>
 </div>
 
-<!-- L4 风险评估 -->
+<!-- 5 风险评估（质量轨门禁） -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">L4</span>
-    <span class="section-title">风险评估（红/黄灯）— 什么会让你亏钱</span>
+    <span class="section-num">5</span>
+    <span class="section-title">风险评估（红/黄灯）— 质量轨门禁</span>
     <span class="section-meta"><span class="badge badge-red">扣 {{YELLOW_TOTAL}} 分</span></span>
   </div>
   <div class="section-body">
@@ -287,37 +285,53 @@ td.rev, th.rev { padding: 8px 12px; }
   </div>
 </div>
 
-<!-- 05 估值三情景 -->
+<!-- 6 质量分汇总（脚本生成，模型不写） -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">05</span>
-    <span class="section-title">估值三情景（{{VALUATION_METHOD}}）</span>
-    <span class="section-meta">{{STOCK_TYPE}}</span>
+    <span class="section-num">6</span>
+    <span class="section-title">质量分汇总</span>
+    <span class="section-meta">质量分 {{QUALITY_SCORE}}</span>
   </div>
   <div class="section-body">
+    {{SCORE_SUMMARY_HTML}}
+  </div>
+</div>
+
+<!-- 7 估值与安全边际（估值轨，原 05） -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">7</span>
+    <span class="section-title">估值与安全边际（{{VALUATION_METHOD}}）</span>
+    <span class="section-meta"><span class="badge {{VALUATION_BADGE_CLASS}} badge-lg">估值分 {{VALUATION_SCORE}}</span> ｜ {{STOCK_TYPE}}</span>
+  </div>
+  <div class="section-body">
+    {{VALUATION_PROCESS_HTML}}
     <!--IF:SCENARIO_SPECTRUM_HTML-->
     {{SCENARIO_SPECTRUM_HTML}}
+    <!--ENDIF-->
+    <!--IF:SCENARIO_BLOCK_HTML-->
+    {{SCENARIO_BLOCK_HTML}}
     <!--ENDIF-->
     {{VALUATION_HTML}}
   </div>
 </div>
 
-<!-- 06 市场预期差拆解 -->
+<!-- 8 市场预期差拆解 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">06</span>
+    <span class="section-num">8</span>
     <span class="section-title">市场预期差拆解</span>
-    <span class="section-meta">档位{{GAP_TIER}}</span>
+    <span class="section-meta">档位 {{GAP_TIER}}</span>
   </div>
   <div class="section-body">
     {{GAP_HTML}}
   </div>
 </div>
 
-<!-- 07 同业横向对比 -->
+<!-- 9 同业横向对比 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">07</span>
+    <span class="section-num">9</span>
     <span class="section-title">同业横向对比</span>
     <span class="section-meta">{{PEERS_META}}</span>
   </div>
@@ -330,10 +344,10 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!--IF:CYCLE_HTML-->
-<!-- 08 周期规律（条件章节：CYCLE_HTML 为空时整块删除） -->
+<!-- 10 周期规律（条件章节） -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">08</span>
+    <span class="section-num">10</span>
     <span class="section-title">周期规律</span>
     <span class="section-meta">{{CYCLE_META}}</span>
   </div>
@@ -343,32 +357,36 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 <!--ENDIF-->
 
-<!-- 09 评分汇总（脚本计算生成，含算术校验） -->
+<!-- 11 仓位与时机决策 -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">09</span>
-    <span class="section-title">研究层评分汇总（三层制）</span>
-    <span class="section-meta">脚本计算·算术保证</span>
+    <span class="section-num">11</span>
+    <span class="section-title">仓位与时机决策</span>
+    <span class="section-meta">质量分 {{QUALITY_SCORE}} × 估值分 {{VALUATION_SCORE}} ｜ 时机分 {{TIMING_SCORE}} 微调</span>
   </div>
   <div class="section-body">
-    {{RED_FLAG_HTML}}
-    <div class="table-scroll">
-    <table>
-      <tr><th>层级</th><th>维度</th><th class="center">得分</th><th class="num">权重</th><th class="num">加权</th></tr>
-      {{SCORE_TABLE_ROWS}}
-      <tr style="border-top:1px solid #dde3ea;"><td colspan="2"><strong>不考虑风险研究分</strong>（L1+L2+L3）</td><td class="center">—</td><td class="num">100%</td><td class="num" style="font-weight:700;">{{PRE_RISK_RESEARCH}}</td></tr>
-      <tr><td colspan="2"><strong>黄灯扣分</strong>（L4 风险双层）</td><td class="center">—</td><td class="num">—</td><td class="num" style="color:#c75b5b; font-weight:700;">−{{YELLOW_TOTAL}}</td></tr>
-      <tr style="border-top:2px solid #dde3ea;"><td colspan="2"><strong>研究分</strong>（最终）</td><td class="center"><span class="badge {{RESEARCH_BADGE_CLASS}} badge-lg">{{RESEARCH_SCORE}}</span></td><td class="num">—</td><td class="num" style="font-weight:700;">{{RESEARCH_SCORE}}</td></tr>
-    </table>
-    </div>
+    {{POSITION_HTML}}
+    {{POSITION_CARD_HTML}}
+  </div>
+</div>
+
+<!-- 12 跟踪仪表盘 -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-num">12</span>
+    <span class="section-title">跟踪仪表盘</span>
+    <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
+  </div>
+  <div class="section-body">
+    {{DASH_HTML}}
   </div>
 </div>
 
 <!--IF:REVIEW_HTML-->
-<!-- R 回测复盘（条件章节：fill 带 review_html 时存在；回测模式专属） -->
+<!-- 13 回测复盘（条件章节） -->
 <div class="section">
   <div class="section-header">
-    <span class="section-num">R</span>
+    <span class="section-num">13</span>
     <span class="section-title">回测复盘</span>
     <span class="section-meta">基于 {{PREV_DATE}} 版报告</span>
   </div>
@@ -378,33 +396,9 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 <!--ENDIF-->
 
-<!-- 10 跟踪仪表盘 -->
-<div class="section">
-  <div class="section-header">
-    <span class="section-num">10</span>
-    <span class="section-title">跟踪仪表盘</span>
-    <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
-  </div>
-  <div class="section-body">
-    {{DASH_HTML}}
-  </div>
-</div>
-
-<!-- 11 仓位与时机决策 -->
-<div class="section">
-  <div class="section-header">
-    <span class="section-num">11</span>
-    <span class="section-title">仓位与时机决策</span>
-    <span class="section-meta">研究分 {{RESEARCH_SCORE}} ｜ 时机分 {{TIMING_SCORE}}</span>
-  </div>
-  <div class="section-body">
-    {{POSITION_HTML}}
-  </div>
-</div>
-
 <!-- Disclaimer -->
 <div class="disclaimer">
-  本报告为AI生成的研究笔记，不构成投资建议。所有数据和结论基于公开信息，可能存在偏差和错误。
+  本报告为AI生成的研究笔记（三轨制），不构成投资建议。所有数据和结论基于公开信息，可能存在偏差和错误。
   生成时间：{{GEN_TIME}} · {{CALIB_NOTE}}
 </div>
 

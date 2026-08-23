@@ -67,11 +67,16 @@ stock-deep-analysis/
 │   ├── fill-schema.md          # fill→render JSON 契约 + HTML 骨架（报告结构唯一权威）
 │   ├── forensic-accounting.md  # 财报质量核查（应计/M-Score/评级）
 │   ├── industry-financials.md  # 银行/保险/券商评分与估值口径（金融股必读）
+│   ├── industry-pharma.md      # 创新药/管线股五件套口径：rNPV 估值（医药管线股必读）
+│   ├── industry-realestate.md  # 开发型地产五件套口径：NAV 估值（地产股必读）
+│   ├── industry-internet.md    # 平台型互联网五件套口径：SOTP 估值（平台互联网必读）
 │   ├── base-rates.md           # 历史基准率（外部视角分位）
 │   └── analytical-tips.md      # 历史报告提炼的分析经验（按需加载）
 ├── scripts/
-│   ├── em_fetch.py             # 一键取数（E1-E7 全端点，A股/港股，约 3.5KB/股紧凑摘要）
-│   └── render_report.py        # fill JSON → 最终 HTML（评分计算+图形生成+校验+自动命名）
+│   ├── em_fetch.py             # 一键取数（E1-E7 全端点+中债10Y/TTM股息率/资本开支，A股/港股，约 3.5KB/股紧凑摘要）
+│   ├── render_report.py        # fill JSON → 最终 HTML（评分计算+图形生成+校验+自动命名）
+│   ├── extract_review.py       # 旧报告复盘锚点提取（prev/三情景假设/触发条件表 → JSON，回测模式用）
+│   └── test_mcap_mode.py       # render_report 市值口径（mcap/metric_label）冒烟自检
 └── assets/
     └── report-template.html    # 报告模板（唯一 CSS 权威版本）
 ```

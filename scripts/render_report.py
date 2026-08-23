@@ -19,10 +19,10 @@ import os
 import re
 import sys
 
-# Windows GBK 控制台打印 ⚠️/−/🔴 等字符会 UnicodeEncodeError，统一降级为 replace
+# Windows GBK 控制台打印 ⚠️/−/🔴 等字符会 UnicodeEncodeError，统一强制 UTF-8 + replace
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(errors="replace")
+        _stream.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
 
@@ -49,6 +49,21 @@ TIMING_DIMS = [
 ]
 # 旧版键名兼容（v2.1 前：2C=筹码面、2B=技术面）
 _TIMING_LEGACY = {"2C": "筹码面", "2B": "技术面"}
+
+
+def _dim_verdict(s: float) -> str:
+    """单维得分判词（第 6 章汇总表用）：≥8 优秀 / ≥7 良好 / ≥6 中上 / ≥5 中等 / ≥4 偏弱 / <4 警示。"""
+    if s >= 8.0:
+        return "优秀"
+    if s >= 7.0:
+        return "良好"
+    if s >= 6.0:
+        return "中上"
+    if s >= 5.0:
+        return "中等"
+    if s >= 4.0:
+        return "偏弱"
+    return "警示"
 
 
 def _timing_field(fill: dict, name: str) -> dict:
@@ -213,14 +228,33 @@ def _is_plain_text(s: str) -> bool:
 
 
 def _is_prose_cell(s: str) -> bool:
-    """num 列中应左对齐的文字格：剥括号注释后含句读的纯文字/长句，或超 4 字的纯文字。
+    """num 列中应左对齐的文字格：剥括号注释后含句读的纯文字/长句，或超 2 字的纯文字。
     括号内句读不参与判定（"±60-90 亿（手机毛利率仅 8.5%，缓冲更薄）"是数值+注释，随列右对齐）；
-    ≤4 字短标记（"基础""偏多"）随列右对齐，长数值串（"13,600-15,300亿"）因含数字天然右对齐。"""
+    ≤2 字短标记（"基础""亏损""偏多"）随列右对齐，长数值串（"13,600-15,300亿"）因含数字天然右对齐。"""
     t = re.sub(r"<[^>]+>", "", s or "").strip()
     t2 = re.sub(r"[（(][^）)]*[）)]", "", t)  # 先剥括号注释：括号内句读不参与判定
     if re.search(r"[，。；、：]", t2) and (not re.search(r"\d", t2) or len(t2) > 20):
         return True   # 纯文字带句读→左对齐；带数字的长句（>20字）仍是说明文→左对齐
-    return len(t) > 4 and _is_plain_text(s)
+    return len(t) > 2 and _is_plain_text(s)
+
+
+def _content_vote(inner: str):
+    """裸 td（无对齐类）按内容投票：数值/短数值串 → 'num'，文字/长句 → 'left'。
+    解决两类不一致：th 有 num 而 td 全裸（表头右、数据左）；文字格被误标 num（核心业务行）。
+    判定：剥括号注释后，去掉数字与数值符号所剩字符为空或仅为单位 → num，否则 left
+    （"3.1 赛道与宏观"含数字但是文字标签；"12个月"/"+70.1%"是数值）。"""
+    t = re.sub(r"<[^>]+>", "", inner or "").strip()
+    if not t:
+        return None
+    if re.search(r"[，。；、：]", t):
+        return "left"
+    t2 = re.sub(r"[（(][^）)]*[）)]", "", t)  # 剥括号注释后判断
+    rest = re.sub(r"[\d.,%x×+\-~～/ ±≈]", "", t2)
+    if not rest:
+        return "num"
+    if rest in {"亿", "万", "元", "倍", "个月", "月", "天", "年", "户", "手", "港元", "美元"}:
+        return "num" if re.search(r"\d", t2) else "left"
+    return "left"
 
 
 def fix_table_alignment(html: str) -> str:
@@ -237,12 +271,14 @@ def fix_table_alignment(html: str) -> str:
             out.append(tbl)
             pos = tm.end()
             continue
-        # 收集每列的对齐类（仅统计 td 数据格；rowspan 合并格需补偿列位，colspan 格不计票）
+        # 收集每列的对齐类（td 数据格：有类按类投票，裸格按内容投票；rowspan 合并格需补偿列位，
+        # colspan 格不计票）
         col_votes = {}
         rowspans = []  # [(col, remaining_rows)]，行首 rem 即上方剩余占用
         for trm in _TR.finditer(tbl):
             col = 0
-            for cm in _CELL.finditer(trm.group(1)):
+            row_cells = list(_CELL.finditer(trm.group(1)))
+            for ci, cm in enumerate(row_cells):
                 # 跳过被上方 rowspan 占用的列
                 while any(c == col and rem > 0 for c, rem in rowspans):
                     col += 1
@@ -251,6 +287,13 @@ def fix_table_alignment(html: str) -> str:
                 colspan = int(cs.group(1)) if cs else 1
                 if tag == "td" and colspan == 1:
                     a = _align_class(attrs)
+                    inner_end = (row_cells[ci + 1].start() if ci + 1 < len(row_cells)
+                                 else len(trm.group(1)))
+                    inner = trm.group(1)[cm.end():inner_end]
+                    if a == "num" and _is_plain_text(inner):
+                        a = "left"  # 纯文字格误标 num（如"综合医药"）→ 按文字列投票
+                    elif a is None:
+                        a = _content_vote(inner)
                     if a:
                         col_votes.setdefault(col, []).append(a)
                 # 登记本格 rowspan（跨 N 行 → 下方 N-1 行该列被占用）
@@ -268,9 +311,11 @@ def fix_table_alignment(html: str) -> str:
         for i, votes in col_votes.items():
             if i == 0:
                 decided[i] = None  # 第一列强制左
+                continue
+            num_n, cen_n, left_n = votes.count("num"), votes.count("center"), votes.count("left")
+            if left_n and left_n > num_n and left_n > cen_n:
+                decided[i] = None  # 文字列（内容投票占多数）→ 左对齐
             else:
-                num_n = votes.count("num")
-                cen_n = votes.count("center")
                 decided[i] = "num" if num_n >= cen_n and num_n > 0 else ("center" if cen_n > 0 else None)
 
         # 显式行循环重建（rowspan 是表级状态，逐行追踪列位）
@@ -300,7 +345,7 @@ def fix_table_alignment(html: str) -> str:
                     rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
                     if rs and int(rs.group(1)) > 1:
                         rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
-                    # td 对齐统一（num 列）：长文格（含句读 / 超 4 字纯文字）→ 去类左对齐；
+                    # td 对齐统一（num 列）：长文格（含句读 / 超 2 字纯文字）→ 去类左对齐；
                     # 数字、含数字短值、≤4 字短标记（"基础""12个月"）→ 统一 num 右对齐
                     if colspan == 1 and decided.get(col) == "num":
                         inner_end = cells[i + 1].start() if i + 1 < len(cells) else len(row)
@@ -309,6 +354,8 @@ def fix_table_alignment(html: str) -> str:
                             attrs = _strip_th_align(attrs)  # 剔除 num/center → 左
                         else:
                             attrs = _set_th_align(attrs, "num")  # 随列右对齐
+                    elif colspan == 1 and decided.get(col) is None:
+                        attrs = _strip_th_align(attrs)  # 文字列/无投票列：剔除误标的 num/center → 左
                 rebuilt.append(f"<{tag}{attrs}>")
                 last_in_row = cm.end()
                 col += colspan
@@ -427,11 +474,12 @@ def compute_scores(fill: dict):
             w = weights[key]
             wtd = s * w / 100.0
             badge = badge_class(s)
-            first = (f'<td rowspan="{len(dims)}"><strong>{layer}</strong> '
-                     f'{LAYER_NAMES[layer]}（占质量分 {ls[layer]:.0f}%）</td>') if j == 0 else ""
+            first = (f'<td rowspan="{len(dims)}"><strong>{LAYER_NAMES[layer]}</strong>'
+                     f'（占质量分 {ls[layer]:.0f}%）</td>') if j == 0 else ""
             rows.append(
                 f'<tr>{first}<td>{name}</td>'
                 f'<td class="center score-cell"><span class="badge {badge}">{s:.1f}</span></td>'
+                f'<td class="center">{_dim_verdict(s)}</td>'
                 f'<td class="num">{w:g}%</td><td class="num">{wtd:.2f}</td></tr>'
             )
 
@@ -624,9 +672,11 @@ def compute_valuation(fill: dict):
     """valuation 字段（结构化三情景假设）→ 全部估值数字由脚本计算。
     输入：{"shares": 46.27（亿股）, "horizon": "12个月",
            "scenarios": [{"key":"pess","label":"悲观","trigger":"…","profit":850（归母净利,亿）,"pe":[16,18]}, …]}
+    情景口径二选一：profit+pe（利润口径）或 "mcap":[低,高]（目标总市值亿元，
+    NAV/rNPV/SOTP 行业附录用；目标价 = mcap ÷ shares，无利润/EPS/PE 口径）。
     返回 None（字段缺失/数据不足）或 dict：
     rows（含每情景 eps/price_lo/price_hi/mid/upside）、central（年化中枢）、
-    odds（赔率）、dispersion（离散度）、base_lo/base_hi、horizon。"""
+    odds（赔率）、dispersion（离散度）、base_lo/base_hi、horizon、mode（pe/mcap）。"""
     v = fill.get("valuation")
     if not v:
         return None
@@ -640,16 +690,25 @@ def compute_valuation(fill: dict):
     for s in v.get("scenarios") or []:
         profit, pe = _num(s.get("profit")), s.get("pe") or []
         pe_lo, pe_hi = (_num(pe[0]), _num(pe[1])) if len(pe) >= 2 else (None, None)
-        if profit is None or pe_lo is None or pe_hi is None:
-            continue
+        mc = s.get("mcap") or []
+        mc_lo, mc_hi = (_num(mc[0]), _num(mc[1])) if len(mc) >= 2 else (None, None)
         key = str(s.get("key") or "").lower()
-        lo, hi = profit * pe_lo / shares, profit * pe_hi / shares
+        if mc_lo is not None and mc_hi is not None:
+            lo, hi = mc_lo / shares, mc_hi / shares
+            profit = pe_lo = pe_hi = eps = None
+        elif profit is not None and pe_lo is not None and pe_hi is not None:
+            lo, hi = profit * pe_lo / shares, profit * pe_hi / shares
+            eps = profit / shares
+            mc_lo = mc_hi = None
+        else:
+            continue
         mid = (lo + hi) / 2
         rows.append({"key": key, "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
                      "color": _SCENARIO_COLORS.get(key, "#8899a6"),
                      "trigger": str(s.get("trigger") or ""), "horizon": str(s.get("horizon") or v.get("horizon") or "12个月"),
                      "profit": profit, "pe_lo": pe_lo, "pe_hi": pe_hi,
-                     "eps": profit / shares, "low": lo, "high": hi, "mid": mid,
+                     "mcap_lo": mc_lo, "mcap_hi": mc_hi,
+                     "eps": eps, "low": lo, "high": hi, "mid": mid,
                      "upside": mid / price - 1})
     if not rows:
         return None
@@ -672,7 +731,8 @@ def compute_valuation(fill: dict):
         print("⚠️ valuation 三情景目标价顺序异常（悲观中枢 > 乐观中枢），请检查 profit/pe 假设", file=sys.stderr)
     return {"rows": rows, "central": central, "central_raw": central_raw, "months": months,
             "odds": odds, "dispersion": dispersion, "base_lo": base["low"], "base_hi": base["high"],
-            "horizon": horizon, "price": price}
+            "horizon": horizon, "price": price,
+            "mode": "mcap" if rows[0]["mcap_lo"] is not None else "pe"}
 
 
 def _map_central(central: float) -> float:
@@ -744,6 +804,7 @@ def _map_div(div_yield: float, risk_free: float) -> float:
 def compute_valuation_score(calc: dict, inputs: dict):
     """估值分四件套量化 = 中枢×0.4 + 赔率×0.25 + 合理倍数×0.25 + 股息×0.1。
     inputs: {"pe_ttm": 13.5, "pe_band": [14.5, 15.5], "div_yield": 1.6, "risk_free": 1.7}
+    可选 metric_label：行业口径（P/NAV、P/rNPV、P/EV、经调整PE 等）替换过程卡默认 PE(TTM) 标签。
     返回 dict（score + 四件套各分 + formula 文字）或 None（缺 calc/inputs/字段）。"""
     if not calc or not inputs:
         return None
@@ -783,12 +844,19 @@ def build_scenario_block(calc: dict) -> str:
         cells = "".join(f'<td class="{cls}">{fmt(r)}</td>' if cls else f"<td>{fmt(r)}</td>" for r in rows)
         return f"<tr><td>{name}</td>{cells}</tr>"
 
+    if calc.get("mode") == "mcap":
+        # 市值口径（NAV/rNPV/SOTP 行业附录）：无净利/EPS/PE 行，改显示目标市值区间
+        driver_rows = [row("目标市值", lambda r: f"{r['mcap_lo']:,.0f}-{r['mcap_hi']:,.0f} 亿")]
+    else:
+        driver_rows = [
+            row("归母净利", lambda r: f"{r['profit']:,.0f} 亿"),
+            row("EPS", lambda r: f"{r['eps']:.2f}"),
+            row("PE", lambda r: f"{r['pe_lo']:g}-{r['pe_hi']:g}x"),
+        ]
     body = "".join([
         row("时间维度", lambda r: _esc(r["horizon"]), "center"),
         row("触发条件", lambda r: _esc(r["trigger"]), ""),
-        row("归母净利", lambda r: f"{r['profit']:,.0f} 亿"),
-        row("EPS", lambda r: f"{r['eps']:.2f}"),
-        row("PE", lambda r: f"{r['pe_lo']:g}-{r['pe_hi']:g}x"),
+        *driver_rows,
         row("目标价", lambda r: f"{r['low']:.0f}-{r['high']:.0f} 元"),
         row("较现价", lambda r: f'<span class="{"up" if r["upside"] >= 0 else "down"}">{r["upside"] * 100:+.1f}%</span>（中值{r["mid"]:.0f}）'),
     ])
@@ -805,9 +873,9 @@ def build_scenario_block(calc: dict) -> str:
     else:
         o_val, o_cls = f"{odds:.2f}", "up" if odds >= 1.5 else "down"
         o_sub = "(基础中值−现价)÷(现价−悲观下限)；>1.5 为良好不对称"
-    if disp < 0.30:
+    if disp < 0.40:
         d_cls, d_note = "up", "可预测"
-    elif disp <= 0.60:
+    elif disp <= 0.90:
         d_cls, d_note = "mid", "中不确定"
     else:
         d_cls, d_note = "down", "高发散，仓位降一档"
@@ -953,7 +1021,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if miss_vi:
         raise ValueError(f"valuation_inputs 缺键: {miss_vi}（四键必填：pe_ttm / pe_band / div_yield / risk_free）")
 
-    # valuation 结构化三情景必填且完整（每情景：净利 + PE 区间 + horizon）
+    # valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）
     v = fill.get("valuation")
     if not isinstance(v, dict) or not v.get("scenarios"):
         raise ValueError("valuation 为必填字段：结构化三情景假设（shares / horizon / scenarios），"
@@ -961,16 +1029,32 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if _num(v.get("shares")) is None:
         raise ValueError("valuation.shares 缺失或非法（总股本，亿股）")
     skeys = set()
+    modes = set()
     for s in v.get("scenarios") or []:
         skeys.add(str(s.get("key") or "").lower())
         slab = s.get("label") or s.get("key") or "?"
-        if _num(s.get("profit")) is None:
-            raise ValueError(f"valuation.scenarios[{slab}] 缺净利假设（profit，归母净利亿元）")
-        pe = s.get("pe") or []
-        if len(pe) < 2 or _num(pe[0]) is None or _num(pe[1]) is None:
-            raise ValueError(f"valuation.scenarios[{slab}] 缺 PE 区间（pe: [低, 高]）")
+        mc = s.get("mcap") or []
+        has_mc = len(mc) >= 2 and _num(mc[0]) is not None and _num(mc[1]) is not None
+        has_profit = _num(s.get("profit")) is not None
+        if has_mc and has_profit:
+            raise ValueError(f"valuation.scenarios[{slab}] 口径冲突：profit+pe 与 mcap 同情景只能二选一")
+        if has_mc:
+            # 市值口径（NAV/rNPV/SOTP 行业附录）：mcap = [低, 高] 目标总市值（亿元）
+            if _num(mc[0]) <= 0 or _num(mc[1]) < _num(mc[0]):
+                raise ValueError(f"valuation.scenarios[{slab}] mcap 区间非法（mcap: [低, 高]，亿元，需 0<低≤高）")
+            modes.add("mcap")
+        else:
+            if not has_profit:
+                raise ValueError(f"valuation.scenarios[{slab}] 缺净利假设（profit，归母净利亿元）"
+                                 f"或目标市值区间（mcap: [低, 高]，亿元）")
+            pe = s.get("pe") or []
+            if len(pe) < 2 or _num(pe[0]) is None or _num(pe[1]) is None:
+                raise ValueError(f"valuation.scenarios[{slab}] 缺 PE 区间（pe: [低, 高]）")
+            modes.add("pe")
         if not str(s.get("horizon") or v.get("horizon") or "").strip():
             raise ValueError(f"valuation.scenarios[{slab}] 缺时间维度（horizon，可放情景级或 valuation 级）")
+    if len(modes) > 1:
+        raise ValueError("valuation.scenarios 口径混用：profit+pe 与 mcap 三情景必须统一口径")
     if not {"pess", "base", "opt"} <= skeys:
         raise ValueError(f"valuation.scenarios 必须含 pess/base/opt 三情景，当前只有: {sorted(skeys)}")
 
@@ -1049,6 +1133,38 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             warns.append("peers_plot 没有 target=true 的目标公司点")
         elif fill.get("company") and str(fill["company"]) not in str(tg[0].get("name", "")):
             warns.append(f"peers_plot 目标点名称「{tg[0].get('name')}」与公司名「{fill['company']}」不一致")
+    # 时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）
+    for tm in re.finditer(r"<table\b[^>]*>.*?</table>", pos_html, re.I | re.S):
+        tbl = tm.group(0)
+        if "技术面" not in tbl or "筹码面" not in tbl:
+            continue
+        for cell in re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>", tbl, re.I | re.S):
+            if len(_plain_text(cell)) > 40:
+                warns.append("时机判定小表存在 >40 字单元格：只写短语（≤15 字/条），"
+                             "长解释与降级说明挪到表下 .source 行（fill-schema 固定 4 行 3 列格式）")
+                break
+    # 极端分证据校验：≥8 或 ≤3 的维度，对应 dim-block 纯文本 <50 字 → 告警（极端分须配量化依据）
+    for field, layer in (("l1_html", "L1"), ("l3_html", "L3")):
+        blocks = re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]
+        for (key, _l, name, _dw), blk in zip([d for d in DIMS if d[1] == layer], blocks):
+            sv = (fill.get("scores") or {}).get(key)
+            if sv is None:
+                continue
+            sv = float(sv)
+            if sv >= 8 or sv <= 3:
+                blen = len(_plain_text(blk))
+                if blen < 50:
+                    warns.append(f"{name} 得分 {sv:g}（极端分）但 dim-block 纯文本仅 {blen} 字 < 50："
+                                 f"≥8 或 ≤3 必须配具体量化依据")
+    # 框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文；
+    # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查）
+    for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
+                 "valuation_html", "gap_html", "peers_html", "dash_html", "position_html", "review_html"):
+        txt = _plain_text(fill.get(name) or "").replace("L1:L3", "")
+        hits = sorted(set(re.findall(r"(?<![A-Za-z0-9])(?:L[134]|1D)(?![A-Za-z0-9])", txt)))
+        if hits:
+            warns.append(f"{name} 正文出现框架内部代号 {'/'.join(hits)}："
+                         f"请改用章节编号/名称（第 3 章 / 3.4 / 第 5 章风险评估）")
     # prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）
     if fill.get("prev"):
         pv = fill["prev"]
@@ -1136,48 +1252,46 @@ def _valuation_four_rows(calc: dict, vc: dict, inputs: dict):
     odds_txt = "∞（悲观下限高于现价）" if calc["odds"] is None else f"{calc['odds']:.2f}"
     div_txt = (f"股息率 {div_yield:g}% − 无风险 {risk_free:g}% = {div_yield - risk_free:+.1f}pct"
                if div_yield is not None and risk_free is not None else "缺股息输入（按中性 5 分）")
+    # 行业口径标签（P/NAV、P/rNPV、P/EV、经调整PE 等），缺省 PE(TTM)
+    mlabel = str(inputs.get("metric_label") or "PE(TTM)")
     return [
         ("中枢分", f"年化中枢 {calc['central'] * 100:+.1f}%（{calc['horizon']}）", vc["central_s"], 40),
         ("赔率分", f"赔率 {odds_txt}", vc["odds_s"], 25),
-        ("合理倍数分", f"PE(TTM) {pe_ttm:g}x vs 合理带 {band_lo:g}-{band_hi:g}x", vc["warranted_s"], 25),
+        ("合理倍数分", f"{mlabel} {pe_ttm:g}x vs 合理带 {band_lo:g}-{band_hi:g}x", vc["warranted_s"], 25),
         ("股息分", div_txt, vc["div_s"], 10),
     ]
 
 
 def build_score_summary(sc: dict) -> str:
-    """6 质量分汇总章节（全部脚本生成）：只保留质量分明细表
-    （1A-1F + 3A-3C 每维一行 → 层分×层占比 → 1D 红旗扣分 → 黄灯扣分 → 最终质量分）。
-    估值分/时机分明细不在此汇总——估值分过程卡在 7 章顶部，时机判定表在 11 章由模型呈现。"""
+    """6 质量分汇总章节（全部脚本生成）：9 行维度明细（得分+判词+权重+加权）保留为表；
+    层分×占比/红旗/黄灯/最终质量分合并为表下一条公式 footer（.layer-summary），
+    不再占 5 行表格——算术复述合并后信息零损失。估值/时机明细不在此章。"""
     layer_scores, ls = sc["layer_scores"], sc["layer_share"]
     quality, yellow_total = sc["quality"], sc["yellow_total"]
     red_total = sc["red_total"]
 
-    q_rows = [sc["rows_html"]]
-    for layer in ("L1", "L3"):
-        q_rows.append(
-            f'<tr><td colspan="2"><strong>{layer} 层分 × 层占比</strong>'
-            f'（{layer_scores[layer]:.2f} × {ls[layer]:.0f}%）</td>'
-            f'<td></td><td class="num">{ls[layer]:.0f}%</td>'
-            f'<td class="num">{layer_scores[layer] * ls[layer] / 100:.2f}</td></tr>')
-    q_rows.append(
-        f'<tr><td colspan="2"><span class="down">1D 红旗扣分</span>'
-        + (f'（{_esc("；".join(str(r.get("item", "")) for r in sc["red_deductions"]))}）' if sc["red_deductions"] else "")
-        + f'</td><td></td><td></td><td class="num"><span class="down">−{red_total:.1f}</span></td></tr>')
-    q_rows.append(
-        f'<tr><td colspan="2"><span class="down">黄灯扣分合计</span></td><td></td><td></td>'
-        f'<td class="num"><span class="down">−{yellow_total:.1f}</span></td></tr>')
-    q_rows.append(
-        f'<tr><td colspan="2"><strong>最终质量分</strong></td>'
-        f'<td class="center score-cell"><span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span></td>'
-        f'<td></td><td></td></tr>')
+    terms = " + ".join(
+        f"{LAYER_NAMES[layer]} {layer_scores[layer]:.2f} × {ls[layer]:.0f}%"
+        for layer in ("L1", "L3"))
+    parts = [terms]
+    if red_total:
+        red_items = "；".join(str(r.get("item", "")) for r in sc["red_deductions"])
+        parts.append(f"− 红旗 {red_total:.1f}" + (f"（{_esc(red_items)}）" if red_items else ""))
+    if yellow_total:
+        parts.append(f"− 黄灯 {yellow_total:.1f}")
+    formula = " ".join(parts)
+    footer = (
+        f'<div class="layer-summary">质量分 = {formula} = '
+        f'<span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span>'
+        f' <strong>{_quality_verdict(quality)}</strong></div>')
     return ('<span class="section-tag">质量分明细</span>'
             '<div class="table-scroll"><table><thead><tr><th>层</th><th>维度</th>'
-            '<th class="center">得分</th><th class="num">权重</th><th class="num">加权</th></tr></thead>'
-            '<tbody>' + "".join(q_rows) + '</tbody></table></div>')
+            '<th class="center">得分</th><th class="center">判词</th><th class="num">权重</th><th class="num">加权</th></tr></thead>'
+            '<tbody>' + sc["rows_html"] + '</tbody></table></div>' + footer)
 
 
 def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
-    """7 估值与安全边际章顶部过程卡（脚本生成）：四件套 输入值→映射得分→权重→加权，
+    """7 估值与安全边际章末尾汇总卡（脚本生成，作为本节结论列在最后）：四件套 输入值→映射得分→权重→加权，
     总分行并入表格末行（加权和明细 + 最终估值分徽章 + 判词），档位图例留在表下小字。"""
     four = _valuation_four_rows(calc, vc, inputs)
     rows = []
@@ -1277,13 +1391,14 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
                 steps.append(f"时机分调节：时机分 {timing:.2f} < 4 → 下调一档"
                              f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx - 1]]}）")
                 idx -= 1
-            # 离散度调节（>60% 下调一档 / <30% 上浮一档）
-            if calc and calc["dispersion"] > 0.60:
-                steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% > 60% → 下调一档"
+            # 离散度调节（>90% 下调一档 / <40% 上浮一档；60% 旧阈值在 20 份报告中触发率 70%，
+            # 形同普遍降档，已按经验分布收紧到极端档）
+            if calc and calc["dispersion"] > 0.90:
+                steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% > 90% → 下调一档"
                              f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx - 1]]}）")
                 idx -= 1
-            elif calc and calc["dispersion"] < 0.30 and idx < len(_POS_LADDER) - 1:
-                steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% < 30% → 上浮一档"
+            elif calc and calc["dispersion"] < 0.40 and idx < len(_POS_LADDER) - 1:
+                steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% < 40% → 上浮一档"
                              f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
                 idx += 1
             # 赔率 ∞ 上浮一档（20% 硬顶）
@@ -1295,12 +1410,12 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
         elif pos == 0:
             final_label = "不建议参与"
         else:
-            # 观察池：不因时机/赔率上浮；时机 <4 或离散度 >60% 下调为不建议参与
+            # 观察池：不因时机/赔率上浮；时机 <4 或离散度 >90% 下调为不建议参与
             down = []
             if timing is not None and timing < 4:
                 down.append(f"时机分 {timing:.2f} < 4")
-            if calc and calc["dispersion"] > 0.60:
-                down.append(f"离散度 {calc['dispersion'] * 100:.1f}% > 60%")
+            if calc and calc["dispersion"] > 0.90:
+                down.append(f"离散度 {calc['dispersion'] * 100:.1f}% > 90%")
             if down:
                 steps.append(f"{'；'.join(down)} → 观察池下调为不建议参与")
                 final_label = "不建议参与"
@@ -1320,6 +1435,11 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
     parts.append(f'<div class="decision-bar"><strong>最终仓位结论：</strong>{slot_html}'
                  f'<span class="badge {final_badge} badge-lg">{final_label}</span></div>')
     return "".join(parts)
+
+
+def _strip_unit(v, units: str) -> str:
+    """剥掉 fill 值尾部的单位字符（模板已带单位 span，防"9,237.6亿 亿"/"14.97x 倍"叠床架屋）。"""
+    return re.sub(rf"\s*[{units}]+$", "", str(v or "—").strip())
 
 
 def render(fill_path: str, out_path: str = None) -> str:
@@ -1362,7 +1482,7 @@ def render(fill_path: str, out_path: str = None) -> str:
     valuation_calc = compute_valuation_score(calc, fill.get("valuation_inputs"))
     if valuation_calc is None:
         raise ValueError("估值分无法计算：valuation_inputs 四键或 valuation 三情景字段不完整"
-                         "（pe_ttm/pe_band/div_yield/risk_free + 每情景 profit/pe/horizon）")
+                         "（pe_ttm/pe_band/div_yield/risk_free + 每情景 profit/pe 或 mcap + horizon）")
     if valuation is not None and abs(valuation_calc["score"] - valuation) > 0.11:
         print(f"⚠️ fill 手填估值分 {valuation:.1f} 与脚本四件套计算 {valuation_calc['score']:.1f} 不一致，"
               f"已按脚本计算值覆盖（valuation_score 字段已废弃，可删除）", file=sys.stderr)
@@ -1403,9 +1523,9 @@ def render(fill_path: str, out_path: str = None) -> str:
         "THESIS_HTML": fill.get("thesis_html", ""),
         "PRICE": str(fill.get("price", "—")),
         "PRICE_SUB_HTML": fill.get("price_sub_html", ""),
-        "MCAP": str(fill.get("mcap", "—")),
+        "MCAP": _strip_unit(fill.get("mcap"), "亿万"),
         "MCAP_SUB": fill.get("mcap_sub", ""),
-        "PE_TTM": str(fill.get("pe_ttm", "—")),
+        "PE_TTM": _strip_unit(fill.get("pe_ttm"), "xX倍"),
         "PE_SUB": fill.get("pe_sub", ""),
         "HORIZON": fill.get("horizon", "12个月"),
         "TARGET_RANGE": str(target_range),
@@ -1481,6 +1601,8 @@ def render(fill_path: str, out_path: str = None) -> str:
     if leftover_double:
         raise ValueError(f"残留未替换占位符: {sorted(set(leftover_double))}")
     leftover_cn = re.findall(r"【[^】]{0,40}】", html)
+    # 黄灯类别标注（【b 行业与政策环境】这类以单个 a-d 字母开头的）是合法引用，不算占位符
+    leftover_cn = [x for x in leftover_cn if not re.match(r"【[a-dA-D][ 、\s]", x)]
     if leftover_cn:
         raise ValueError(f"残留中文占位符: {sorted(set(leftover_cn))}")
 

@@ -663,6 +663,7 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
             else em.get("ZCFZL"),
             "NETCASH_OPERATE_PK": ocf,
             "NCO_NETPROFIT": (ocf / ni if (ocf is not None and ni) else None),
+            "CAPEX": c.get("c_pay_acq_const_fiolta"),  # 购建固定资产/无形资产等支付现金（DCF capex 输入）
             "YSZKZZTS": ar_days,
             "CHZZTS": inv_days,
         })
@@ -954,6 +955,42 @@ def fetch_audit(code: str):
     return None
 
 
+def fetch_risk_free():
+    """中债 10 年期国债到期收益率（东财 RPTA_WEB_TREASURYYIELD；列编码 EMM00166466=10年，
+    同页 EMM00588704=2年 / EMM00166462=5年 / EMM00166469=30年）。
+    返回 (日期, 收益率%) 或 None。valuation_inputs.risk_free 的直接来源。"""
+    try:
+        d = get("https://datacenter-web.eastmoney.com/api/data/v1/get?reportName="
+                "RPTA_WEB_TREASURYYIELD&columns=ALL&pageSize=1&pageNumber=1")
+        row = ((d.get("result") or {}).get("data") or [{}])[0]
+        y = row.get("EMM00166466")
+        return ((row.get("SOLAR_DATE") or "")[:10], round(float(y), 2)) if y is not None else None
+    except Exception:
+        return None
+
+
+def fetch_div_yield(code: str, price: float):
+    """TTM 税前股息率（tushare dividend）：只计 div_proc=实施 且除息日在近 12 个月内的
+    每股派息合计 ÷ 现价；同除息日多条记录去重。返回 (每股派息, 股息率%, 明细) 或 None。
+    valuation_inputs.div_yield 的税前基准（AH/港股按规则自行折税后）。"""
+    try:
+        rows = ts_call("dividend", {"ts_code": to_ts_code(code),
+                                    "fields": "ts_code,end_date,div_proc,cash_div_tax,ex_date"})
+        cutoff = (date.today().replace(year=date.today().year - 1)).strftime("%Y%m%d")
+        by_ex = {}
+        for r in rows:
+            if (r.get("div_proc") == "实施" and r.get("ex_date") and r.get("cash_div_tax")
+                    and r["ex_date"] >= cutoff):
+                by_ex.setdefault(r["ex_date"], float(r["cash_div_tax"]))
+        if not by_ex or not price:
+            return None
+        per_share = sum(by_ex.values())
+        items = sorted(by_ex.items(), reverse=True)
+        return per_share, per_share / price * 100, items
+    except Exception:
+        return None
+
+
 def fetch_debt(code: str):
     """最新报告期有息负债与货币资金（tushare balancesheet）。
     返回 dict（st_borr/non_cur_liab_due_1y/lt_borr/bond_payable/money_cap，单位元）或 None。"""
@@ -1096,6 +1133,23 @@ def summarize(code: str, years: int, searches: list = None) -> str:
                     out.append(f"财报披露: {disc['报告期']} 计划披露日 {disc['计划披露']}（未披露）\n")
             else:
                 out.append("财报披露: [未获取到披露计划，请降级：妙想 MCP mx_finance_search_notice 或交易所官网查证]\n")
+        rf = fetch_risk_free()
+        if rf:
+            out.append(f"无风险利率（中债10Y）: {rf[1]}%（{rf[0]}，东财国债收益率）"
+                       f"——valuation_inputs.risk_free 直接引用此值\n")
+        else:
+            out.append("无风险利率（中债10Y）: [未获取到（东财国债收益率端点失败），"
+                       "请降级：WebSearch 中债 10 年期收益率最近公开值并标估算]\n")
+        if not is_hk:
+            dy = fetch_div_yield(pure, q.get("最新价"))
+            if dy:
+                detail = " + ".join(f"{v:g}({d})" for d, v in dy[2])
+                out.append(f"TTM股息率（税前）: {dy[1]:.2f}%（近12月每股派息{dy[0]:g}元＝{detail} "
+                           f"÷ 现价{q.get('最新价')}，tushare dividend 实施口径）"
+                           f"——valuation_inputs.div_yield 税前基准，需税后口径时自行折算\n")
+            else:
+                out.append("TTM股息率: [近12个月无实施分红记录或 tushare dividend 失败；"
+                           "若公司确有分红请手工核查并标注路径]\n")
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
 
@@ -1143,6 +1197,11 @@ def summarize(code: str, years: int, searches: list = None) -> str:
         out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
                    f"同比{pct(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
                    f"ROIC {pct(q1.get('ROIC'))}（{q1.get('REPORT_DATE_NAME')}累计，未年化，季报口径远小于全年，勿直接与 ROE 比）\n")
+        capex_bits = [f"{r['REPORT_DATE_NAME']} {yi(r.get('CAPEX'))}亿" for r in annual[:3]
+                      if r.get("CAPEX") is not None]
+        if capex_bits:
+            out.append("资本开支（购建固定资产/无形资产等支付现金，DCF capex 直接取此口径）: "
+                       + " ｜ ".join(capex_bits) + "\n")
         # 有息负债（tushare balancesheet 最新报告期；短债=短期借款+一年内到期非流动负债，
         # 长债=长期借款+应付债券；短债覆盖=货币资金÷短债，分母 0 显示「无短债」）
         debt = fetch_debt(pure)

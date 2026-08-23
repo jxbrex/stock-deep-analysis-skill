@@ -51,11 +51,12 @@
 财报推迟；监管问询函的主题与频率；做空报告指控与公司回应质量；
 关联交易定价公允性；A 股另查股权质押与资金占用。
 
-## 6. 行业替代项（金融股不用 M-Score）
+## 6. 行业替代项（这些行业不用/不全用 M-Score）
 
 **金融股（银行/保险/券商）的财报可信度替代项以 `industry-financials.md` 为唯一权威**
-（scoring.md 与 em_fetch.py 均指向该文件）。本文件只列非金融行业替代项：
-REIT/地产（AFFO 调整项、资本化利息）、能源（储量重述与折旧口径）。
+（scoring.md 与 em_fetch.py 均指向该文件）；**创新药管线 / 开发型地产 / 平台互联网分别以
+`industry-pharma.md` / `industry-realestate.md` / `industry-internet.md` 为唯一权威**。
+本文件只列无专项附录行业的替代项：REIT（AFFO 调整项）、能源（储量重述与折旧口径）。
 
 ## 7. 可信度评级（预注册，接入红/黄灯）
 

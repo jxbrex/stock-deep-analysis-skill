@@ -34,22 +34,22 @@ body {
 .hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
 .hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
 .hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; }
-.hero-id { min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
 .hero h1 { font-size: 26px; font-weight: 700; color: #1a2b4a; margin: 0 0 4px; }
 .hero .subtitle { font-size: 12.5px; color: #8899a6; }
-.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin-bottom: 10px; max-width: 75ch; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
 /* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
 .hero-tracks { display: flex; gap: 16px; align-items: center; flex-shrink: 0; }
-.hero-track { text-align: center; border: 1px solid #dde3ea; border-radius: 8px; padding: 18px 34px; min-width: 150px; display: flex; flex-direction: column; justify-content: center; }
+.hero-track { text-align: center; border: 1px solid #dde3ea; border-radius: 8px; padding: 20px 38px; min-width: 165px; display: flex; flex-direction: column; justify-content: center; }
 .hero-track.quality { background: #f0f5fa; }
 .hero-track.valuation { background: #fff; }
-.hero-track .s-label { font-size: 11px; color: #8899a6; letter-spacing: 1.2px; margin-bottom: 3px; }
-.hero-track .s-value { font-size: 42px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.hero-track .s-label { font-size: 12px; color: #8899a6; letter-spacing: 1.2px; margin-bottom: 4px; }
+.hero-track .s-value { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .hero-track.quality .s-value { color: #4a6fa5; }
 .hero-track.valuation .s-value.score-good { color: #6ba86b; }
 .hero-track.valuation .s-value.score-mid { color: #c08a2e; }
 .hero-track.valuation .s-value.score-bad { color: #c75b5b; }
-.hero-track .s-sub { font-size: 11px; color: #8899a6; margin-top: 2px; }
+.hero-track .s-sub { font-size: 12px; color: #8899a6; margin-top: 3px; }
 /* 时机分：一行灰字，弱化但可读（不偷感） */
 .hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #9aa7b4; letter-spacing: 0.3px; text-align: center; }
 .hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
@@ -178,13 +178,16 @@ td.rev, th.rev { padding: 8px 12px; }
     <div class="hero-id">
       <h1>{{COMPANY}}（{{CODE}}）</h1>
       <div class="subtitle">{{SUBTITLE}}｜报告日期：{{DATE}}</div>
+      <div class="thesis">
+        {{THESIS_HTML}}
+      </div>
     </div>
     <div class="hero-scores-col">
       <div class="hero-tracks">
         <div class="hero-track quality">
           <div class="s-label">质量分</div>
           <div class="s-value">{{QUALITY_SCORE}}</div>
-          <div class="s-sub">L1 {{L1_W}}% + L3 {{L3_W}}% − 黄灯 {{YELLOW_TOTAL}}</div>
+          <div class="s-sub">本质 {{L1_W}}% + 预期 {{L3_W}}% − 黄灯 {{YELLOW_TOTAL}}</div>
         </div>
         <div class="hero-track valuation">
           <div class="s-label">估值分</div>
@@ -194,9 +197,6 @@ td.rev, th.rev { padding: 8px 12px; }
       </div>
       <div class="hero-timing-mini">时机分 <span class="tv">{{TIMING_SCORE}}</span> · 微调 ±1 档</div>
     </div>
-  </div>
-  <div class="thesis">
-    {{THESIS_HTML}}
   </div>
   <div class="hero-data-strip">
     <div class="d-item">
@@ -305,7 +305,6 @@ td.rev, th.rev { padding: 8px 12px; }
     <span class="section-meta"><span class="badge {{VALUATION_BADGE_CLASS}} badge-lg">估值分 {{VALUATION_SCORE}}</span> ｜ {{STOCK_TYPE}}</span>
   </div>
   <div class="section-body">
-    {{VALUATION_PROCESS_HTML}}
     <!--IF:SCENARIO_SPECTRUM_HTML-->
     {{SCENARIO_SPECTRUM_HTML}}
     <!--ENDIF-->
@@ -313,6 +312,7 @@ td.rev, th.rev { padding: 8px 12px; }
     {{SCENARIO_BLOCK_HTML}}
     <!--ENDIF-->
     {{VALUATION_HTML}}
+    {{VALUATION_PROCESS_HTML}}
   </div>
 </div>
 

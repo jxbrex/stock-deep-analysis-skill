@@ -5,6 +5,7 @@ render_report.py — 用 fill-data JSON 渲染个股深度分析 HTML 报告（�
 
 用法:
     python render_report.py fill_600989.json                 # 渲染并自动命名输出
+    python render_report.py fill_600989.json --check         # 只预检不渲染（fill 落盘后自检的唯一合法方式）
     python render_report.py fill_600989.json --out=out.html  # 指定输出路径
 
 fill JSON 契约见 references/fill-schema.md。
@@ -47,8 +48,6 @@ TIMING_DIMS = [
     ("筹码面", "筹码面", 67),
     ("技术面", "技术面", 33),
 ]
-# 旧版键名兼容（v2.1 前：2C=筹码面、2B=技术面）
-_TIMING_LEGACY = {"2C": "筹码面", "2B": "技术面"}
 
 
 def _dim_verdict(s: float) -> str:
@@ -66,21 +65,11 @@ def _dim_verdict(s: float) -> str:
     return "警示"
 
 
-def _timing_field(fill: dict, name: str) -> dict:
-    """读取时机层字段（timing_scores / timing_weights），旧键名 2B/2C 自动映射并告警。"""
-    src = fill.get(name) or {}
-    out, legacy = {}, []
-    for k, v in src.items():
-        nk = _TIMING_LEGACY.get(k, k)
-        if nk != k:
-            legacy.append(k)
-        out[nk] = v
-    if legacy:
-        print(f"⚠️ {name} 使用了旧版键名 {sorted(legacy)}，已按 2C→筹码面 / 2B→技术面 映射；"
-              f"请改用新键名（fill-schema 已更新）", file=sys.stderr)
-    return out
 LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
+# 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
+# （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
+RENDERER_VERSION = "v4.3"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -146,19 +135,6 @@ def _timing_verdict(t: float) -> str:
     if t >= 4.0:
         return "中性"
     return "差时机"
-
-
-_CLASS_ALIASES = {"metric-label": "label", "metric-value": "value", "metric-sub": "sub"}
-
-
-def _normalize_class_aliases(html: str) -> str:
-    """模型偶发的幻觉类名归一：metric-label/metric-value/metric-sub → label/value/sub
-    （模板只定义后者；前者无样式，三指标卡条会塌成无样式文本）。仅限 class 属性值内替换。"""
-    def fix(m):
-        quote, val = m.group(1), m.group(2)
-        tokens = [_CLASS_ALIASES.get(t, t) for t in val.split()]
-        return f"class={quote}{' '.join(tokens)}{quote}"
-    return re.sub(r"class\s*=\s*([\"'])([^\"']*)\1", fix, html)
 
 
 _TD_CELL = re.compile(r'<td\b([^>]*)>', re.I)
@@ -370,60 +346,6 @@ def fix_table_alignment(html: str) -> str:
     return "".join(out)
 
 
-_SCENARIO_ROW_LABELS = ("悲观", "基础", "乐观")
-
-
-def _transpose_scenario_table(html: str) -> str:
-    """05 三情景表方向兜底：检测到旧模式（表体前 3+ 行首列恰为 悲观/基础/乐观，
-    表头首格为"情景"或空、各行格数一致）→ 自动转置为纵向列排列
-    （指标在行、情景在列，参照中国移动报告）并向 stderr 告警。
-    已正确的表（首列为指标名）不命中，原样返回。"""
-    for tm in re.finditer(r'<table\b[^>]*>.*?</table>', html, flags=re.I | re.S):
-        tbl = tm.group(0)
-        rows = list(_TR.finditer(tbl))
-        if len(rows) < 4:
-            continue
-        parsed = []
-        for rm in rows:
-            matches = list(_CELL.finditer(rm.group(1)))
-            segs = []
-            for i, cm in enumerate(matches):
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(rm.group(1))
-                inner = re.sub(r"</t[hd]>\s*$", "", rm.group(1)[cm.end():end], flags=re.I)
-                segs.append({"tag": cm.group(1).lower(), "attrs": cm.group(2), "inner": inner})
-            parsed.append(segs)
-        header, body = parsed[0], parsed[1:]
-        ncols = len(header)
-        if ncols < 3 or any(len(r) != ncols for r in parsed):
-            continue
-        corner = re.sub(r"<[^>]+>", "", header[0]["inner"]).strip()
-        if corner not in ("", "情景"):
-            continue
-        labels = []
-        for r in body[:3]:
-            t = re.sub(r"<[^>]+>", "", r[0]["inner"]).strip()
-            t = t[:-2] if t.endswith("情景") else t
-            if t not in _SCENARIO_ROW_LABELS:
-                break
-            labels.append(t)
-        else:
-            if len(body) >= 3 and len(labels) == 3:
-                # 命中旧模式：转置（单元格 attrs/inner 原样搬运，对齐类交给 fix_table_alignment）
-                new_head = "<tr><th>指标</th>" + "".join(
-                    f'<th class="center">{lab}情景</th>' for lab in labels) + "</tr>"
-                new_rows = []
-                for j in range(1, ncols):
-                    row_name = re.sub(r"<[^>]+>", "", header[j]["inner"]).strip()
-                    cells = "".join(f'<td{r[j]["attrs"]}>{r[j]["inner"]}</td>' for r in body)
-                    new_rows.append(f"<tr><td>{row_name}</td>{cells}</tr>")
-                new_tbl = ('<table class="scenario-table"><thead>' + new_head + "</thead><tbody>"
-                           + "".join(new_rows) + "</tbody></table>")
-                print("⚠️ 05 三情景表为旧方向（情景在行），已自动转置为纵向列排列；"
-                      "下次请按 fill-schema 骨架直接写对（指标在行、情景在列）", file=sys.stderr)
-                return html[:tm.start()] + new_tbl + html[tm.end():]
-    return html
-
-
 def compute_scores(fill: dict):
     """v4.0 三轨：质量分（L1 六维 + L3 三维，不含估值）+ 估值分（独立）+ 时机分（微调）。
     返回 dict：rows_html（质量层明细）/ layer_scores / layer_share / pre_risk_quality /
@@ -512,8 +434,11 @@ def compute_scores(fill: dict):
             raise ValueError(f"valuation_score = {valuation} 超出 0-10 范围")
 
     # 时机分（筹码面 67% + 技术面 33%；只算分值，时机轨表在 11 由模型呈现，09 只给小结）
-    t_scores = _timing_field(fill, "timing_scores")
-    t_weights = {k: float(_timing_field(fill, "timing_weights").get(k, dw)) for k, _n, dw in TIMING_DIMS}
+    t_scores = fill.get("timing_scores") or {}
+    bad_t = [k for k in t_scores if k not in {d[0] for d in TIMING_DIMS}]
+    if bad_t:
+        raise ValueError(f"timing_scores 含非法键名 {bad_t}：只接受 筹码面/技术面（2B/2C 旧键名兼容已移除）")
+    t_weights = {k: float((fill.get("timing_weights") or {}).get(k, dw)) for k, _n, dw in TIMING_DIMS}
     tw_sum = sum(t_weights.values())
     if abs(tw_sum - 100.0) > 0.01:
         raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")
@@ -589,6 +514,26 @@ _SCENARIO_COLORS = {"pess": "#c75b5b", "base": "#c08a2e", "opt": "#6ba86b"}
 _SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
 
 
+def _pad_domain(lo: float, hi: float, ratio: float, floor=None):
+    """值域向两端各扩 ratio 比例（防贴边）；floor 给下限（如 ROE 不为负）。"""
+    pad = (hi - lo) * ratio or 1
+    lo -= pad
+    hi += pad
+    if floor is not None:
+        lo = max(floor, lo)
+    return lo, hi
+
+
+def _lin_map(a: float, b: float, A: float, B: float):
+    """线性映射：数值域 [a,b] → 像素域 [A,B]（a→A，b→B）。"""
+    return lambda v: A + (v - a) / (b - a) * (B - A)
+
+
+def _ticks(lo: float, hi: float, n: int = 5) -> list:
+    """n 个等距刻度值。"""
+    return [lo + (hi - lo) * i / (n - 1) for i in range(n)]
+
+
 def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     """05 目标价走廊：竖向柱版——x 轴=悲观/基础/乐观（与三情景表列方向一致），y 轴=价格，
     区间竖条 + 中枢横刻 + 现价水平虚线 + 中枢较现价涨跌幅（全部脚本计算）。
@@ -616,14 +561,9 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
         cols.sort(key=lambda r: order.get(r.get("key", ""), 1))  # 悲观/基础/乐观 从左到右
 
     W, H, L, R, T, B = 1000, 400, 64, 24, 46, 64
-    lo_d = min([c["low"] for c in cols] + [price])
-    hi_d = max([c["high"] for c in cols] + [price])
-    pad = (hi_d - lo_d) * 0.08 or 1
-    lo_d -= pad
-    hi_d += pad
-
-    def Y(v):
-        return T + (hi_d - v) / (hi_d - lo_d) * (H - T - B)
+    lo_d, hi_d = _pad_domain(min([c["low"] for c in cols] + [price]),
+                             max([c["high"] for c in cols] + [price]), 0.08)
+    Y = _lin_map(lo_d, hi_d, H - B, T)
 
     n = len(cols)
     plot_w = W - L - R
@@ -633,8 +573,7 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
              f'aria-label="目标价走廊" style="width:100%;height:auto;display:block;font-family:inherit;">']
     # 价格轴（左侧刻度 + 横向浅网格线）
-    for i in range(5):
-        v = lo_d + (hi_d - lo_d) * i / 4
+    for v in _ticks(lo_d, hi_d):
         gy = Y(v)
         parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="#eef1f5" stroke-width="1"/>')
         parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v))}</text>')
@@ -735,70 +674,47 @@ def compute_valuation(fill: dict):
             "mode": "mcap" if rows[0]["mcap_lo"] is not None else "pe"}
 
 
+def _lookup(val, pairs, default):
+    """阈值表查找：pairs 为 [(阈值, 分值)] 降序，返回首个 val >= 阈值 的分值。"""
+    for t, s in pairs:
+        if val >= t:
+            return s
+    return default
+
+
+def _lookup_lt(val, pairs, default):
+    """严格小于阈值表查找（合理倍数等「越低越好」口径用；pairs 升序）。"""
+    for t, s in pairs:
+        if val < t:
+            return s
+    return default
+
+
+# 估值分四件套阈值表（规则正文唯一权威在 scoring.md，改动须同步）
+_CENTRAL_TABLE = [(20, 9.0), (15, 8.0), (10, 7.0), (5, 6.0), (0, 5.0), (-5, 4.0), (-10, 3.0)]
+_ODDS_TABLE = [(2, 8.5), (1.5, 7.5), (1.0, 6.0), (0.5, 5.0), (0, 3.5)]
+_DIV_TABLE = [(3, 9.0), (2, 8.0), (1, 7.0), (0, 6.0), (-1, 5.0)]
+# 合理倍数：ratio = 现价 PE ÷ 带中枢，越低越便宜；1e-9 偏移保留原 ≤ 边界语义（≤1.1→5.0 / ≤1.2→3.5）
+_WARRANTED_TABLE = [(0.8, 9.0), (0.9, 8.0), (1.0, 7.0), (1.1 + 1e-9, 5.0), (1.2 + 1e-9, 3.5)]
+
+
 def _map_central(central: float) -> float:
-    pct = central * 100
-    if pct >= 20:
-        return 9.0
-    if pct >= 15:
-        return 8.0
-    if pct >= 10:
-        return 7.0
-    if pct >= 5:
-        return 6.0
-    if pct >= 0:
-        return 5.0
-    if pct >= -5:
-        return 4.0
-    if pct >= -10:
-        return 3.0
-    return 2.0
+    return _lookup(central * 100, _CENTRAL_TABLE, 2.0)
 
 
 def _map_odds(odds) -> float:
     if odds is None:
         return 10.0  # ∞（悲观仍正收益）
-    if odds >= 2:
-        return 8.5
-    if odds >= 1.5:
-        return 7.5
-    if odds >= 1.0:
-        return 6.0
-    if odds >= 0.5:
-        return 5.0
-    if odds >= 0:
-        return 3.5
-    return 2.0
+    return _lookup(odds, _ODDS_TABLE, 2.0)
 
 
 def _map_warranted(pe_ttm: float, band: list) -> float:
-    mid = (band[0] + band[1]) / 2
-    ratio = pe_ttm / mid
-    if ratio < 0.8:
-        return 9.0
-    if ratio < 0.9:
-        return 8.0
-    if ratio < 1.0:
-        return 7.0
-    if ratio <= 1.1:
-        return 5.0
-    if ratio <= 1.2:
-        return 3.5
-    return 2.0
+    ratio = pe_ttm / ((band[0] + band[1]) / 2)
+    return _lookup_lt(ratio, _WARRANTED_TABLE, 2.0)
 
 
 def _map_div(div_yield: float, risk_free: float) -> float:
-    spread = div_yield - risk_free
-    if spread >= 3:
-        return 9.0
-    if spread >= 2:
-        return 8.0
-    if spread >= 1:
-        return 7.0
-    if spread >= 0:
-        return 6.0
-    if spread >= -1:
-        return 5.0
-    return 4.0
+    return _lookup(div_yield - risk_free, _DIV_TABLE, 4.0)
 
 
 def compute_valuation_score(calc: dict, inputs: dict):
@@ -918,22 +834,12 @@ def build_peers_plot(fill: dict) -> str:
         return ""
 
     W, H, L, R, T, B = 1000, 460, 64, 30, 34, 52
-    pe_lo = min([p["pe"] for p in pts] + pe_bands)
-    pe_hi = max([p["pe"] for p in pts] + pe_bands)
-    roe_lo = min([p["roe"] for p in pts] + roe_bands)
-    roe_hi = max([p["roe"] for p in pts] + roe_bands)
-    pe_pad = (pe_hi - pe_lo) * 0.10 or 1
-    roe_pad = (roe_hi - roe_lo) * 0.12 or 1
-    pe_lo -= pe_pad
-    pe_hi += pe_pad
-    roe_lo = max(0.0, roe_lo - roe_pad)
-    roe_hi += roe_pad
-
-    def X(pe):
-        return L + (pe - pe_lo) / (pe_hi - pe_lo) * (W - L - R)
-
-    def Y(roe):
-        return T + (roe_hi - roe) / (roe_hi - roe_lo) * (H - T - B)
+    pe_lo, pe_hi = _pad_domain(min([p["pe"] for p in pts] + pe_bands),
+                               max([p["pe"] for p in pts] + pe_bands), 0.10)
+    roe_lo, roe_hi = _pad_domain(min([p["roe"] for p in pts] + roe_bands),
+                                 max([p["roe"] for p in pts] + roe_bands), 0.12, floor=0.0)
+    X = _lin_map(pe_lo, pe_hi, L, W - R)
+    Y = _lin_map(roe_lo, roe_hi, H - B, T)
 
     xb = [X(b) for b in pe_bands]
     yb = [Y(b) for b in roe_bands]  # roe_bands[0]=8 → 下方线 yb[0] 更大；[1]=15 → 上方线
@@ -956,10 +862,8 @@ def build_peers_plot(fill: dict) -> str:
     # 坐标轴 + 刻度
     parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
     parts.append(f'<line x1="{L}" y1="{T}" x2="{L}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
-    for i in range(5):
-        v = pe_lo + (pe_hi - pe_lo) * i / 4
+    for v, v2 in zip(_ticks(pe_lo, pe_hi), _ticks(roe_lo, roe_hi)):
         parts.append(f'<text x="{X(v):.1f}" y="{H - B + 18}" text-anchor="middle" font-size="11" fill="#8899a6">{_fmt(round(v))}x</text>')
-        v2 = roe_lo + (roe_hi - roe_lo) * i / 4
         parts.append(f'<text x="{L - 8}" y="{Y(v2) + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v2))}%</text>')
     parts.append(f'<text x="{W - R}" y="{H - 8}" text-anchor="end" font-size="11" fill="#8899a6">PE(TTM)</text>')
     parts.append(f'<text x="{L}" y="{T - 12}" font-size="11" fill="#8899a6">ROE</text>')
@@ -1004,7 +908,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
     # 分数范围（0-10）越界是硬错误
     for field in ("scores", "timing_scores"):
-        for k, v in (_timing_field(fill, field) if field == "timing_scores" else (fill.get(field) or {})).items():
+        for k, v in (fill.get(field) or {}).items():
             try:
                 fv = float(v)
             except (TypeError, ValueError):
@@ -1104,7 +1008,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         n_tbl, n_src = frag.count("<table"), frag.count('class="source"')
         if n_tbl and n_src < n_tbl:
             raise ValueError(f"{name} 含 {n_tbl} 张数据表但只有 {n_src} 个 `.source` 来源标注："
-                             f"每张表下方必须有来源标注")
+                             f"每张表下方必须有来源标注——在缺口表格下方补 "
+                             f'<span class="source">数据来源：…</span> 后重新渲染'
+                             f"（报错后禁止绕过脚本手写全文 HTML，只能修 fill 重渲）")
 
     warns = []
     # 必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）
@@ -1124,6 +1030,16 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     # thesis 三情景价格标注完整性
     if th and not all(c in th for c in ("scenario-pess", "scenario-base", "scenario-opt")):
         warns.append("thesis_html 缺三情景价格标注（scenario-pess/base/opt span 未齐）")
+    # thesis 信息量地板：Hero 一句话是全文提纲挈领，不能只塞三个价格
+    # （中兴 2026-08-24 实证：thesis 只有"12个月目标价：悲观/基础/乐观"）
+    th_txt_len = len(_plain_text(th))
+    if th_txt_len:
+        th_no_price = re.sub(r'<span\b[^>]*class="[^"]*\bscenario-(?:pess|base|opt)\b[^"]*"[^>]*>.*?</span>',
+                             "", th, flags=re.I | re.S)
+        th_rest = len(_plain_text(th_no_price))
+        if th_txt_len < 60 or th_rest < 20:
+            warns.append(f"thesis_html 信息量不足（纯文本 {th_txt_len} 字，剥掉三情景价后仅 {th_rest} 字）："
+                         f"一句话结论 = 论点 + 关键证据 + 三情景价 + 操作结论，不能只塞目标价")
     # peers_plot 目标公司标记
     pp = fill.get("peers_plot")
     pts = (pp.get("points") if isinstance(pp, dict) else pp) or []
@@ -1143,19 +1059,31 @@ def validate_content(fill: dict, calc: dict = None) -> None:
                 warns.append("时机判定小表存在 >40 字单元格：只写短语（≤15 字/条），"
                              "长解释与降级说明挪到表下 .source 行（fill-schema 固定 4 行 3 列格式）")
                 break
-    # 极端分证据校验：≥8 或 ≤3 的维度，对应 dim-block 纯文本 <50 字 → 告警（极端分须配量化依据）
+    # dim-block 内容地板（deepseek 中兴/豪威"每块一句话凑数"缩水实证）：
+    # 纯文本 <40 字 → 拒渲染（连一条论据都写不出）；<80 字 → 告警。
+    # 同循环保留极端分证据校验：≥8 或 ≤3 的维度，dim-block 纯文本 <50 字 → 告警（极端分须配量化依据）
+    thin_reject, thin_warn = [], []
     for field, layer in (("l1_html", "L1"), ("l3_html", "L3")):
         blocks = re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]
         for (key, _l, name, _dw), blk in zip([d for d in DIMS if d[1] == layer], blocks):
+            blen = len(_plain_text(blk))
+            if blen < 40:
+                thin_reject.append(f"{name} 仅 {blen} 字")
+            elif blen < 80:
+                thin_warn.append(f"{name} 仅 {blen} 字")
             sv = (fill.get("scores") or {}).get(key)
             if sv is None:
                 continue
             sv = float(sv)
-            if sv >= 8 or sv <= 3:
-                blen = len(_plain_text(blk))
-                if blen < 50:
-                    warns.append(f"{name} 得分 {sv:g}（极端分）但 dim-block 纯文本仅 {blen} 字 < 50："
-                                 f"≥8 或 ≤3 必须配具体量化依据")
+            if (sv >= 8 or sv <= 3) and blen < 50:
+                warns.append(f"{name} 得分 {sv:g}（极端分）但 dim-block 纯文本仅 {blen} 字 < 50："
+                             f"≥8 或 ≤3 必须配具体量化依据")
+    if thin_reject:
+        raise ValueError("dim-block 内容地板：" + "；".join(thin_reject)
+                         + "（纯文本 <40 字）：每个维度块至少写出论据+数据，不能只写一句判语")
+    if thin_warn:
+        warns.append("dim-block 内容偏薄（纯文本 <80 字）：" + "；".join(thin_warn)
+                     + "——每个维度块应有论据、数据与判词，薄块请补写后重渲")
     # 框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文；
     # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查）
     for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
@@ -1179,6 +1107,11 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         if rev_n < 3:
             warns.append(f"回测模式下 .rev 高亮过少（全文仅 {rev_n} 处 < 3）："
                          f"评分变化/被证伪假设/新增变量应标注（fill-schema 的 .rev 规则）")
+        # 关键假设变更表（防评分漂移，backtest.md 6.6 硬性要求）
+        rv = fill.get("review_html") or ""
+        if rv and ("<table" not in rv or "假设" not in rv):
+            warns.append("review_html 缺关键假设变更表：R 章节必须含相邻两版三情景假设对比表"
+                         "（假设未变也要显式写明），见 backtest.md 6.6")
     # 其余 fill-schema 标 ✓ 但渲染器零校验的必填字段
     for name in ("valuation_method", "stock_type", "gap_tier", "peers_meta", "next_review"):
         if not str(fill.get(name) or "").strip() or fill.get(name) == "—":
@@ -1193,7 +1126,8 @@ def validate_content(fill: dict, calc: dict = None) -> None:
 
 def _tag_timing_table(html: str) -> str:
     """11 时机判定小表（表体含 技术面/筹码面 行的表）自动补 class="timing-table"——
-    模板 CSS 对该表除末列（依据长文）外强制不换行，防止"技术面/筹码面/时机分"折行。"""
+    模板 CSS 对该表除末列（依据长文）外强制不换行，防止"技术面/筹码面/时机分"折行。
+    末行文本含「合计/时机分」时给该 <tr> 补 class="total"（合计行加粗+浅底，与明细行区分）。"""
     def repl_table(m):
         tbl = m.group(0)
         if "技术面" not in tbl or "筹码面" not in tbl or "timing-table" in tbl:
@@ -1206,7 +1140,16 @@ def _tag_timing_table(html: str) -> str:
                          + attrs[cm.end():])
         else:
             new_attrs = attrs.rstrip() + ' class="timing-table"'
-        return f"<table{new_attrs}>" + tbl[open_m.end():]
+        tagged = f"<table{new_attrs}>" + tbl[open_m.end():]
+        # 合计行标记：只看末个 <tr>，文本含「合计」或「时机分」才补 total 类（无明文合计行不误标）
+        trs = list(re.finditer(r"<tr\b[^>]*>", tagged, re.I))
+        if trs:
+            last = trs[-1]
+            row_txt = re.sub(r"<[^>]+>", "", tagged[last.end():])
+            if ("合计" in row_txt or "时机分" in row_txt) and "class" not in last.group(0):
+                tagged = (tagged[:last.start()] + last.group(0)[:-1].rstrip()
+                          + ' class="total">' + tagged[last.end():])
+        return tagged
     return re.sub(r"<table\b[^>]*>.*?</table>", repl_table, html, flags=re.I | re.S)
 
 
@@ -1537,7 +1480,7 @@ def render(fill_path: str, out_path: str = None) -> str:
         "L4_HTML": fill.get("l4_html", ""),
         "VALUATION_METHOD": fill.get("valuation_method", ""),
         "STOCK_TYPE": fill.get("stock_type", ""),
-        "VALUATION_HTML": _transpose_scenario_table(fill.get("valuation_html", "")),
+        "VALUATION_HTML": fill.get("valuation_html", ""),
         "GAP_TIER": fill.get("gap_tier", "—"),
         "GAP_HTML": fill.get("gap_html", ""),
         "PEERS_META": fill.get("peers_meta", ""),
@@ -1590,9 +1533,6 @@ def render(fill_path: str, out_path: str = None) -> str:
     for k, v in repl.items():
         html = html.replace("{{" + k + "}}", v)
 
-    # 幻觉类名归一（metric-label/value/sub → label/value/sub），在表格对齐修正前执行
-    html = _normalize_class_aliases(html)
-
     # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
     html = fix_table_alignment(html)
 
@@ -1614,7 +1554,8 @@ def render(fill_path: str, out_path: str = None) -> str:
         out_path = os.path.join(os.path.dirname(os.path.abspath(fill_path)),
                                 f"{company_s}-{code_s}-{quality:.2f}-{valuation:.1f}{review_tag}-{date_s}.html")
     with open(out_path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(html.replace("</body>",
+                             f"<!-- generated by render_report.py {RENDERER_VERSION} -->\n</body>"))
 
     empty = [k for k in ("CONCLUSION_HTML", "P0_HTML", "L1_HTML", "L3_HTML",
                          "L4_HTML", "VALUATION_HTML", "GAP_HTML", "PEERS_HTML",
@@ -1645,10 +1586,32 @@ def render(fill_path: str, out_path: str = None) -> str:
     return out_path
 
 
+def check_fill(fill_path: str) -> None:
+    """--check 模式：fill JSON 落盘后预检（解析 + 评分/估值计算 + 内容校验），不渲染。
+    替代手写 python -c json.load 自检（Windows 控制台引号/编码/路径反斜杠坑，
+    中兴 2026-08-24 实证）。退出码：0=通过可渲染，2=存在拒渲染项。"""
+    try:
+        fill = _load_fill(fill_path)
+        print(f"OK JSON 可解析，共 {len(fill)} 个顶层键")
+        calc = None
+        if fill.get("valuation"):
+            calc = compute_valuation(fill)
+        compute_scores(fill)
+        validate_content(fill, calc)
+    except ValueError as e:
+        print(f"✗ 预检未通过（渲染将被拒绝）：\n  {e}", file=sys.stderr)
+        sys.exit(2)
+    print("OK 内容预检通过，可执行渲染")
+
+
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a[2:] for a in sys.argv[1:] if a.startswith("--") and "=" not in a}
     opts = {a[2:].split("=")[0]: a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--") and "=" in a}
     if not args:
         print(__doc__)
         sys.exit(1)
-    render(args[0], opts.get("out"))
+    if "check" in flags:
+        check_fill(args[0])
+    else:
+        render(args[0], opts.get("out"))

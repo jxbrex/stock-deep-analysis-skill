@@ -82,8 +82,21 @@ def _tushare_token():
         return None
 
 
+# tushare 透明缓存：同一进程内相同 (api, 归一化参数) 只发一次网络请求（会员限流保护）
+_TS_CACHE: dict = {}
+_TS_DEBUG = os.environ.get("EM_FETCH_DEBUG") == "1"
+
+
 def ts_call(api_name: str, params: dict = None, fields: str = "") -> list:
-    """tushare HTTP API。返回 list[dict]（fields↔items 对齐）。失败抛异常由调用方兜底。"""
+    """tushare HTTP API。返回 list[dict]（fields↔items 对齐）。失败抛异常由调用方兜底。
+    缓存键归一化：params 里的 "fields" 是 no-op（tushare 只认 payload 顶层 fields），剔除后参与键。"""
+    norm = dict(params or {})
+    norm.pop("fields", None)
+    key = (api_name, tuple(sorted(norm.items())), fields)
+    if key in _TS_CACHE:
+        if _TS_DEBUG:
+            print(f"[cache-hit] {api_name} {dict(norm)}", file=sys.stderr)
+        return _TS_CACHE[key]
     tok = _tushare_token()
     if not tok:
         raise RuntimeError("tushare token 未配置（TUSHARE_TOKEN 环境变量或 ZCode mcp 配置）")
@@ -97,7 +110,18 @@ def ts_call(api_name: str, params: dict = None, fields: str = "") -> list:
         raise RuntimeError(f"tushare {api_name}: {d.get('msg')}")
     data = d.get("data") or {}
     flds = data.get("fields") or []
-    return [dict(zip(flds, row)) for row in (data.get("items") or [])]
+    rows = [dict(zip(flds, row)) for row in (data.get("items") or [])]
+    _TS_CACHE[key] = rows
+    if _TS_DEBUG:
+        print(f"[net] {api_name} {dict(norm)} -> {len(rows)} rows", file=sys.stderr)
+    return rows
+
+
+def _fin_rng() -> dict:
+    """财务三表/指标的统一取数窗口（当年-7 起，覆盖 forensic 7 年/年表 5 年/最新季度 2 年三处需求），
+    配合 ts_call 缓存：income/cashflow/balancesheet/fina_indicator 每股只发 1 次请求。"""
+    return {"start_date": f"{date.today().year - 7}0101",
+            "end_date": date.today().strftime("%Y%m%d")}
 
 
 # ---------------- 东财传输层（兜底） ----------------
@@ -282,8 +306,7 @@ def fetch_forensic(code: str) -> list:
     方法细节见 references/forensic-accounting.md。"""
     try:
         ts = to_ts_code(code)
-        y0 = date.today().year - 7
-        rng = {"start_date": f"{y0}0101", "end_date": date.today().strftime("%Y%m%d")}
+        rng = _fin_rng()
         inc = _pick_latest_per_period(
             [r for r in ts_call("income", {"ts_code": ts, **rng})
              if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"])[:2]
@@ -593,8 +616,7 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
     周转天数优先 tushare fina_indicator 换算；缺失期次用东财 F10 直接字段
     YSZKZZTS/CHZZTS 补齐（tushare 对部分个股该字段覆盖不全，中芯国际实证）。"""
     ts = to_ts_code(code)
-    y0 = date.today().year - n_years - 1
-    rng = {"start_date": f"{y0}0101", "end_date": date.today().strftime("%Y%m%d")}
+    rng = _fin_rng()  # 统一窗口：与 forensic/最新季度共享缓存（本地过滤，n_years 由切片控制）
     inc = []
     ind = []
     cf = []
@@ -604,9 +626,7 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
     except Exception:
         pass
     try:
-        ind = [r for r in ts_call("fina_indicator", {"ts_code": ts, **rng,
-                                  "fields": "ts_code,end_date,roe,grossprofit_margin,netprofit_margin,"
-                                            "debt_to_assets,ar_turn,turn_days"})
+        ind = [r for r in ts_call("fina_indicator", {"ts_code": ts, **rng})
                if (r.get("end_date") or "").endswith("1231")]
     except Exception:
         pass
@@ -681,8 +701,7 @@ def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
     """A股最新报告期摘要（东财键名同构）：净利/同比/总股本/ROIC。
     ROIC/总股本缺失时用东财 F10 字段级补齐（tushare fina_indicator/daily_basic 覆盖不全）。"""
     ts = to_ts_code(code)
-    y0 = date.today().year - 2
-    rng = {"start_date": f"{y0}0101", "end_date": date.today().strftime("%Y%m%d")}
+    rng = _fin_rng()  # 统一窗口：与 forensic/年表共享缓存（本地取最新报告期）
     inc = [r for r in ts_call("income", {"ts_code": ts, **rng})
            if str(r.get("report_type")) == "1"]
     if not inc:
@@ -707,7 +726,8 @@ def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
             pass
     roic = None
     try:
-        ind = ts_call("fina_indicator", {"ts_code": ts, "period": cur["end_date"]})
+        ind = [r for r in ts_call("fina_indicator", {"ts_code": ts, **rng})
+               if r.get("end_date") == cur["end_date"]]
         if ind:
             roic = ind[0].get("roic")
     except Exception:
@@ -995,9 +1015,7 @@ def fetch_debt(code: str):
     """最新报告期有息负债与货币资金（tushare balancesheet）。
     返回 dict（st_borr/non_cur_liab_due_1y/lt_borr/bond_payable/money_cap，单位元）或 None。"""
     try:
-        rows = ts_call("balancesheet", {"ts_code": to_ts_code(code),
-                                        "fields": "ts_code,end_date,report_type,st_borr,"
-                                                  "non_cur_liab_due_1y,lt_borr,bond_payable,money_cap"})
+        rows = ts_call("balancesheet", {"ts_code": to_ts_code(code), **_fin_rng()})
         rows = [r for r in rows if str(r.get("report_type")) == "1"]
         if not rows:
             return None

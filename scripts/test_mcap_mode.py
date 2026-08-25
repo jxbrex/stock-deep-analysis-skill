@@ -15,7 +15,9 @@ SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def _fixture(valuation, valuation_inputs, thesis_prices):
     pess, base, opt = thesis_prices
-    dim = '<div class="dim-block"><p>测试</p></div>'
+    dim = ('<div class="dim-block"><p>测试维度论据：行业规模与增速数据支撑，竞争格局稳定，'
+           '龙头份额持续提升；财务趋势向上，现金含量充足，负债率可控；治理记录良好，分红稳定，'
+           '关键假设已列基准值与验证日期。给予中性评分。</p></div>')
     return {
         "company": "冒烟测试", "code": "000001", "date": "2026-08-19",
         "subtitle": "测试行业 · 冒烟夹具",
@@ -28,9 +30,10 @@ def _fixture(valuation, valuation_inputs, thesis_prices):
         "price": "10", "mcap": "1,000", "pe_ttm": "10",
         "price_sub_html": "现价", "mcap_sub": "总市值", "pe_sub": "PE",
         "horizon": "12个月", "target_range": "10-12", "target_sub_html": "目标价区间",
-        "thesis_html": (f'冒烟结论 <span class="scenario-pess">{pess}</span>-'
-                        f'<span class="scenario-base">{base}</span>-'
-                        f'<span class="scenario-opt">{opt}</span> 元'),
+        "thesis_html": (f'冒烟结论：测试标的质地中上、价格合理，关键证据与数据已列明（夹具示例），'
+                        f'悲观有支撑、乐观有弹性；三情景目标价 <span class="scenario-pess">{pess}</span> / '
+                        f'<span class="scenario-base">{base}</span> / '
+                        f'<span class="scenario-opt">{opt}</span> 元，年化中枢为正——标准仓。'),
         "conclusion_html": (
             "<p><strong>关键优势：</strong>" + "优势带数据 6.0；" * 15 + "</p>"
             "<p><strong>关键弱点：</strong>" + "弱点带数据 5.0；" * 15 + "</p>"

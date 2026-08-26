@@ -25,6 +25,7 @@ import sys
 import time
 import urllib.request
 import urllib.parse
+from bisect import bisect_right
 from datetime import date
 
 # Windows 控制台默认 GBK 编码，打印中文/货币符号会 UnicodeEncodeError —— 强制 UTF-8
@@ -143,8 +144,8 @@ def _get_via_urllib(url: str) -> bytes:
         return r.read()
 
 
-def get(url: str, retries: int = 2) -> dict:
-    """curl 优先、urllib 兜底、失败重试。返回解析后的 JSON dict。"""
+def get(url: str, retries: int = 1) -> dict:
+    """curl 优先、urllib 兜底（TLS 指纹规避），失败重试 1 次。返回解析后的 JSON dict。"""
     last_err = None
     for attempt in range(retries + 1):
         for transport in (_get_via_curl, _get_via_urllib):
@@ -255,7 +256,7 @@ def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
         def pctile(vals, cur):
             if cur is None:
                 return None
-            return round(sum(1 for v in vals if v <= cur) / len(vals) * 100)
+            return round(bisect_right(vals, cur) / len(vals) * 100)
         return {"n": len(pes), "years": years,
                 "pe_min": pes[0], "pe_max": pes[-1], "pe_cur": latest_pe, "pe_pct": pctile(pes, latest_pe),
                 "pb_min": pbs[0], "pb_max": pbs[-1], "pb_cur": latest_pb, "pb_pct": pctile(pbs, latest_pb)}
@@ -527,7 +528,7 @@ def fetch_quote(secid: str, is_hk: bool = False) -> dict:
 
 def _em_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
     end = "20991231"
-    beg = f"{int(__import__('datetime').date.today().year) - years}0101"
+    beg = f"{date.today().year - years}0101"
     url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
            f"&fields1=f1,f2,f3&fields2=f51,f53&klt=103&fqt=1&beg={beg}&end={end}")
     d = get(url).get("data") or {}
@@ -881,22 +882,19 @@ def fetch_consensus(code: str) -> dict:
         if not recent:
             raise RuntimeError("report_rc 近180天无研报")
         orgs = {r.get("org_name") for r in recent if r.get("org_name")}
-        # 按预测年度聚合（quarter 形如 2026Q4 → 2026）
-        years = {}
+        # 单次循环聚合：按预测年度的净利/EPS（quarter 形如 2026Q4 → 2026）、目标价区间、评级分布
+        years, prices, ratings = {}, [], {}
         for r in recent:
             q = str(r.get("quarter") or "")
             yr = q[:4] if len(q) >= 4 else ""
-            if not yr.isdigit():
-                continue
-            slot = years.setdefault(yr, {"np": [], "eps": []})
-            if r.get("np") is not None:
-                slot["np"].append(float(r["np"]) / 1e4)  # report_rc np 单位万元 → 亿
-            if r.get("eps") is not None:
-                slot["eps"].append(float(r["eps"]))
-        prices = [(float(r["min_price"]), float(r["max_price"])) for r in recent
-                  if r.get("min_price") and r.get("max_price")]
-        ratings = {}
-        for r in recent:
+            if yr.isdigit():
+                slot = years.setdefault(yr, {"np": [], "eps": []})
+                if r.get("np") is not None:
+                    slot["np"].append(float(r["np"]) / 1e4)  # report_rc np 单位万元 → 亿
+                if r.get("eps") is not None:
+                    slot["eps"].append(float(r["eps"]))
+            if r.get("min_price") and r.get("max_price"):
+                prices.append((float(r["min_price"]), float(r["max_price"])))
             rt = (r.get("rating") or "").strip()
             if rt:
                 ratings[rt] = ratings.get(rt, 0) + 1

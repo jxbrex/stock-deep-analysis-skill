@@ -457,14 +457,27 @@ def compute_scores(fill: dict):
     }
 
 
+def _norm_class_quote(v):
+    """递归把 fill 里 HTML 片段的 class='x' 归一为 class="x"。模型在 JSON 内嵌 HTML 时
+    常用单引号避转义（万华 2026-08-26 实证 258 处），而校验计数与模板只认双引号。"""
+    if isinstance(v, str):
+        return re.sub(r"class='([^'\"]*)'", r'class="\1"', v)
+    if isinstance(v, dict):
+        return {k: _norm_class_quote(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm_class_quote(x) for x in v]
+    return v
+
+
 def _load_fill(fill_path: str) -> dict:
     r"""读取 fill JSON。模型手写 JSON 常带非法转义（如表头 "ROE \ PE" 的裸反斜杠），
     先标准解析；失败则把不属于合法转义（\\ \" \/ \b \f \n \r \t \uXXXX）的反斜杠
-    自动转义后重试并告警；仍失败则抛出带行号/列号/片段上下文的错误。"""
+    自动转义后重试并告警；仍失败则抛出带行号/列号/片段上下文的错误。
+    解析成功后对 class 属性做引号归一（见 _norm_class_quote）。"""
     with open(fill_path, encoding="utf-8") as f:
         text = f.read()
     try:
-        return json.loads(text)
+        return _norm_class_quote(json.loads(text))
     except json.JSONDecodeError as first_err:
         repaired = re.sub(r'\\(?![\\"/bfnrtu])', r"\\\\", text)
         try:
@@ -482,7 +495,7 @@ def _load_fill(fill_path: str) -> dict:
         print(f"⚠️ fill JSON 含非法反斜杠转义（如 \\ 后接空格/字母），已自动修复并继续；"
               f"请检查 fragment 中的反斜杠写法（详见 fill-schema.md「JSON 书写硬规则」）",
               file=sys.stderr)
-        return fill
+        return _norm_class_quote(fill)
 
 
 # ---------- 图形组件（脚本生成 SVG：模型只填数据，坐标/百分比一律脚本计算） ----------
@@ -1259,7 +1272,7 @@ def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
     return ('<span class="section-tag">估值分计算</span>' + table + legend)
 
 
-# 仓位档位序列（上浮 20% 硬顶、下调 0 兜底）
+# 仓位档位序列（上浮 20% 硬顶、下调 0 兜底；规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步）
 _POS_LADDER = [0, 5, 10, 20]
 _POS_LABEL = {0: "不建议参与", 5: "轻仓 ≤5%", 10: "标准仓 ≤10%", 20: "重仓 ≤20%"}
 
@@ -1530,8 +1543,7 @@ def render(fill_path: str, out_path: str = None) -> str:
         return block if repl.get(key) else ""
     html = re.sub(r"<!--IF:([A-Z_]+)-->(.*?)<!--ENDIF-->", handle_conditional, html, flags=re.S)
 
-    for k, v in repl.items():
-        html = html.replace("{{" + k + "}}", v)
+    html = re.sub(r"\{\{([A-Z_0-9]+)\}\}", lambda m: repl.get(m.group(1), m.group(0)), html)
 
     # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
     html = fix_table_alignment(html)

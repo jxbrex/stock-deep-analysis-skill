@@ -1,9 +1,25 @@
-# stock-deep-analysis — 个股深度分析技能（V4.3）
+# stock-deep-analysis — 个股深度分析技能（V4.4）
 
 基于「质量 × 估值 × 时机」三轨评分框架的个股深度分析技能（Kimi Code / ZCode 通用），
 一键取数、脚本拼装，生成单文件 HTML 研究报告。
 
 > ⚠️ 本技能产出的报告为 AI 生成的研究笔记，不构成投资建议。
+
+## V4.4 核心变化
+
+- **DeepSeek 全流程实测验收**（v4.2 思考题②，万华化学 2026-08-26，55 步日志逐条过）：
+  硬门禁文件全读、peer≥3 条件委派执行、`--check` 五轮迭代按设计工作、防绕行标记在位、
+  零绕行；内容地板把 DeepSeek 报告 dim 最薄块 128→195 字、thesis 29→162 字（中兴→万华）。
+- **引号归一**：fill JSON 内嵌 HTML 的 `class='x'` 单引号入库自动归一双引号
+  （万华实证 258 处；此前 source 计数只认双引号，单引号写法误报「缺来源标注」拒渲染）。
+- **委派扩容**：妙想 MCP 检索类取数（研报观点/公告/商品宏观）与 `--check` 契约层修复列入
+  「可委派（推荐）」，回传只准引文/数字+来源+日期、禁止综述；内容地板报错仍回主会话。
+- **F11 收敛**：决策矩阵/档位序列/四件套公式收敛为 scoring.md 唯一权威，
+  SKILL/fill-schema/render_report 只引用不复述。
+- **微型清理**：`__import__` hack、get() 重试 2→1、pctile→bisect、consensus 单循环聚合、
+  占位符替换改单次 re.sub。
+- **文档修补**：fill-schema 补 `target_range` 语义（基础情景区间，脚本自算覆盖，误填全区间
+  会被覆盖告警）；heredoc 违规补万华实证；「不 Read 脚本」细化为「禁学结构、允许 grep 诊断报错」。
 
 ## V4.3 核心变化
 
@@ -118,7 +134,8 @@ stock-deep-analysis/
 ## 报告生成流程（fill→render）
 
 1. 调研取数：`python em_fetch.py [代码] --peers=...`（完整输出直接进上下文，禁止 `| tail` 截断）；
-   peers 批量取数与新闻初筛默认委派子智能体（回传结构化原文数据），定性调研禁止委派
+   peer ≥3 批量取数与公告 PDF 下载必须委派子智能体；妙想 MCP 检索类取数与 `--check` 契约层
+   修复可委派（回传只准引文/数字+来源+日期），定性调研禁止委派
 2. 三轨评分 + 三情景估值（分析在主会话完成；九维度+时机分全部分档锚/清单锚定）
 3. 写 fill-data JSON（契约见 `references/fill-schema.md`；Write 直接写盘，超 ~8k token 分 2-3 段）
 4. 渲染：`python render_report.py _fill_[代码].json`

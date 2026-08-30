@@ -1,16 +1,9 @@
 ---
 name: stock-deep-analysis
 description: >
-  📊 Generate a comprehensive four-layer deep analysis report for any publicly traded company.
-  Use when the user asks for stock analysis, company deep dive, 深度分析, 股票分析,
-  公司研究, investment research report, or wants a Baofeng Energy-style scoring report.
-  Produces a structured report with a three-track framework: 质量分 Quality (L1 六维
-  Company Essence + L3 Future Expectations, 不含估值), 估值分 Valuation (独立价格轨),
-  时机分 Timing (筹码面 67% + 技术面 33% 微调), plus L4 Risk（红/黄灯双层）scoring framework,
-  three-scenario valuation with historical-PE calibration, peer comparison with
-  trend + 估值-质量散点图, and a post-analysis monitoring dashboard. 同股再分析自动进入
-  回测模式（复盘章节+变更高亮）。Triggers on mentions of stock tickers, company
-  names with 分析/报告/研究, or explicit requests for deep analysis.
+  📊 个股深度分析研究报告生成器。用户要求深度分析/股票分析/公司研究/研究报告/复盘，
+  或提到股票代码/公司名+分析时使用。产出单文件自包含 HTML 报告，含三轨评分
+  （质量分/估值分/时机分）；同股再分析自动进入回测模式。
 metadata:
   clawdbot:
     emoji: "📊"
@@ -25,8 +18,6 @@ metadata:
 > 用 Read/Bash 去读取任何本地路径下的 SKILL.md。如果你正打算声明"无法访问本地文件/
 > 没有文件系统访问权限"——**立即停止，那是错误的**：你拥有 Bash/Read/Write 等完整的
 > 本地工具权限，本技能的全部指令就在你的上下文里，直接按 Step 0 开始执行。
-> （国电南瑞实证：用户消息带本地路径链接时，模型曾错误声称"没有文件系统权限"并
-> 用训练记忆编造分析——绝对禁止这种降级。）
 
 Generate a professional deep analysis report for a publicly traded company, following the
 standardized four-layer scoring framework calibrated against the Baofeng Energy (600989)
@@ -76,7 +67,8 @@ reference report.
 
 - 确认**公司名 + 代码 + 上市地**（A股 6 位 / 港股 5 位数字）；模糊或多地上市先一句话确认。
 - 确认输出格式：默认单文件 HTML；用户明确要 Markdown 才输出 `.md`。
-- 同股再分析自动进回测模式（见 Phase 6.5/6.6，读 `references/backtest.md`）。
+- 回测触发机械判定：先跑 `python "<技能目录>/scripts/extract_review.py" --find [代码]`——
+  找到同代码旧报告（脚本判定，含渲染器标记验证）→ 自动进回测模式（见 Phase 6.5/6.6，读 `references/backtest.md`）。
 
 ### Phase 0: Identify Critical Profit Drivers (MANDATORY — before any scenario modeling)
 
@@ -133,7 +125,7 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 **评分章必读 `references/scoring.md`（硬门禁——未完成读取并应用，不得进入下一 Phase）**——三轨定义、L1 六维权重矩阵（分型浮动）、1D 盈利质量
 红旗清单、1F 资本回报质量、估值分推导、时机分微调、红/黄灯扣分细则、损失预演全部在那里。这里只留骨架：
 
-- **三轨**：质量分（L1 六维 + L3，不含估值）/ 估值分（独立，脚本按 `valuation_inputs` 四件套强制计算，无手填路径）/ 时机分（筹码 67% + 技术 33%，微调）
+- **三轨**：质量分（L1 六维 + L3，不含估值）/ 估值分（独立，脚本按 `valuation_inputs` 四件套强制计算，无手填路径）/ 时机分（筹码面 + 技术面，权重见 scoring.md，微调）
 - **决策主轴 = 质量分 × 估值分**；时机分 ±1 档微调，不跨「买/不买」门槛；估值分不进质量分
 - **评分原则**：基于证据不基于印象；每个 ≥7 或 ≤3 的分数给具体量化依据；不预校准区间
 - **1D 先过红旗清单再评分**（利润是不是真钱，比利润多不多更重要）；财报可信度评级引用
@@ -142,9 +134,10 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 
 ### Phase 3: Build Valuation Model
 
-**估值章必读 `references/valuation.md`（硬门禁——未完成读取并应用，不得进入下一 Phase）**——三情景构建、PE 历史时段匹配校准、三指标提取
+**估值方法与评分同一个硬门禁：`references/scoring.md`（Phase 2 已读，其中「估值方法」章直接应用，
+本 Phase 不再新增必读文件）**——三情景构建、PE 历史时段匹配校准、三指标提取
 （中枢期望收益/赔率/离散度）、DCF 条件触发、市场预期差三档拆解全部在那里。
-关键假设标 base rate 分位（先读 `references/base-rates.md`，同为硬门禁）。
+关键假设标 base rate 分位（见 `scoring.md`「基准率参考」节）。
 
 一句话骨架：三情景由 Phase 0 的 1-2 个关键驱动定义；估值分由脚本按 `valuation_inputs` 四件套
 强制计算（权重公式唯一权威见 `scoring.md` 估值分节），模型只填输入不手算；
@@ -175,21 +168,21 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 #### 6.4 仓位与时机决策（质量分 × 估值分为主轴，时机分微调）
 
 质量分（L1+L3−黄灯扣分）定"入池资格"；估值分（脚本按四件套强制计算）定"买多少/等不等"；时机分
-（筹码 67% + 技术 33%）只做 ±1 档微调。**先过红灯**：命中红灯 → 不建议参与，无论质量分多高。
+只做 ±1 档微调（子维度与权重见 scoring.md）。**先过红灯**：命中红灯 → 不建议参与，无论质量分多高。
 
 **决策矩阵全表（9 行）只在 `references/scoring.md`，报告中不再出现**——报告第 11 章只显示落位与结论，
 顺序固定为：① 模型先写时机判定小表（给时机分）→ ② 脚本生成「三轨判定与仓位结论」卡
 （三轨判词小卡 + 只列触发项的调节轨迹 + 最终仓位徽章）。
 
-**调节规则、档位序列与估值轨拦截器的唯一权威在 `references/scoring.md`「决策主轴」节**
-（固定优先级：红灯熔断 > 中枢为负拦截器 > 矩阵落位 > 时机分 > 离散度 > 赔率∞上浮），
+**调节规则、档位序列与估值轨拦截器的唯一权威在 `references/scoring.md`「决策主轴」节**，
 本文件不复述数值阈值，改规则只改 scoring.md。
 **矩阵落位、调节轨迹、最终仓位结论全部由脚本生成**，模型不手写判词。
 
 #### 6.5-6.6 复盘校准与回测模式
 
 **回测模式必读 `references/backtest.md`（硬门禁——未完成读取并应用，不得开始写回测 fill）**——复盘四格表、分开复盘纪律、归因纪律、偏差档案、
-回测触发与输出差异全部在那里。触发：工作目录已存在同代码旧报告 → 自动进入回测模式
+回测触发与输出差异全部在那里。触发：`extract_review.py --find [代码]` 在工作目录找到同代码旧报告
+（脚本判定，含渲染器标记验证）→ 自动进入回测模式
 （先独立取数打分 → 再读旧报告 → 全量重写 → 最后新旧对比）。复盘内容只进 R 章节，
 **禁止生成独立 `_复盘.md` 文件**。
 
@@ -220,30 +213,29 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 1. **写 fill-data JSON**：把全部分析内容写成一个 `_fill_[代码].json`（下划线前缀=临时文件）。
    字段契约见 fill-schema.md。分析和文字照常由你生成——脚本只做拼装。
    **写盘方式硬规则**：fill JSON 一律用 **Write 工具直接写盘**——禁止用 python/bash/heredoc
-   拼接生成 JSON（Windows 下必踩 GBK 编码/引号转义/大文本截断坑，恒瑞/中免/阿里"卡住"与
-   赢合/东方财富 Python 报错均源于此；万华 2026-08-26 实证仍有模型用 `cat >> << 'EOF'`
-   追加分段，侥幸未炸但属违规——无转义校验、无断点，出问题无法定位）。唯一的 Python 调用是渲染命令本身。
+   拼接生成 JSON（Windows 下必踩 GBK 编码/引号转义/大文本截断坑——无转义校验、无断点，
+   出问题无法定位）。唯一的 Python 调用是渲染命令本身。
    **分段写盘（防网关超时）**：fill JSON 预计超 ~8k token 时必须分 2-3 段写——
    Write 写首段，后续用 append 追加，单次响应 ≤8k token。单次超长响应流式输出数分钟，
-   极易撞网关 504/连接中断且重试无断点（紫金实证：16.5k token 单次必挂，6.6k 分段一次过）。
+   极易撞网关 504/连接中断且重试无断点。
 2. **渲染**：
    ```bash
    python "<技能目录>/scripts/render_report.py" "_fill_[代码].json"
    ```
-   脚本完成：三轨评分×权重计算（质量分 = L1 层分×L1占比 + L3 层分×L3占比 − 黄灯扣分；
-   **估值分按 `valuation_inputs` 四件套脚本强制计算，fill 手填值一律被覆盖**；时机分筹码67+技术33）、
+   脚本完成：三轨评分计算（公式与权重的唯一权威见 `references/scoring.md`；
+   **估值分按 `valuation_inputs` 四件套脚本强制计算，fill 手填值一律被覆盖**）、
    徽章色、三轨判词、决策矩阵落位与「三轨判定与仓位结论」卡、质量分汇总章（第 6 章，只含质量轨明细）、占位符替换、
    内容地板硬校验（不达标拒渲染）、自动命名输出。
    **渲染后检查警告**：若输出含 `⚠️ fill JSON 缺图形字段`（scenarios / peers_plot），
    必须补上字段重新渲染后再交付——缺失时 7 估值章目标价走廊 / 9 同业章散点图会被静默跳过。
 3. **完成后**：删除 `_fill_[代码].json` 临时文件，告知用户报告路径和质量分+估值分+时机分。
 
-**为什么不用 Edit 写 HTML**：每次 Edit 都要重发整个会话上下文（国电南瑞 18 次 Edit 消耗
-2.2M input token，占全程 73%）。fill→render 把拼装环节的模型开销降为**零**——你只需输出
+**为什么不用 Edit 写 HTML**：每次 Edit 都要重发整个会话上下文，长报告的逐段 Edit
+会消耗巨量 input token。fill→render 把拼装环节的模型开销降为**零**——你只需输出
 一次 ~10-15k token 的 JSON，脚本零 token 完成拼装。
 
 **禁止事项**：Edit 逐段改 HTML；单次 Write 全文 HTML；**渲染报错后手写全文 HTML 绕行**（报错信息已指明
-缺什么——修 fill 重渲是唯一合法路径，巨石 2026-08-23 绕行实证）；Read 模板学结构；
+缺什么——修 fill 重渲是唯一合法路径）；Read 模板学结构；
 手算质量分/估值分/时机分/层分（脚本算，手算易错；文件名里的分数也来自脚本）。
 
 **评分数据流**：你在 JSON 里填质量层各维原始得分（`scores`：1A-1F/3A-3C）+
@@ -273,19 +265,16 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 |------|---------|------|
 | `references/data-collection.md` | **采集前必读** | Phase 1 |
 | `references/data-sources.md` | 端点字段/港股矩阵/429 细查时 | Phase 1 |
-| `references/scoring.md` | **评分章必读** ||
-| `references/valuation.md` | **估值章必读** | Phase 3 / 估值分 |
-| `references/base-rates.md` | **估值章必读**（外部视角分位） | Phase 3 |
+| `references/scoring.md` | **评分+估值章必读**（含估值方法/基准率节；附录含历史报告分析经验） | Phase 2 / 3 |
 | `references/forensic-accounting.md` | 1D 财报可信度评级时必读 | Phase 2 1D |
 | `references/industry-financials.md` | **银行/保险/券商评分与估值时必读** | Phase 0.5 / 2 / 3 |
 | `references/industry-pharma.md` | **创新药/管线型医药评分与估值（rNPV）时必读** | Phase 0.5 / 2 / 3 |
 | `references/industry-realestate.md` | **开发型地产评分与估值（NAV）时必读** | Phase 0.5 / 2 / 3 |
 | `references/industry-internet.md` | **多元平台互联网评分与估值（SOTP）时必读** | Phase 0.5 / 2 / 3 |
-| `references/analytical-tips.md` | 评分/估值时按需 | Phase 2/3 |
 | `references/backtest.md` | **回测模式必读** | Phase 6.5/6.6 |
 | `references/fill-schema.md` | **写 fragment 前必读** | Report Output |
 | `scripts/em_fetch.py` | 执行取数（`python` 运行，**不 Read**——禁读脚本学结构；诊断报错允许 grep/局部读相关行） | Phase 1 |
-| `scripts/render_report.py` | 执行渲染（`python` 运行，**不 Read**——同上，万华 2026-08-26 实证：诊断为定位校验口径读脚本属合理调试） | Report Output |
+| `scripts/render_report.py` | 执行渲染（`python` 运行，**不 Read**——同上，诊断为定位校验口径允许 grep/局部读相关行） | Report Output |
 
 ---
 

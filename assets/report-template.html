@@ -203,7 +203,7 @@ td.rev, th.rev { padding: 8px 12px; }
   <div class="hero-data-strip">
     <div class="d-item">
       <div class="d-label">当前股价（{{DATE}} 收盘）</div>
-      <div class="d-value">{{PRICE}}<span class="unit"> 元</span></div>
+      <div class="d-value">{{PRICE}}<span class="unit"> {{CUR}}</span></div>
       <div class="d-sub">{{PRICE_SUB_HTML}}</div>
     </div>
     <div class="d-item">
@@ -218,7 +218,7 @@ td.rev, th.rev { padding: 8px 12px; }
     </div>
     <div class="d-item">
       <div class="d-label">目标价区间（{{HORIZON}}）</div>
-      <div class="d-value">{{TARGET_RANGE}}<span class="unit"> 元</span></div>
+      <div class="d-value">{{TARGET_RANGE}}<span class="unit"> {{CUR}}</span></div>
       <div class="d-sub">{{TARGET_SUB_HTML}}</div>
     </div>
   </div>

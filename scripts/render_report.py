@@ -69,7 +69,7 @@ LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.3"
+RENDERER_VERSION = "v4.5"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -137,8 +137,6 @@ def _timing_verdict(t: float) -> str:
     return "差时机"
 
 
-_TD_CELL = re.compile(r'<td\b([^>]*)>', re.I)
-_TH_CELL = re.compile(r'<th\b([^>]*)>', re.I)
 _CELL = re.compile(r'<(t[hd])\b([^>]*)>', re.I)
 _TR = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.I | re.S)
 _CLASS_ATTR = re.compile(r'class\s*=\s*["\']([^"\']*)["\']', re.I)
@@ -362,6 +360,9 @@ def compute_scores(fill: dict):
     red_deductions = fill.get("red_deductions") or []
     for r in red_deductions:
         rp = float(r.get("points", 0))
+        if rp < 0:
+            raise ValueError(f"red_deductions 单项扣分 {rp} < 0（{r.get('item', '?')}）："
+                             f"负扣分等于变相加分、绕过扣分上限，拒渲染")
         if rp > 1:
             raise ValueError(f"red_deductions 单项扣分 {rp} > 1（{r.get('item', '?')}）："
                              f"1D 红旗每项扣分上限 1 分")
@@ -396,11 +397,15 @@ def compute_scores(fill: dict):
             w = weights[key]
             wtd = s * w / 100.0
             badge = badge_class(s)
+            # 1D 红旗注解：红旗已先行扣入 1D 得分，单元格显示「原始分 − 红旗扣分 = 扣后分」
+            # （footer 算式不再列红旗项，避免与已扣分的 layer_scores 重复计算）
+            score_txt = (f"{s + red_total:.1f} − {red_total:.1f} 红旗 = {s:.1f}"
+                         if key == "1D" and red_total else f"{s:.1f}")
             first = (f'<td rowspan="{len(dims)}"><strong>{LAYER_NAMES[layer]}</strong>'
                      f'（占质量分 {ls[layer]:.0f}%）</td>') if j == 0 else ""
             rows.append(
                 f'<tr>{first}<td>{name}</td>'
-                f'<td class="center score-cell"><span class="badge {badge}">{s:.1f}</span></td>'
+                f'<td class="center score-cell"><span class="badge {badge}">{score_txt}</span></td>'
                 f'<td class="center">{_dim_verdict(s)}</td>'
                 f'<td class="num">{w:g}%</td><td class="num">{wtd:.2f}</td></tr>'
             )
@@ -410,9 +415,15 @@ def compute_scores(fill: dict):
 
     # 黄灯扣分（模型填 yellow_deductions 明细：[{label, points}]）
     # 硬校验：单项 >1 或累计 >2 → 拒渲染（按规则应升红灯）
+    # 黄灯扣分明细为必填键（fill-schema 标 ✓）：缺失即拒渲染，无扣分必须显式填 []
+    if "yellow_deductions" not in fill:
+        raise ValueError("yellow_deductions 键缺失：黄灯扣分明细必须显式给出，无扣分请填 []")
     yellow = fill.get("yellow_deductions") or []
     for y in yellow:
         yp = float(y.get("points", 0))
+        if yp < 0:
+            raise ValueError(f"黄灯单项扣分 {yp} < 0（{y.get('label', '?')}）："
+                             f"负扣分等于变相加分、绕过扣分上限，拒渲染")
         if yp > 1:
             raise ValueError(f"黄灯单项扣分 {yp} > 1（{y.get('label', '?')}）："
                              f"累计扣分>2 或单项>1，应按规则升红灯")
@@ -434,7 +445,13 @@ def compute_scores(fill: dict):
             raise ValueError(f"valuation_score = {valuation} 超出 0-10 范围")
 
     # 时机分（筹码面 67% + 技术面 33%；只算分值，时机轨表在 11 由模型呈现，09 只给小结）
-    t_scores = fill.get("timing_scores") or {}
+    # timing_scores 为必填键：缺失或缺维度即拒渲染（不允许静默按 0 计入，消除 get(k,0) 兜底）
+    t_scores = fill.get("timing_scores")
+    if not isinstance(t_scores, dict) or not t_scores:
+        raise ValueError("timing_scores 为必填字段：时机层得分对象（筹码面/技术面），缺失即拒渲染")
+    miss_t = [k for k, _n, _w in TIMING_DIMS if k not in t_scores]
+    if miss_t:
+        raise ValueError(f"timing_scores 缺维度: {miss_t}（筹码面/技术面缺一不可，不接受缺维按 0 计）")
     bad_t = [k for k in t_scores if k not in {d[0] for d in TIMING_DIMS}]
     if bad_t:
         raise ValueError(f"timing_scores 含非法键名 {bad_t}：只接受 筹码面/技术面（2B/2C 旧键名兼容已移除）")
@@ -442,9 +459,7 @@ def compute_scores(fill: dict):
     tw_sum = sum(t_weights.values())
     if abs(tw_sum - 100.0) > 0.01:
         raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")
-    timing = None
-    if t_scores:
-        timing = sum(float(t_scores.get(k, 0)) * t_weights[k] for k, _n, _w in TIMING_DIMS) / 100.0
+    timing = sum(float(t_scores[k]) * t_weights[k] for k, _n, _w in TIMING_DIMS) / 100.0
 
     red_flag = (fill.get("red_flag") or "").strip()
     return {
@@ -474,8 +489,12 @@ def _load_fill(fill_path: str) -> dict:
     先标准解析；失败则把不属于合法转义（\\ \" \/ \b \f \n \r \t \uXXXX）的反斜杠
     自动转义后重试并告警；仍失败则抛出带行号/列号/片段上下文的错误。
     解析成功后对 class 属性做引号归一（见 _norm_class_quote）。"""
-    with open(fill_path, encoding="utf-8") as f:
-        text = f.read()
+    # utf-8-sig 兼容带 BOM 的文件；非 UTF-8 编码单独给出友好报错
+    try:
+        with open(fill_path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except UnicodeDecodeError as e:
+        raise ValueError(f"fill JSON 文件不是 UTF-8 编码（{e}）：请用 UTF-8（可含 BOM）重新保存后重试") from None
     try:
         return _norm_class_quote(json.loads(text))
     except json.JSONDecodeError as first_err:
@@ -665,8 +684,13 @@ def compute_valuation(fill: dict):
     if not rows:
         return None
     rows.sort(key=lambda r: order.get(r["key"], 1))
-    pess, base, opt = rows[0], rows[1] if len(rows) > 1 else rows[0], rows[-1]
-    horizon = str(v.get("horizon") or "12个月")
+    # 按 key 建字典取三情景：scenarios 含多余 key 或顺序混乱时，按排序位置取行会取错
+    by_key = {r["key"]: r for r in rows}
+    pess = by_key.get("pess", rows[0])
+    base = by_key.get("base", rows[1] if len(rows) > 1 else rows[0])
+    opt = by_key.get("opt", rows[-1])
+    # 年化中枢的时间维度用 base 情景的 horizon（rows 里已按情景级优先、valuation 级兜底解析）
+    horizon = base["horizon"]
     m = re.search(r"(\d+\.?\d*)", horizon)
     if m:
         hv = float(m.group(1))
@@ -760,9 +784,9 @@ def compute_valuation_score(calc: dict, inputs: dict):
     }
 
 
-def build_scenario_block(calc: dict) -> str:
+def build_scenario_block(calc: dict, cur: str = "元") -> str:
     """由 compute_valuation 结果生成三情景对比表 + 三指标卡条（scenario-table/metric-card 骨架，
-    类名全部脚本写死，杜绝幻觉类名与手算错误）。"""
+    类名全部脚本写死，杜绝幻觉类名与手算错误）。cur 为目标价币种单位（默认「元」，港股传「港元」）。"""
     if not calc:
         return ""
     rows = calc["rows"]
@@ -786,7 +810,7 @@ def build_scenario_block(calc: dict) -> str:
         row("时间维度", lambda r: _esc(r["horizon"]), "center"),
         row("触发条件", lambda r: _esc(r["trigger"]), ""),
         *driver_rows,
-        row("目标价", lambda r: f"{r['low']:.0f}-{r['high']:.0f} 元"),
+        row("目标价", lambda r: f"{r['low']:.0f}-{r['high']:.0f} {_esc(cur)}"),
         row("较现价", lambda r: f'<span class="{"up" if r["upside"] >= 0 else "down"}">{r["upside"] * 100:+.1f}%</span>（中值{r["mid"]:.0f}）'),
     ])
     table = ('<div class="table-scroll"><table class="scenario-table"><thead>'
@@ -919,6 +943,13 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
     表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
     calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
+    # price 缺失/非数字、date 格式非法在此拦截（友好报错先于估值计算结果的所有使用方）
+    if _num(fill.get("price")) is None:
+        raise ValueError(f"price 缺失或无法解析为数字: {fill.get('price')!r}"
+                         f"（Hero 指标卡与估值三情景计算都依赖现价）")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fill.get("date") or "")):
+        raise ValueError(f"date 格式非法: {fill.get('date')!r}（必须严格 YYYY-MM-DD）")
+
     # 分数范围（0-10）越界是硬错误
     for field in ("scores", "timing_scores"):
         for k, v in (fill.get(field) or {}).items():
@@ -943,8 +974,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if not isinstance(v, dict) or not v.get("scenarios"):
         raise ValueError("valuation 为必填字段：结构化三情景假设（shares / horizon / scenarios），"
                          "目标价与估值分全部由脚本计算")
-    if _num(v.get("shares")) is None:
-        raise ValueError("valuation.shares 缺失或非法（总股本，亿股）")
+    shares_n = _num(v.get("shares"))
+    if shares_n is None or shares_n <= 0:
+        raise ValueError("valuation.shares 缺失、非法或 ≤0（总股本，亿股，必须为正数）")
     skeys = set()
     modes = set()
     for s in v.get("scenarios") or []:
@@ -967,6 +999,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             pe = s.get("pe") or []
             if len(pe) < 2 or _num(pe[0]) is None or _num(pe[1]) is None:
                 raise ValueError(f"valuation.scenarios[{slab}] 缺 PE 区间（pe: [低, 高]）")
+            # 与 mcap 侧对称的区间校验：倒挂（高<低）或非正值一律拒渲染
+            if _num(pe[0]) <= 0 or _num(pe[1]) < _num(pe[0]):
+                raise ValueError(f"valuation.scenarios[{slab}] PE 区间非法（pe: [低, 高]，需 0<低≤高）")
             modes.add("pe")
         if not str(s.get("horizon") or v.get("horizon") or "").strip():
             raise ValueError(f"valuation.scenarios[{slab}] 缺时间维度（horizon，可放情景级或 valuation 级）")
@@ -993,7 +1028,14 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         bad = []
         for k in ("pess", "base", "opt"):
             c, f = cmap.get(k), span_prices[k]
-            if c and f is not None and abs(f - c) > 0.1 and abs(f - c) / c > 0.02:
+            if c is None or f is None:
+                continue
+            if c > 0:
+                mismatch = abs(f - c) > 0.1 and abs(f - c) / c > 0.02
+            else:
+                # c≤0（极端负中枢）时相对偏差无意义，只按绝对差 >0.1 判定
+                mismatch = abs(f - c) > 0.1
+            if mismatch:
                 bad.append(f"{_SCENARIO_NAMES[k]} 手写 {f:g} vs 脚本 {c:.2f}")
         if bad:
             raise ValueError("thesis_html 三情景手写价与 valuation 计算值不一致（相对偏差>2% 且绝对差>0.1）："
@@ -1006,7 +1048,8 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if concl_len < 200:
         raise ValueError(f"conclusion_html 纯文本仅 {concl_len} 字 < 200：核心结论四段不能为空洞")
     for name, need in (("l1_html", 6), ("l3_html", 3)):
-        n = len(re.findall(r"dim-block", fill.get(name) or ""))
+        # 与下方字数地板同口径（re.split），避免 class="dim-block x" 之类写法两口径打架
+        n = len(re.split(r'<div class="dim-block">', fill.get(name) or "")) - 1
         if n < need:
             raise ValueError(f"{name} 仅 {n} 个 dim-block < {need}：每个评分维度必须各有一个维度块")
     if "<table" not in (fill.get("peers_html") or ""):
@@ -1230,16 +1273,20 @@ def build_score_summary(sc: dict) -> str:
         f"{LAYER_NAMES[layer]} {layer_scores[layer]:.2f} × {ls[layer]:.0f}%"
         for layer in ("L1", "L3"))
     parts = [terms]
-    if red_total:
-        red_items = "；".join(str(r.get("item", "")) for r in sc["red_deductions"])
-        parts.append(f"− 红旗 {red_total:.1f}" + (f"（{_esc(red_items)}）" if red_items else ""))
     if yellow_total:
         parts.append(f"− 黄灯 {yellow_total:.1f}")
     formula = " ".join(parts)
+    # 红旗扣分已在 1D 维度分内先行扣减（1D 行内注解展示扣前分），算式不重复列入，
+    # 否则 footer 等式不成立（层分已含扣减，再列一次 = 双重扣分）
+    red_note = ""
+    if red_total:
+        red_items = "；".join(str(r.get("item", "")) for r in sc["red_deductions"])
+        red_note = (f' <span class="muted">（1D 得分已含红旗扣分 {red_total:.1f}'
+                    + (f'：{_esc(red_items)}' if red_items else "") + '）</span>')
     footer = (
         f'<div class="layer-summary">质量分 = {formula} = '
         f'<span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span>'
-        f' <strong>{_quality_verdict(quality)}</strong></div>')
+        f' <strong>{_quality_verdict(quality)}</strong>{red_note}</div>')
     return ('<span class="section-tag">质量分明细</span>'
             '<div class="table-scroll"><table><thead><tr><th>层</th><th>维度</th>'
             '<th class="center">得分</th><th class="center">判词</th><th class="num">权重</th><th class="num">加权</th></tr></thead>'
@@ -1295,7 +1342,9 @@ def _matrix_slot(q: float, v: float):
         return ("中上·差价格", "观察池", 6)
     if q >= 4.0:
         return ("质地一般", 5, 7)
-    return ("质量<4", "不建议参与", 8)
+    # 注意：必须返回整数 0（_POS_LADDER 档位），返回字符串会被 build_position_card
+    # 落入「观察池」分支——质量 <4 的正确结论是「不建议参与」
+    return ("质量<4", 0, 8)
 
 
 def build_position_card(fill: dict, quality: float, valuation: float, timing,
@@ -1322,7 +1371,8 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
         '</div>')
 
     # ② 调节轨迹（固定优先级：红灯熔断 > 中枢为负拦截器 > 矩阵落位
-    #    > 时机分调节 > 离散度调节 > 赔率 ∞ 上浮；只列实际触发条目，未触发不列）
+    #    > 时机分调节 > 离散度调节 > 赔率 ∞ 上浮；只列实际触发条目，未触发不列。
+    #    上浮类合计净效应 ≤ +1 档且不进 20 档，被拦项以「上浮封顶」条目说明）
     steps = []
     slot_txt = None
     if red_flag:
@@ -1338,30 +1388,56 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
         slot_txt = f"矩阵落位：质量 {quality:.2f} × 估值 {valuation:.1f} → {slot_desc} → {pos_txt}"
         if isinstance(pos, int) and pos > 0:
             idx = _POS_LADDER.index(pos)
-            # 时机分调节（≥6 上浮一档 / <4 下调一档）
-            if timing is not None and timing >= 6 and idx < len(_POS_LADDER) - 1:
-                steps.append(f"时机分调节：时机分 {timing:.2f} ≥ 6 → 上浮一档"
-                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
-                idx += 1
+            # 上浮封顶（规则见 references/scoring.md 决策主轴节）：上浮类调节合计净效应
+            # ≤ +1 档，且任何调节不得进入 20 档——重仓唯一入口是矩阵直接落位（≥7×≥8）。
+            # 防两类历史缺陷：①轻仓被时机+离散+赔率三连浮推成重仓；②下调缺 0 兜底时
+            # 负索引回卷到重仓。被拦项统一记入 blocked_by_cap，在轨迹中说明未生效原因。
+            up_used = 0
+            blocked_by_cap = []
+            # 时机分调节（≥6 上浮一档 / <4 下调一档；0 兜底）
+            if timing is not None and timing >= 6:
+                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
+                        and _POS_LADDER[idx + 1] < 20):
+                    steps.append(f"时机分调节：时机分 {timing:.2f} ≥ 6 → 上浮一档"
+                                 f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
+                    idx += 1
+                    up_used = 1
+                elif idx + 1 < len(_POS_LADDER):  # 落位已在顶格时不重复解释
+                    blocked_by_cap.append(f"时机分 {timing:.2f} ≥ 6")
             elif timing is not None and timing < 4:
+                new_idx = max(idx - 1, 0)
                 steps.append(f"时机分调节：时机分 {timing:.2f} < 4 → 下调一档"
-                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx - 1]]}）")
-                idx -= 1
+                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[new_idx]]}）")
+                idx = new_idx
             # 离散度调节（>90% 下调一档 / <40% 上浮一档；60% 旧阈值在 20 份报告中触发率 70%，
             # 形同普遍降档，已按经验分布收紧到极端档）
             if calc and calc["dispersion"] > 0.90:
+                new_idx = max(idx - 1, 0)
                 steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% > 90% → 下调一档"
-                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx - 1]]}）")
-                idx -= 1
-            elif calc and calc["dispersion"] < 0.40 and idx < len(_POS_LADDER) - 1:
-                steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% < 40% → 上浮一档"
-                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
-                idx += 1
-            # 赔率 ∞ 上浮一档（20% 硬顶）
-            if calc and calc["odds"] is None and idx < len(_POS_LADDER) - 1:
-                steps.append(f"赔率调节：赔率 ∞（悲观仍正收益）→ 上浮一档"
-                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
-                idx += 1
+                             f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[new_idx]]}）")
+                idx = new_idx
+            elif calc and calc["dispersion"] < 0.40:
+                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
+                        and _POS_LADDER[idx + 1] < 20):
+                    steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% < 40% → 上浮一档"
+                                 f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
+                    idx += 1
+                    up_used = 1
+                elif idx + 1 < len(_POS_LADDER):
+                    blocked_by_cap.append(f"离散度 {calc['dispersion'] * 100:.1f}% < 40%")
+            # 赔率 ∞ 上浮一档（受封顶约束）
+            if calc and calc["odds"] is None:
+                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
+                        and _POS_LADDER[idx + 1] < 20):
+                    steps.append(f"赔率调节：赔率 ∞（悲观仍正收益）→ 上浮一档"
+                                 f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
+                    idx += 1
+                    up_used = 1
+                elif idx + 1 < len(_POS_LADDER):
+                    blocked_by_cap.append("赔率 ∞")
+            if blocked_by_cap:
+                steps.append("上浮封顶：" + "、".join(blocked_by_cap)
+                             + " 同样满足上浮条件，受「上浮合计 ≤1 档且不进 20 档」限制未生效")
             final_label = _POS_LABEL[_POS_LADDER[idx]]
         elif pos == 0:
             final_label = "不建议参与"
@@ -1405,6 +1481,7 @@ def render(fill_path: str, out_path: str = None) -> str:
             raise ValueError(f"缺必填字段: {k}")
 
     _check_l4_order(fill.get("l4_html", ""))
+    cur = str(fill.get("currency") or "元")  # 币种单位（默认「元」，港股 fill 填 currency="港元"）
 
     # 估值计算（valuation 字段存在时，目标价/中枢/赔率/离散度全部脚本算）
     calc = compute_valuation(fill)
@@ -1412,7 +1489,7 @@ def render(fill_path: str, out_path: str = None) -> str:
 
     # 图形组件（脚本生成 SVG；数据缺省时为空串 → 模板条件块整块删除）
     spectrum_html = build_scenario_spectrum(fill, calc)
-    scenario_block_html = build_scenario_block(calc)
+    scenario_block_html = build_scenario_block(calc, cur)
     peers_plot_html = build_peers_plot(fill)
     peers_html = fill.get("peers_html", "")
     if peers_plot_html and "matrix-table" in peers_html:
@@ -1471,11 +1548,12 @@ def render(fill_path: str, out_path: str = None) -> str:
                       f"已按计算结果覆盖", file=sys.stderr)
         target_range = computed_tr
     repl = {
-        "TOP_ICON": fill.get("top_icon") or fill["company"][0],
-        "DATE": date,
-        "COMPANY": fill["company"],
-        "CODE": fill["code"],
-        "SUBTITLE": subtitle,
+        "TOP_ICON": _esc(fill.get("top_icon") or fill["company"][0]),
+        "DATE": _esc(date),
+        "COMPANY": _esc(fill["company"]),
+        "CODE": _esc(fill["code"]),
+        "SUBTITLE": _esc(subtitle),
+        "CUR": _esc(cur),
         "THESIS_HTML": fill.get("thesis_html", ""),
         "PRICE": str(fill.get("price", "—")),
         "PRICE_SUB_HTML": fill.get("price_sub_html", ""),
@@ -1524,11 +1602,11 @@ def render(fill_path: str, out_path: str = None) -> str:
         # 估值分（独立价格轨；徽章四档：≥8 绿 / 6-7.9 蓝 / 4-5.9 橙 / <4 红）
         "VALUATION_SCORE": f"{valuation:.1f}",
         "VALUATION_BADGE_CLASS": valuation_badge_class(valuation),
-        "VALUATION_VALUE_CLASS": ("score-good" if valuation >= 7 else "score-mid" if valuation >= 4 else "score-bad"),
+        "VALUATION_VALUE_CLASS": ("score-good" if valuation >= 8 else "score-mid" if valuation >= 4 else "score-bad"),
 
         # 时机分（微调）
         "TIMING_SCORE": (f"{timing:.2f}" if timing is not None else "—"),
-        "RED_FLAG_HTML": (f'<div class="danger-card">🔴 <strong>红灯回避</strong>：{red_flag}</div>' if red_flag else ""),
+        "RED_FLAG_HTML": (f'<div class="danger-card">🔴 <strong>红灯回避</strong>：{_esc(red_flag)}</div>' if red_flag else ""),
         "L1_SCORE": f"{layer_scores['L1']:.2f}", "L1_W": f"{layer_share['L1']:.0f}",
         "L3_SCORE": f"{layer_scores['L3']:.2f}", "L3_W": f"{layer_share['L3']:.0f}",
     }
@@ -1549,7 +1627,7 @@ def render(fill_path: str, out_path: str = None) -> str:
     html = fix_table_alignment(html)
 
     # 校验残留
-    leftover_double = re.findall(r"\{\{[A-Z_0-9]+\}\}", html)
+    leftover_double = re.findall(r"\{\{[A-Za-z_0-9]+\}\}", html)
     if leftover_double:
         raise ValueError(f"残留未替换占位符: {sorted(set(leftover_double))}")
     leftover_cn = re.findall(r"【[^】]{0,40}】", html)
@@ -1565,6 +1643,8 @@ def render(fill_path: str, out_path: str = None) -> str:
         date_s = _safe_filename(date)
         out_path = os.path.join(os.path.dirname(os.path.abspath(fill_path)),
                                 f"{company_s}-{code_s}-{quality:.2f}-{valuation:.1f}{review_tag}-{date_s}.html")
+    if os.path.exists(out_path):
+        print(f"⚠️ 输出文件已存在，将被覆盖: {out_path}", file=sys.stderr)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html.replace("</body>",
                              f"<!-- generated by render_report.py {RENDERER_VERSION} -->\n</body>"))
@@ -1610,6 +1690,10 @@ def check_fill(fill_path: str) -> None:
             calc = compute_valuation(fill)
         compute_scores(fill)
         validate_content(fill, calc)
+        # 与 render 同路径：估值分必须可计算——否则 check 退出码 0 但 render 在估值分处才失败
+        if compute_valuation_score(calc, fill.get("valuation_inputs")) is None:
+            raise ValueError("估值分无法计算：valuation_inputs 四键或 valuation 三情景字段不完整"
+                             "（pe_ttm/pe_band/div_yield/risk_free + 每情景 profit/pe 或 mcap + horizon）")
     except ValueError as e:
         print(f"✗ 预检未通过（渲染将被拒绝）：\n  {e}", file=sys.stderr)
         sys.exit(2)

@@ -26,7 +26,7 @@ import time
 import urllib.request
 import urllib.parse
 from bisect import bisect_right
-from datetime import date
+from datetime import date, timedelta
 
 # Windows 控制台默认 GBK 编码，打印中文/货币符号会 UnicodeEncodeError —— 强制 UTF-8
 for _s in (sys.stdout, sys.stderr):
@@ -41,14 +41,44 @@ TIMEOUT = 15
 TS_API = "https://api.tushare.pro"
 
 
+class RateLimitError(RuntimeError):
+    """HTTP 429/5xx：触发限流或服务端错误，硬停——禁止同 URL 原样重试。"""
+
+
+class HttpStatusError(RuntimeError):
+    """其他 HTTP 4xx 错误响应（属服务端明确拒绝，非网络层错误，不重试）。"""
+
+
+# 代码→市场映射表（secid_of / to_ts_code 共用，保证两边口径一致）：
+# 前缀 → (tushare 后缀, 东财 secid 前缀, 是否港股)
+# 注意顺序：北交所两位前缀必须先于沪B的单字符 "9" 判定（92 开头是北交所，不是沪B）
+_MKT_MAP = [
+    (("43", "83", "87", "88", "92"), "BJ", "0", False),   # 北交所
+    (("60", "68", "9"), "SH", "1", False),                # 沪市主板/科创板/沪B
+]
+_MKT_SZ = ("SZ", "0", False)   # 其余 6 位默认深市（00/30 深主板/创业板、20 深B）
+_MKT_HK = ("HK", "116", True)  # 5 位纯数字 = 港股
+
+
+def _mkt_of(code: str):
+    """纯数字代码 → (tushare后缀, 东财secid前缀, 是否港股)。
+    只接受 6 位（A股/北交所/B股）或 5 位（港股）纯数字，其他直接报错，不静默按深市处理。"""
+    if not code.isdigit() or len(code) not in (5, 6):
+        raise ValueError(f"无法识别的证券代码 {code!r}：期望 6 位纯数字（A股/北交所/B股）"
+                         f"或 5 位纯数字（港股），可带 .SH/.SZ/.BJ/.HK 后缀")
+    if len(code) == 5:
+        return _MKT_HK
+    for prefixes, sfx, sec, hk in _MKT_MAP:
+        if code.startswith(prefixes):
+            return sfx, sec, hk
+    return _MKT_SZ
+
+
 def secid_of(code: str):
     """返回 (secid, secucode, is_hk)。港股：5位数字（如 06082/01880）→ 116. 前缀"""
     code = code.strip().upper().replace(".SH", "").replace(".SZ", "").replace(".BJ", "").replace(".HK", "")
-    if code.startswith(("60", "68")):
-        return f"1.{code}", f"{code}.SH", False
-    if code.isdigit() and len(code) == 5:
-        return f"116.{code}", f"{code}.HK", True
-    return f"0.{code}", f"{code}.SZ", False
+    sfx, sec, hk = _mkt_of(code)
+    return f"{sec}.{code}", f"{code}.{sfx}", hk
 
 
 def to_ts_code(code: str) -> str:
@@ -56,13 +86,8 @@ def to_ts_code(code: str) -> str:
     code = code.strip().upper()
     if "." in code:
         return code
-    if code.isdigit() and len(code) == 5:
-        return code + ".HK"
-    if code.startswith(("60", "68", "9")):
-        return code + ".SH"
-    if code.startswith(("43", "83", "87", "88", "92")):
-        return code + ".BJ"
-    return code + ".SZ"
+    sfx, _, _ = _mkt_of(code)
+    return code + "." + sfx
 
 
 # ---------------- tushare 传输层 ----------------
@@ -128,30 +153,47 @@ def _fin_rng() -> dict:
 # ---------------- 东财传输层（兜底） ----------------
 
 def _get_via_curl(url: str) -> bytes:
-    """curl 传输：push2 域对 Python urllib 的 TLS 指纹间歇限流，curl 不受限（实测验证）。"""
+    """curl 传输：push2 域对 Python urllib 的 TLS 指纹间歇限流，curl 不受限（实测验证）。
+    -w 捕获 HTTP 状态码：429/5xx → RateLimitError（限流硬停）；其他 4xx → HttpStatusError。"""
     r = subprocess.run(
-        ["curl", "-s", "--max-time", str(TIMEOUT), "-H", f"User-Agent: {CURL_UA}", url],
+        ["curl", "-s", "--max-time", str(TIMEOUT), "-H", f"User-Agent: {CURL_UA}",
+         "-w", "\n%{http_code}", url],
         capture_output=True, timeout=TIMEOUT + 5,
     )
     if r.returncode != 0 or not r.stdout:
         raise ConnectionError(f"curl rc={r.returncode} {r.stderr[:100]!r}")
-    return r.stdout
+    body, _, status = r.stdout.rpartition(b"\n")
+    code = int(status) if status.isdigit() else 0
+    if code == 429 or code >= 500:
+        raise RateLimitError(f"HTTP {code}（限流/服务端错误，硬停不重试）: {url[:80]}")
+    if code >= 400:
+        raise HttpStatusError(f"HTTP {code}: {url[:80]}")
+    return body
 
 
 def _get_via_urllib(url: str) -> bytes:
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        return r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 429 or e.code >= 500:
+            raise RateLimitError(f"HTTP {e.code}（限流/服务端错误，硬停不重试）: {url[:80]}") from e
+        raise HttpStatusError(f"HTTP {e.code}: {url[:80]}") from e
 
 
 def get(url: str, retries: int = 1) -> dict:
-    """curl 优先、urllib 兜底（TLS 指纹规避），失败重试 1 次。返回解析后的 JSON dict。"""
+    """curl 优先、urllib 兜底（TLS 指纹规避），失败重试 1 次。返回解析后的 JSON dict。
+    重试仅限网络层错误（超时/连接失败/异常响应体）；HTTP 错误响应（4xx/5xx）不重试、
+    不换传输层重打，429/5xx 抛 RateLimitError 由 main 限流硬停。"""
     last_err = None
     for attempt in range(retries + 1):
         for transport in (_get_via_curl, _get_via_urllib):
             try:
                 raw = transport(url)
                 return json.loads(raw.decode("utf-8"))
+            except (RateLimitError, HttpStatusError):
+                raise  # HTTP 错误响应：原样抛出，不重试
             except Exception as e:
                 last_err = e
         if attempt < retries:
@@ -183,6 +225,25 @@ def pct(x, digits=1):
         return "—"
 
 
+def _yoy(cur, pre):
+    """同比%：分母 pre≤0 时百分比失真，按符号组合返回文字（扭亏/转亏/减亏/增亏）。
+    pre>0 且 cur<0 → 转亏；pre<0 且 cur>0 → 扭亏；cur/pre 任一缺失 → None。"""
+    if cur is None or pre is None:
+        return None
+    if pre > 0:
+        return "转亏" if cur < 0 else (cur / pre - 1) * 100
+    if pre < 0:
+        if cur > 0:
+            return "扭亏"
+        return "减亏" if cur > pre else "增亏"
+    return None  # pre == 0：基数为零，同比无意义
+
+
+def yoy_text(v):
+    """同比显示：数值→百分比，文字（扭亏/转亏…）→原样，None→—"""
+    return v if isinstance(v, str) else pct(v)
+
+
 def _fmt_date(yyyymmdd: str) -> str:
     """YYYYMMDD -> YYYY-MM-DD"""
     s = str(yyyymmdd or "")
@@ -208,7 +269,7 @@ def _hk_daily_series(ts_code: str, years: int = 6) -> list:
 
 
 def _em_quote(secid: str, is_hk: bool = False) -> dict:
-    fields = "f43,f44,f45,f46,f57,f58,f60,f116,f117,f162,f167,f168,f169,f170"
+    fields = "f43,f57,f58,f116,f162,f167,f168,f170"
     url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields={fields}"
     d = get(url).get("data") or {}
     # 实测缩放差异：A股 价格÷100 比率÷100；港股 价格÷1000 比率÷100（f162=0 表示PE缺失非真0）
@@ -275,8 +336,7 @@ def fetch_forecast_express(code: str) -> list:
             chg_raw = (r.get("p_change_min"), r.get("p_change_max"))
             chg = (f"{chg_raw[0]:.0f}%~{chg_raw[1]:.0f}%"
                    if all(v is not None and abs(v) < 10000 for v in chg_raw) else None)  # 源数据异常值（如 1e9%）直接丢弃
-            # 摘要清洗：剥离数字句子（净利区间已单独列示），只留原因短语；无原因则用 change_reason
-            raw = (r.get("summary") or "").replace("\n", " ")
+            # 摘要只留原因短语（change_reason）；净利区间已单独列示，不再重复原文长句
             reason = (r.get("change_reason") or "").strip()
             if reason:
                 summ = reason[:50]
@@ -341,9 +401,10 @@ def fetch_forensic(code: str) -> list:
             lines.append(f"应计比率: {acc * 100:.1f}%（{acc_note}）")
         else:
             acc = None
-        # 现金含量连续两年 <0.7（与红旗第1项同口径，供评级用）
+        # 现金含量连续两年 <0.7（与红旗第1项同口径，供评级用；
+        # 净利润为负时 ocf/ni 无意义，ni≤0 的年份跳过判定，不计入连续 2 年计数）
         nco_bad = False
-        if None not in (ni, ni1, ocf, ocf1) and ni and ni1:
+        if None not in (ni, ni1, ocf, ocf1) and ni > 0 and ni1 > 0:
             nco_bad = (ocf / ni < 0.7) and (ocf1 / ni1 < 0.7)
         # M-Score（金融股不适用）
         m = None
@@ -372,6 +433,8 @@ def fetch_forensic(code: str) -> list:
                         ni, ocf, gm, gm1]
                 if any(v is None for v in vals) or 0 in (rev, rev1, ta, ta1):
                     raise ValueError("字段不全")
+                if gm <= 0 or gm1 <= 0:
+                    raise ValueError("毛利率≤0，GMI 失真")
                 dsri = (ar / rev) / (ar1 / rev1)
                 gmi = gm1 / gm
                 aq = lambda bb: 1 - (bb[0] + bb[1]) / bb[2]
@@ -384,6 +447,8 @@ def fetch_forensic(code: str) -> list:
                 m = (-4.84 + 0.92 * dsri + 0.528 * gmi + 0.404 * aqi + 0.892 * sgi
                      + 0.115 * depi - 0.172 * sgai + 4.679 * tata - 0.327 * lvgi)
                 lines.append(f"M-Score: {m:.2f}（阈值 -1.78，低于它安全；越高越可疑）")
+            except ValueError as e:
+                lines.append(f"M-Score: 无法计算（{e}）")
             except Exception:
                 lines.append("M-Score: 数据不足无法计算（字段缺失）")
         # 审计意见
@@ -458,7 +523,6 @@ def fetch_disclosure(code: str) -> dict:
         rows = ts_call("disclosure_date", {"ts_code": to_ts_code(code)})
         rows = [r for r in rows if r.get("end_date")]
         rows.sort(key=lambda x: x.get("end_date") or "", reverse=True)
-        today = date.today().strftime("%Y%m%d")
         for r in rows:
             # 找尚未实际披露、且有计划日期的最近报告期
             if not r.get("actual_date") and r.get("pre_date"):
@@ -683,18 +747,18 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
             "ZCFZL": f.get("debt_to_assets") if f.get("debt_to_assets") is not None
             else em.get("ZCFZL"),
             "NETCASH_OPERATE_PK": ocf,
-            "NCO_NETPROFIT": (ocf / ni if (ocf is not None and ni) else None),
+            # 净利润为负时 ocf/ni 无意义：ni≤0 的年份置 None，不计入红旗连续 2 年 <0.7 计数
+            "NCO_NETPROFIT": (ocf / ni if (ocf is not None and ni is not None and ni > 0) else None),
             "CAPEX": c.get("c_pay_acq_const_fiolta"),  # 购建固定资产/无形资产等支付现金（DCF capex 输入）
             "YSZKZZTS": ar_days,
             "CHZZTS": inv_days,
         })
-    # 归母净利同比：与上一年比
+    # 归母净利同比：与上一年比（分母≤0 时走 _yoy 文字化，不出失真百分比）
     by_ed = {r["REPORT_DATE_NAME"][:4]: r for r in rows}
     for r in rows:
         prev = by_ed.get(str(int(r["REPORT_DATE_NAME"][:4]) - 1))
         cur, pre = r.get("PARENTNETPROFIT"), (prev or {}).get("PARENTNETPROFIT")
-        if cur is not None and pre:
-            r["PARENTNETPROFITTZ"] = (cur / pre - 1) * 100
+        r["PARENTNETPROFITTZ"] = _yoy(cur, pre)
     return rows
 
 
@@ -713,9 +777,7 @@ def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
     for r in inc[1:]:
         # 找去年同期（end_date 月日相同、年份-1）
         if (r.get("end_date") or "")[4:] == (cur.get("end_date") or "")[4:]:
-            pre = r.get("n_income_attr_p")
-            if pre:
-                yoy = (cur["n_income_attr_p"] / pre - 1) * 100
+            yoy = _yoy(cur.get("n_income_attr_p"), r.get("n_income_attr_p"))
             break
     em = {}
     if secucode:
@@ -987,6 +1049,12 @@ def fetch_risk_free():
         return None
 
 
+def _ttm_cutoff(today: date = None) -> str:
+    """近 12 个月窗口起点（YYYYMMDD）。用 today-365 天而非 replace(year-1)，
+    避免今天恰好是 2/29 时 replace 崩溃（闰日）。"""
+    return ((today or date.today()) - timedelta(days=365)).strftime("%Y%m%d")
+
+
 def fetch_div_yield(code: str, price: float):
     """TTM 税前股息率（tushare dividend）：只计 div_proc=实施 且除息日在近 12 个月内的
     每股派息合计 ÷ 现价；同除息日多条记录去重。返回 (每股派息, 股息率%, 明细) 或 None。
@@ -994,7 +1062,7 @@ def fetch_div_yield(code: str, price: float):
     try:
         rows = ts_call("dividend", {"ts_code": to_ts_code(code),
                                     "fields": "ts_code,end_date,div_proc,cash_div_tax,ex_date"})
-        cutoff = (date.today().replace(year=date.today().year - 1)).strftime("%Y%m%d")
+        cutoff = _ttm_cutoff()
         by_ex = {}
         for r in rows:
             if (r.get("div_proc") == "实施" and r.get("ex_date") and r.get("cash_div_tax")
@@ -1085,14 +1153,15 @@ def red_flags(annual: list) -> list:
     flags = []
     annual = annual[:3]
 
-    # 1. 利润现金含量（经营现金流/净利润 <0.7 视为不达标；数值为倍数如 1.48=148%）
+    # 1. 利润现金含量（经营现金流/净利润 <0.7 视为不达标；数值为倍数如 1.48=148%；
+    #    口径：净利润为负的年份该比率无意义，上游已置 None 跳过，不计入连续年数）
     vals = [r.get("NCO_NETPROFIT") for r in annual if r.get("NCO_NETPROFIT") is not None]
     if len(vals) >= 2:
         bad_n = sum(1 for v in vals if v < 0.7)
         if bad_n >= 2:
-            flags.append(f"✗ 利润现金含量 连续{bad_n}年<0.7")
+            flags.append(f"✗ 利润现金含量 连续{bad_n}年<0.7（仅计净利润>0年份）")
         else:
-            flags.append(f"✓ 利润现金含量（最低{round(min(vals), 2)}）")
+            flags.append(f"✓ 利润现金含量（最低{round(min(vals), 2)}，仅计净利润>0年份）")
     else:
         flags.append(f"△ 利润现金含量 数据不足({len(vals)}期有效)")
 
@@ -1126,8 +1195,9 @@ def summarize(code: str, years: int, searches: list = None) -> str:
 
     try:
         q = fetch_quote(secid, is_hk)
+        cur_s = "HK$" if is_hk else "¥"  # 港股用港元符号，不再硬编码 ¥
         pe_s = "—（缺失，可价格÷EPS手工算）" if q["PE_TTM"] is None else f"{q['PE_TTM']}x"
-        out.append(f"## E1 行情估值\n{q['名称']}({q['代码']}) 价¥{q['最新价']} "
+        out.append(f"## E1 行情估值\n{q['名称']}({q['代码']}) 价{cur_s}{q['最新价']} "
                    f"涨跌{q['涨跌幅%']}% | 市值{q['总市值亿']}亿 | "
                    f"PE(TTM){pe_s} PB{q['PB']}x | 换手{q['换手率%']}%\n")
         if not is_hk:
@@ -1206,12 +1276,12 @@ def summarize(code: str, years: int, searches: list = None) -> str:
                        "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
             for r in annual:
                 out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
-                           f"{yi(r.get('PARENTNETPROFIT'))} | {pct(r.get('PARENTNETPROFITTZ'))} | "
+                           f"{yi(r.get('PARENTNETPROFIT'))} | {yoy_text(r.get('PARENTNETPROFITTZ'))} | "
                            f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
                            f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
                            f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
         out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
-                   f"同比{pct(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
+                   f"同比{yoy_text(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
                    f"ROIC {pct(q1.get('ROIC'))}（{q1.get('REPORT_DATE_NAME')}累计，未年化，季报口径远小于全年，勿直接与 ROE 比）\n")
         capex_bits = [f"{r['REPORT_DATE_NAME']} {yi(r.get('CAPEX'))}亿" for r in annual[:3]
                       if r.get("CAPEX") is not None]
@@ -1276,8 +1346,10 @@ def summarize(code: str, years: int, searches: list = None) -> str:
             for r in h[:6]:
                 num = r.get("HOLDER_NUM")
                 num_s = f"{num:,}" if isinstance(num, (int, float)) else "—"
-                out.append(f"{(r.get('END_DATE') or '')[:10]}: {num_s}户 "
-                           f"(变动{r.get('HOLDER_NUM_RATIO') and round(r['HOLDER_NUM_RATIO'], 1)}%)")
+                ratio = r.get("HOLDER_NUM_RATIO")
+                # HOLDER_NUM_RATIO 为 None 时不出「变动」段（避免 变动None% 字面量）
+                chg_s = f" (变动{round(ratio, 1)}%)" if isinstance(ratio, (int, float)) else ""
+                out.append(f"{(r.get('END_DATE') or '')[:10]}: {num_s}户{chg_s}")
             out.append("")
         elif is_hk:
             out.append("## E4 股东户数\n[港股不支持，跳过]\n")
@@ -1424,11 +1496,27 @@ def summarize(code: str, years: int, searches: list = None) -> str:
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    opts = {a.split("=")[0][2:]: a.split("=")[1] for a in sys.argv[1:] if a.startswith("--") and "=" in a}
+    opts = {}
+    for a in sys.argv[1:]:
+        if not a.startswith("--"):
+            continue
+        if "=" not in a:
+            # --peers 这类不带 = 的参数原样会被静默忽略，改为明确报错+用法提示
+            print(f"错误：参数 {a} 需要「=值」形式（如 --peers=600309,002001）\n\n用法:{__doc__}",
+                  file=sys.stderr)
+            sys.exit(2)
+        k, v = a[2:].split("=", 1)
+        opts[k] = v
     if not args:
         print(__doc__)
         sys.exit(1)
-    years = int(opts.get("kline-years", "5"))
+    try:
+        years = int(opts.get("kline-years", "5"))
+        if years < 1:
+            raise ValueError
+    except ValueError:
+        print(f"错误：--kline-years 需为正整数，收到 {opts.get('kline-years')!r}", file=sys.stderr)
+        sys.exit(2)
     searches = None
     if opts.get("search"):
         searches = [s.strip() for s in opts["search"].split(",") if s.strip()]
@@ -1441,4 +1529,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except RateLimitError as e:
+        # 限流硬停：不重试，提示稍后重跑，非零退出码供调用方识别
+        print(f"[限流硬停] {e}——已停止，请隔几分钟再重跑（频繁请求会触发东财封禁）",
+              file=sys.stderr)
+        sys.exit(2)
+    except ValueError as e:
+        print(f"错误：{e}", file=sys.stderr)
+        sys.exit(2)

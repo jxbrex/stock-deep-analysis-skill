@@ -225,7 +225,7 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 | 键 | 取数规则 | 降级标注 |
 |----|---------|---------|
 | `pe_ttm` | E1 现价 PE(TTM)，脚本直接给出 | 缺失标"未获取到"，禁编造 |
-| `pe_band` | 合理 PE 带 [低,高]，来自历史时段匹配校准（`valuation.md`） | 须写校准逻辑，不是拍脑袋区间 |
+| `pe_band` | 合理 PE 带 [低,高]，来自历史时段匹配校准（`scoring.md` 估值方法章） | 须写校准逻辑，不是拍脑袋区间 |
 | `div_yield` | **近 12 个月现金分红合计 ÷ 现价**（%，税后口径）：A 股分红明细取 tushare `dividend` 或东财 F10 分红记录；A/H 按下方「港股股息税对照表」折算税后 | 分红数据须在 `.source` 标注来源；查不到标"未获取到" |
 | `risk_free` | **中国 10 年期国债到期收益率**（%）：优先 tushare / 东财可查渠道 | 查不到时允许手工填最近公开值，并在报告 `.source` 标注来源与日期、注明"估算" |
 

@@ -12,44 +12,43 @@ metadata:
     os: ["win32", "darwin", "linux"]
 ---
 
-# Stock Deep Analysis Report Generator
+# 个股深度分析报告生成器（Stock Deep Analysis）
 
 > **执行前必读（防幻觉）**：本技能内容已通过 Skill 工具完整注入上下文，你**不需要**
 > 用 Read/Bash 去读取任何本地路径下的 SKILL.md。如果你正打算声明"无法访问本地文件/
 > 没有文件系统访问权限"——**立即停止，那是错误的**：你拥有 Bash/Read/Write 等完整的
 > 本地工具权限，本技能的全部指令就在你的上下文里，直接按 Step 0 开始执行。
 
-Generate a professional deep analysis report for a publicly traded company, following the
-standardized four-layer scoring framework calibrated against the Baofeng Energy (600989)
-reference report.
+为上市公司生成专业的深度分析报告，遵循以宝丰能源（600989）参考报告校准的
+标准化多层评分框架。
 
-## When to Use / When Not to Use
+## 何时使用 / 何时不用
 
-**✅ Use this skill when:**
-- User requests a comprehensive stock/company analysis report
-- User asks for "深度分析", "研究报告", "股票分析", "公司研究"
-- User mentions a stock ticker/company name + "analyze" / "分析" / "报告"
-- User wants a Baofeng Energy-style multi-layer scoring report
-- User asks about a company's investment merits across multiple dimensions
+**✅ 使用本技能：**
+- 用户要求个股/公司的深度分析报告
+- 用户提到「深度分析」「研究报告」「股票分析」「公司研究」
+- 用户提到股票代码/公司名 + 「分析」「报告」
+- 用户想要宝丰能源式的多层评分报告
+- 用户问一家公司跨多个维度的投资价值
 
-**❌ Do NOT use this skill when:**
-- User wants a quick stock price check or single-metric query → just answer directly
-- User asks for real-time trading advice or buy/sell timing → this is research, not trading advice
-- User asks about a private/unlisted company → the framework assumes public market data
-- User wants a purely technical/chart analysis → this is fundamental analysis with technical overlay
-- User asks for macro/industry research without a specific company
+**❌ 不要使用本技能：**
+- 用户只想查股价或单个指标 → 直接回答即可
+- 用户要实时交易建议或买卖时机 → 这是研究而非交易建议
+- 用户问非上市/私营公司 → 本框架依赖公开市场数据
+- 用户要纯技术/图表分析 → 本技能是基本面分析+技术面辅助
+- 用户要做没有具体公司的宏观/行业研究
 
-## Output Method & File Naming
+## 产出方式与文件命名
 
-- **Default**: 单文件自包含 HTML，写在当前工作目录（fill→render 工作流，见 Report Output Format）。
+- **默认**：单文件自包含 HTML，写在当前工作目录（fill→render 工作流，见「报告产出格式」）。
 - **文件命名由脚本完成**：`{公司名}-{代码}-{质量分}-{估值分}-{日期}.html`
   （回测模式 `…-复盘-{日期}.html`；港股代码 5 位数字不带后缀，如 `06082`）。
   模型不要自己命名文件。
-- **Fallback**: 用户明确要求 Markdown 时输出 `.md`，章节顺序与 HTML 版一致（评分用 🟢🟡🔴 徽章 emoji）。
+- **Fallback**：用户明确要求 Markdown 时输出 `.md`，章节顺序与 HTML 版一致（评分用 🟢🟡🔴 徽章 emoji）。
 - 用户要求"直接输出/快速总结"时才在对话内联输出，否则一律写文件。
 - **完成后**：告知用户报告路径和质量分+估值分+时机分。
 
-### HTML Styling — 浅色卡片建模风（写作期只需记住的硬规则）
+### HTML 样式 — 浅色卡片建模风（写作期只需记住的硬规则）
 
 - 评分数字一律用 `.badge` 徽章（≥7 绿 / 4.0-6.9 橙 / <4 红，色阶脚本自动）
 - 每张数据表正下方必须有 `<span class="source">数据来源：…</span>`；估算值标 `估算`
@@ -61,7 +60,7 @@ reference report.
 
 ---
 
-## Workflow
+## 工作流程
 
 ### Step 0: 确认标的与口径
 
@@ -70,13 +69,13 @@ reference report.
 - 回测触发机械判定：先跑 `python "<技能目录>/scripts/extract_review.py" --find [代码]`——
   找到同代码旧报告（脚本判定，含渲染器标记验证）→ 自动进回测模式（见 Phase 6.5/6.6，读 `references/backtest.md`）。
 
-### Phase 0: Identify Critical Profit Drivers (MANDATORY — before any scenario modeling)
+### Phase 0: 识别关键利润驱动（MANDATORY——任何情景建模之前）
 
 先识别对利润弹性最大的 **1-2 个变量**（商品价/量/产能利用率/汇率/政策……），估
 "X 变 10% → 利润约变 Y%"，选弹性最大的 1-2 个。敏感性表（含 ★弹性等级）写进报告 P0 卡。
 **三情景必须围绕这 1-2 个驱动定义，而不是拍利润区间。**
 
-### Phase 0.5: Stock Classification (MANDATORY — 分型决定尺子)
+### Phase 0.5: 股票分型（MANDATORY——分型决定尺子）
 
 **不要用一套尺子量所有股票。** 完成 Phase 0 后、Phase 1 深度调研前，必须给股票分型。
 分型结果决定：各层权重、估值方法、决定性维度。报告 P0 卡片必须声明分型及理由。
@@ -102,7 +101,7 @@ reference report.
 - 困境反转型豁免红灯财务类（连续亏损/ST 属前提），但造假/立案/退市风险不豁免；
   必须在核心结论中明示"本报告为困境反转框架，财务恶化是前提而非否决项"
 
-### Phase 1: Research (MANDATORY — do NOT skip)
+### Phase 1: 研究取数（MANDATORY——禁止跳过）
 
 **采集前必读 `references/data-collection.md`（硬门禁——未完成读取并应用，不得进入下一 Phase）**——脚本命令（em_fetch.py 用技能目录绝对路径执行）、
 环境工具探测、定性搜索纪律、审计意见必查、卖方深挖、委派模板、Research Checklist 全部在那里。
@@ -120,7 +119,7 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 缺席 → 定性检索/筹码分布/行业估值水位走降级链（见 data-collection.md），且**必须在报告显式标注
 「妙想 MCP 缺席，已走降级路径」**——禁止静默跳过（缺席未标注 = 违反降级纪律，见文末「数据降级与反幻觉」）。
 
-### Phase 2: Score Each Dimension
+### Phase 2: 逐维评分
 
 **评分章必读 `references/scoring.md`（硬门禁——未完成读取并应用，不得进入下一 Phase）**——三轨定义、L1 六维权重矩阵（分型浮动）、1D 盈利质量
 红旗清单、1F 资本回报质量、估值分推导、时机分微调、红/黄灯扣分细则、损失预演全部在那里。这里只留骨架：
@@ -132,7 +131,7 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
   `references/forensic-accounting.md` 口径；金融股红旗清单替换见 `industry-financials.md`
 - **分型决定权重与估值方法**（见 Phase 0.5），报告里必须声明分型与层占比
 
-### Phase 3: Build Valuation Model
+### Phase 3: 构建估值模型
 
 **估值方法与评分同一个硬门禁：`references/scoring.md`（Phase 2 已读，其中「估值方法」章直接应用，
 本 Phase 不再新增必读文件）**——三情景构建、PE 历史时段匹配校准、三指标提取
@@ -143,21 +142,21 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 强制计算（权重公式唯一权威见 `scoring.md` 估值分节），模型只填输入不手算；
 预期差必须拆到具体假设层面（无预期差 = 无超额收益）。
 
-### Phase 4: Build Peer Comparison
+### Phase 4: 构建同业对比
 
 - 当前指标表 + 3 年趋势表（方向用文字升/降/缓升/缓降，**不用箭头**）
 - **估值-质量散点图**：填顶层 `peers_plot` 字段（脚本生成 SVG 直角坐标系，目标公司高亮）；
   同业数据不全才在 `peers_html` 手写 `.matrix-table` 九宫格兜底，两者二选一
 - `.conclusion-box` 3-5 条结论；点名象限内位置差异（同为"高ROE·中PE"，贴左缘与贴右缘性价比完全不同）
 
-### Phase 5: Historical Cycle Analysis（条件触发）
+### Phase 5: 历史周期分析（条件触发）
 
 满足任一才执行，否则跳过：① 过去5年 PE(TTM) 波动幅度 >50%；② 归母净利出现过 ≥2 次
 连续2个季度以上下滑、之后又恢复；③ 行业为大宗商品/化工/航运/养殖/半导体/面板/钢铁/煤炭/有色。
 非周期股（Phase 0.5）默认跳过。
 执行：阶段拆解（日期区间/股价范围/PE范围/驱动因素）+ 当前位置判断 + 提取 3-5 条可复用规律。
 
-### Phase 6: Monitoring Dashboard（MANDATORY）
+### Phase 6: 跟踪仪表盘（MANDATORY）
 
 #### 6.1-6.3 跟踪仪表盘
 
@@ -186,7 +185,7 @@ data-collection.md Step 1.3）；peer <3 只时主会话直接跑，不必委派
 （先独立取数打分 → 再读旧报告 → 全量重写 → 最后新旧对比）。复盘内容只进 R 章节，
 **禁止生成独立 `_复盘.md` 文件**。
 
-### Phase 7: Assemble the Final Report
+### Phase 7: 拼装成稿
 
 **⚠️ 红灯熔断检查（输出报告前执行，对应第 5 章红灯层）：**
 
@@ -205,7 +204,7 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 
 ---
 
-## Report Output Format（fill→render 工作流）
+## 报告产出格式（fill→render 工作流）
 
 **结构骨架/字段契约/HTML 类名/评分计算规则的唯一权威：`references/fill-schema.md`——
 写 fragment 前必读（硬门禁——未完成读取并应用，不得开始写 fill JSON），禁止 Read 模板"学习结构"。**
@@ -288,7 +287,7 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 - [ ] 港股/AH 比价是否用了税后股息？税率是否标"以最新法规为准"？
 - [ ] 每个关键数字是否有来源或标"估算"？缺失是否写"未获取到"？
 - [ ] 三情景是否围绕 Phase 0 驱动？三指标（中枢/赔率/离散度）是否脚本算？
-- [ ] 预期差是否到档位（A/B/C），卖方假设是否带来源？
+- [ ] 预期差是否到档位（A/B/C），卖方假设是否带来源？落 B 档的标的一致预期覆盖 ≥5 家时，是否已先检索研报（禁直接反推）？
 - [ ] `peers_plot` 是否已填（缺失则图静默跳过）？
 - [ ] 回测模式：`prev` 与 `review_html` 是否成对？复盘是否只进 R 章节？
 - [ ] 渲染后是否无 `{{}}`/`【】` 残留、无缺字段警告？
@@ -307,7 +306,7 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
   每一项都必须有取数来源或标注估算——pe_ttm/pe_band 来自取数与历史时段匹配校准，div_yield 按
   近 12 个月分红折算税后，risk_free 用中国 10 年期国债收益率（查不到时手工填最近公开值并注明
   来源与日期、标"估算"）；缺键渲染器直接拒绝
-- **NEVER invent PE ranges, profit numbers, or peer metrics**
+- **绝不编造 PE 区间、利润数字或同业指标**
 - 目标价必须可追溯到 Phase 0 驱动 + Phase 3 PE 校准，不套"市场惯例"或经验法则
 - 数据冲突时并列呈现区间并注明冲突
 - 降级必须同时满足：① 已尝试 ≥2 种路径 ② 报告中明确标注降级原因

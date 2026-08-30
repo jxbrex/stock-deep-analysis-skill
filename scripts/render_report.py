@@ -69,7 +69,7 @@ LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.5"
+RENDERER_VERSION = "v4.6"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -937,12 +937,8 @@ def _plain_text(frag: str) -> str:
     return re.sub(r"<[^>]+>", "", frag or "").strip()
 
 
-def validate_content(fill: dict, calc: dict = None) -> None:
-    """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
-    硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
-    红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
-    表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
-    calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
+def _check_price_date(fill: dict) -> None:
+    """price/date 校验：缺失/非法即拒渲染。"""
     # price 缺失/非数字、date 格式非法在此拦截（友好报错先于估值计算结果的所有使用方）
     if _num(fill.get("price")) is None:
         raise ValueError(f"price 缺失或无法解析为数字: {fill.get('price')!r}"
@@ -950,6 +946,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fill.get("date") or "")):
         raise ValueError(f"date 格式非法: {fill.get('date')!r}（必须严格 YYYY-MM-DD）")
 
+
+def _check_score_ranges(fill: dict) -> None:
+    """分数范围（0-10）越界是硬错误。"""
     # 分数范围（0-10）越界是硬错误
     for field in ("scores", "timing_scores"):
         for k, v in (fill.get(field) or {}).items():
@@ -960,6 +959,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             if not (0 <= fv <= 10):
                 raise ValueError(f"{field}.{k} = {fv} 超出 0-10 范围")
 
+
+def _check_valuation_inputs(fill: dict) -> None:
+    """valuation_inputs 必填（估值分强制脚本化，四键缺一不可）。"""
     # valuation_inputs 必填（估值分强制脚本化，四键缺一不可）
     vi = fill.get("valuation_inputs")
     if not isinstance(vi, dict):
@@ -969,6 +971,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if miss_vi:
         raise ValueError(f"valuation_inputs 缺键: {miss_vi}（四键必填：pe_ttm / pe_band / div_yield / risk_free）")
 
+
+def _check_valuation_scenarios(fill: dict) -> None:
+    """valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）。"""
     # valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）
     v = fill.get("valuation")
     if not isinstance(v, dict) or not v.get("scenarios"):
@@ -1010,12 +1015,18 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if not {"pess", "base", "opt"} <= skeys:
         raise ValueError(f"valuation.scenarios 必须含 pess/base/opt 三情景，当前只有: {sorted(skeys)}")
 
+
+def _check_red_flag_breaker(fill: dict) -> None:
+    """红灯熔断：red_flag 非空 → position_html 必须包含「不建议参与」。"""
     # 红灯熔断：red_flag 非空 → position_html 必须包含"不建议参与"
     red_flag = (fill.get("red_flag") or "").strip()
     pos_html = fill.get("position_html") or ""
     if red_flag and "不建议参与" not in _plain_text(pos_html):
         raise ValueError(f"红灯熔断：red_flag「{red_flag}」非空，position_html 必须包含「不建议参与」结论")
 
+
+def _check_thesis_consistency(fill: dict, calc: dict) -> None:
+    """thesis 三情景价一致性：手写 span 价 vs 脚本按 valuation 算出的中枢价。"""
     # thesis 三情景价一致性：手写 span 价 vs 脚本按 valuation 算出的中枢价
     th = fill.get("thesis_html", "")
     span_prices = {}
@@ -1043,6 +1054,9 @@ def validate_content(fill: dict, calc: dict = None) -> None:
                              + f"。手写={ {k: span_prices[k] for k in ('pess','base','opt')} }，"
                              + f"脚本={ {k: round(cmap.get(k, 0), 2) for k in ('pess','base','opt')} }")
 
+
+def _check_content_floor(fill: dict) -> None:
+    """内容地板（空心章节一律拒渲染）+ 表格来源标注数必须 ≥ 表格数。"""
     # 内容地板（空心章节一律拒渲染）
     concl_len = len(_plain_text(fill.get("conclusion_html")))
     if concl_len < 200:
@@ -1054,6 +1068,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             raise ValueError(f"{name} 仅 {n} 个 dim-block < {need}：每个评分维度必须各有一个维度块")
     if "<table" not in (fill.get("peers_html") or ""):
         raise ValueError("peers_html 不含 <table>：同业对比必须有数据表")
+    pos_html = fill.get("position_html") or ""
     pos_len = len(_plain_text(pos_html))
     if pos_len < 100:
         raise ValueError(f"position_html 纯文本仅 {pos_len} 字 < 100：仓位决策四步不能为空洞")
@@ -1068,14 +1083,21 @@ def validate_content(fill: dict, calc: dict = None) -> None:
                              f'<span class="source">数据来源：…</span> 后重新渲染'
                              f"（报错后禁止绕过脚本手写全文 HTML，只能修 fill 重渲）")
 
-    warns = []
+
+def _check_missing_required_warns(fill: dict, warns: list) -> None:
+    """必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）。"""
     # 必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）
     if not fill.get("timing_scores"):
         warns.append("timing_scores 缺失或为空：时机分将显示 —，请补筹码面/技术面得分")
     if "yellow_deductions" not in fill:
         warns.append("yellow_deductions 键缺失：黄灯扣分按 0 处理，质量分可能虚高；无扣分请显式填 []")
+    th = fill.get("thesis_html", "")
     if not th.strip():
         warns.append("thesis_html 缺失：Hero 一句话结论为空")
+
+
+def _check_stock_type_weights(fill: dict, warns: list) -> None:
+    """分型权重交叉校验：非默认分型必须显式填 weights/layer_share，否则静默用默认值算错分。"""
     # 分型权重交叉校验：非默认分型必须显式填 weights/layer_share，否则静默用默认值算错分
     st = str(fill.get("stock_type") or "")
     if any(t in st for t in ("稳定价值", "金融", "银行", "保险", "券商", "快速成长", "未盈利", "困境反转")):
@@ -1083,11 +1105,21 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             warns.append(f"stock_type={st} 层占比非默认，但未填 layer_share——脚本将用默认 70:30 计算，分数可能错误")
         if not fill.get("weights"):
             warns.append(f"stock_type={st} L1 权重非默认，但未填 weights——脚本将用基础权重计算，分数可能错误")
+
+
+def _check_thesis_price_tags(fill: dict, warns: list) -> None:
+    """thesis 三情景价格标注完整性。"""
     # thesis 三情景价格标注完整性
+    th = fill.get("thesis_html", "")
     if th and not all(c in th for c in ("scenario-pess", "scenario-base", "scenario-opt")):
         warns.append("thesis_html 缺三情景价格标注（scenario-pess/base/opt span 未齐）")
+
+
+def _check_thesis_info_floor(fill: dict, warns: list) -> None:
+    """thesis 信息量地板：Hero 一句话是全文提纲挈领，不能只塞三个价格。"""
     # thesis 信息量地板：Hero 一句话是全文提纲挈领，不能只塞三个价格
     # （中兴 2026-08-24 实证：thesis 只有"12个月目标价：悲观/基础/乐观"）
+    th = fill.get("thesis_html", "")
     th_txt_len = len(_plain_text(th))
     if th_txt_len:
         th_no_price = re.sub(r'<span\b[^>]*class="[^"]*\bscenario-(?:pess|base|opt)\b[^"]*"[^>]*>.*?</span>',
@@ -1096,6 +1128,10 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         if th_txt_len < 60 or th_rest < 20:
             warns.append(f"thesis_html 信息量不足（纯文本 {th_txt_len} 字，剥掉三情景价后仅 {th_rest} 字）："
                          f"一句话结论 = 论点 + 关键证据 + 三情景价 + 操作结论，不能只塞目标价")
+
+
+def _check_peers_plot_target(fill: dict, warns: list) -> None:
+    """peers_plot 目标公司标记。"""
     # peers_plot 目标公司标记
     pp = fill.get("peers_plot")
     pts = (pp.get("points") if isinstance(pp, dict) else pp) or []
@@ -1105,7 +1141,12 @@ def validate_content(fill: dict, calc: dict = None) -> None:
             warns.append("peers_plot 没有 target=true 的目标公司点")
         elif fill.get("company") and str(fill["company"]) not in str(tg[0].get("name", "")):
             warns.append(f"peers_plot 目标点名称「{tg[0].get('name')}」与公司名「{fill['company']}」不一致")
+
+
+def _check_timing_table_cells(fill: dict, warns: list) -> None:
+    """时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）。"""
     # 时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）
+    pos_html = fill.get("position_html") or ""
     for tm in re.finditer(r"<table\b[^>]*>.*?</table>", pos_html, re.I | re.S):
         tbl = tm.group(0)
         if "技术面" not in tbl or "筹码面" not in tbl:
@@ -1115,6 +1156,10 @@ def validate_content(fill: dict, calc: dict = None) -> None:
                 warns.append("时机判定小表存在 >40 字单元格：只写短语（≤15 字/条），"
                              "长解释与降级说明挪到表下 .source 行（fill-schema 固定 4 行 3 列格式）")
                 break
+
+
+def _check_dim_blocks(fill: dict, warns: list) -> None:
+    """dim-block 内容地板（纯文本 <40 字拒渲染 / <80 字告警）与极端分证据校验。"""
     # dim-block 内容地板（deepseek 中兴/豪威"每块一句话凑数"缩水实证）：
     # 纯文本 <40 字 → 拒渲染（连一条论据都写不出）；<80 字 → 告警。
     # 同循环保留极端分证据校验：≥8 或 ≤3 的维度，dim-block 纯文本 <50 字 → 告警（极端分须配量化依据）
@@ -1140,6 +1185,10 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     if thin_warn:
         warns.append("dim-block 内容偏薄（纯文本 <80 字）：" + "；".join(thin_warn)
                      + "——每个维度块应有论据、数据与判词，薄块请补写后重渲")
+
+
+def _check_internal_codes(fill: dict, warns: list) -> None:
+    """框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文）。"""
     # 框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文；
     # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查）
     for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
@@ -1149,6 +1198,10 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         if hits:
             warns.append(f"{name} 正文出现框架内部代号 {'/'.join(hits)}："
                          f"请改用章节编号/名称（第 3 章 / 3.4 / 第 5 章风险评估）")
+
+
+def _check_prev_fields(fill: dict, warns: list) -> None:
+    """prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）。"""
     # prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）
     if fill.get("prev"):
         pv = fill["prev"]
@@ -1168,6 +1221,10 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         if rv and ("<table" not in rv or "假设" not in rv):
             warns.append("review_html 缺关键假设变更表：R 章节必须含相邻两版三情景假设对比表"
                          "（假设未变也要显式写明），见 backtest.md 6.6")
+
+
+def _check_misc_required(fill: dict, warns: list) -> None:
+    """其余 fill-schema 标 ✓ 但渲染器零校验的必填字段。"""
     # 其余 fill-schema 标 ✓ 但渲染器零校验的必填字段
     for name in ("valuation_method", "stock_type", "gap_tier", "peers_meta", "next_review"):
         if not str(fill.get(name) or "").strip() or fill.get(name) == "—":
@@ -1176,6 +1233,35 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         warns.append("subtitle 缺失：Hero 副标题为空")
     elif "报告日期" in fill["subtitle"]:
         warns.append("subtitle 含「报告日期」：模板 Hero 会自动追加报告日期，subtitle 请勿再写日期")
+
+
+def validate_content(fill: dict, calc: dict = None) -> None:
+    """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
+    硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
+    红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
+    表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
+    calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
+    _check_price_date(fill)
+    _check_score_ranges(fill)
+
+    _check_valuation_inputs(fill)
+    _check_valuation_scenarios(fill)
+
+    _check_red_flag_breaker(fill)
+    _check_thesis_consistency(fill, calc)
+    _check_content_floor(fill)
+
+    warns = []
+    _check_missing_required_warns(fill, warns)
+    _check_stock_type_weights(fill, warns)
+    _check_thesis_price_tags(fill, warns)
+    _check_thesis_info_floor(fill, warns)
+    _check_peers_plot_target(fill, warns)
+    _check_timing_table_cells(fill, warns)
+    _check_dim_blocks(fill, warns)
+    _check_internal_codes(fill, warns)
+    _check_prev_fields(fill, warns)
+    _check_misc_required(fill, warns)
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)
 
@@ -1474,23 +1560,15 @@ def _strip_unit(v, units: str) -> str:
     return re.sub(rf"\s*[{units}]+$", "", str(v or "—").strip())
 
 
-def render(fill_path: str, out_path: str = None) -> str:
-    fill = _load_fill(fill_path)
+def _check_required_scalars(fill: dict) -> None:
+    """必填标量字段（company/code/date）缺失即拒渲染。"""
     for k in REQUIRED_SCALAR:
         if not fill.get(k):
             raise ValueError(f"缺必填字段: {k}")
 
-    _check_l4_order(fill.get("l4_html", ""))
-    cur = str(fill.get("currency") or "元")  # 币种单位（默认「元」，港股 fill 填 currency="港元"）
 
-    # 估值计算（valuation 字段存在时，目标价/中枢/赔率/离散度全部脚本算）
-    calc = compute_valuation(fill)
-    validate_content(fill, calc)
-
-    # 图形组件（脚本生成 SVG；数据缺省时为空串 → 模板条件块整块删除）
-    spectrum_html = build_scenario_spectrum(fill, calc)
-    scenario_block_html = build_scenario_block(calc, cur)
-    peers_plot_html = build_peers_plot(fill)
+def _clean_peers_matrix(fill: dict, peers_plot_html: str) -> str:
+    """散点图已生成 → 手写九宫格冗余，自动删除（含"估值-质量矩阵："引导句）。"""
     peers_html = fill.get("peers_html", "")
     if peers_plot_html and "matrix-table" in peers_html:
         # 散点图已生成 → 手写九宫格冗余，自动删除（含"估值-质量矩阵："引导句）
@@ -1500,27 +1578,26 @@ def render(fill_path: str, out_path: str = None) -> str:
             print("⚠️ 已提供 peers_plot 散点图，peers_html 中手写的 matrix-table 九宫格冗余，已自动删除",
                   file=sys.stderr)
         peers_html = cleaned
+    return peers_html
 
-    sc = compute_scores(fill)
-    layer_scores = sc["layer_scores"]
-    layer_share = sc["layer_share"]
-    pre_risk = sc["pre_risk_quality"]
-    yellow_total = sc["yellow_total"]
-    quality = sc["quality"]
-    valuation = sc["valuation"]
-    timing = sc["timing"]
-    red_flag = sc["red_flag"]
 
+def _apply_valuation_score(fill: dict, calc: dict, fill_valuation):
+    """估值分强制脚本化：四件套计算结果直接覆盖 fill 里的 valuation_score（填了也只作提示）。
+    返回 (覆盖后估值分, valuation_calc)。"""
     # 估值分强制脚本化：四件套计算结果直接覆盖 fill 里的 valuation_score（填了也只作提示）
     valuation_calc = compute_valuation_score(calc, fill.get("valuation_inputs"))
     if valuation_calc is None:
         raise ValueError("估值分无法计算：valuation_inputs 四键或 valuation 三情景字段不完整"
                          "（pe_ttm/pe_band/div_yield/risk_free + 每情景 profit/pe 或 mcap + horizon）")
-    if valuation is not None and abs(valuation_calc["score"] - valuation) > 0.11:
-        print(f"⚠️ fill 手填估值分 {valuation:.1f} 与脚本四件套计算 {valuation_calc['score']:.1f} 不一致，"
+    if fill_valuation is not None and abs(valuation_calc["score"] - fill_valuation) > 0.11:
+        print(f"⚠️ fill 手填估值分 {fill_valuation:.1f} 与脚本四件套计算 {valuation_calc['score']:.1f} 不一致，"
               f"已按脚本计算值覆盖（valuation_score 字段已废弃，可删除）", file=sys.stderr)
-    valuation = valuation_calc["score"]
+    return valuation_calc["score"], valuation_calc
 
+
+def _check_backtest_flags(fill: dict):
+    """回测模式一致性告警：prev（上版锚点）与 review_html 应成对出现。
+    返回 (prev, review_html) 供 repl/文件名使用。"""
     # 回测模式：fill 带 prev 字段（上版锚点）→ Hero 对比条 + R 复盘章节 + 文件名加"复盘"
     prev = fill.get("prev") or None
     review_html = fill.get("review_html", "")
@@ -1528,7 +1605,12 @@ def render(fill_path: str, out_path: str = None) -> str:
         print("⚠️ 回测模式（prev 已填）但 review_html 为空：R 回测复盘章节将缺失", file=sys.stderr)
     if review_html and not prev:
         print("⚠️ 有 review_html 但未填 prev：文件名与 Hero 不会标记「复盘」，请补 prev 字段", file=sys.stderr)
+    return prev, review_html
 
+
+def _build_context(fill: dict, calc: dict):
+    """日期/副标题/目标价区间解析（目标价区间以脚本计算为准）。
+    返回 (date, subtitle, target_range)。"""
     date = fill["date"]
     # 防御性剥离：模型在 subtitle 误写的"报告日期：YYYY-MM-DD"片段（模板 Hero 自动追加日期，
     # 不剥会渲染出两次"报告日期"），连同悬空分隔符 ｜/| 一起去掉
@@ -1547,6 +1629,20 @@ def render(fill_path: str, out_path: str = None) -> str:
                 print(f"⚠️ target_range「{target_range}」与 valuation 计算区间「{computed_tr}」不一致，"
                       f"已按计算结果覆盖", file=sys.stderr)
         target_range = computed_tr
+    return date, subtitle, target_range
+
+
+def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float,
+                    valuation_calc: dict, prev: dict, review_html: str, date: str,
+                    subtitle: str, target_range: str, peers_html: str, spectrum_html: str,
+                    scenario_block_html: str, peers_plot_html: str) -> dict:
+    """组装模板占位符映射（repl）：全部字段值在此定稿，条件块/替换/渲染后校验都消费它。"""
+    layer_scores = sc["layer_scores"]
+    layer_share = sc["layer_share"]
+    quality = sc["quality"]
+    timing = sc["timing"]
+    red_flag = sc["red_flag"]
+    yellow_total = sc["yellow_total"]
     repl = {
         "TOP_ICON": _esc(fill.get("top_icon") or fill["company"][0]),
         "DATE": _esc(date),
@@ -1610,7 +1706,11 @@ def render(fill_path: str, out_path: str = None) -> str:
         "L1_SCORE": f"{layer_scores['L1']:.2f}", "L1_W": f"{layer_share['L1']:.0f}",
         "L3_SCORE": f"{layer_scores['L3']:.2f}", "L3_W": f"{layer_share['L3']:.0f}",
     }
+    return repl
 
+
+def _fill_template(repl: dict) -> str:
+    """读模板 → 条件块（<!--IF:-->）/占位符（{{...}}）替换 → 表格对齐自动修正。"""
     tmpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "report-template.html")
     html = open(tmpl_path, encoding="utf-8").read()
 
@@ -1625,7 +1725,11 @@ def render(fill_path: str, out_path: str = None) -> str:
 
     # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
     html = fix_table_alignment(html)
+    return html
 
+
+def _check_leftover(html: str) -> None:
+    """渲染后残留占位符校验：任何 {{...}} / 【...】 残留即报错退出。"""
     # 校验残留
     leftover_double = re.findall(r"\{\{[A-Za-z_0-9]+\}\}", html)
     if leftover_double:
@@ -1636,19 +1740,31 @@ def render(fill_path: str, out_path: str = None) -> str:
     if leftover_cn:
         raise ValueError(f"残留中文占位符: {sorted(set(leftover_cn))}")
 
-    if not out_path:
-        review_tag = "-复盘" if prev else ""
-        company_s = _safe_filename(fill["company"])
-        code_s = _safe_filename(fill["code"])
-        date_s = _safe_filename(date)
-        out_path = os.path.join(os.path.dirname(os.path.abspath(fill_path)),
-                                f"{company_s}-{code_s}-{quality:.2f}-{valuation:.1f}{review_tag}-{date_s}.html")
+
+def _make_output_path(fill_path: str, fill: dict, date: str, quality: float,
+                      valuation: float, prev: dict) -> str:
+    """自动命名输出：{公司名}-{代码}-{质量分}-{估值分}{-复盘}-{日期}.html"""
+    review_tag = "-复盘" if prev else ""
+    company_s = _safe_filename(fill["company"])
+    code_s = _safe_filename(fill["code"])
+    date_s = _safe_filename(date)
+    return os.path.join(os.path.dirname(os.path.abspath(fill_path)),
+                        f"{company_s}-{code_s}-{quality:.2f}-{valuation:.1f}{review_tag}-{date_s}.html")
+
+
+def _write_html(html: str, out_path: str) -> None:
+    """写输出文件：覆盖告警 + 注入 RENDERER_VERSION 尾部注释。"""
     if os.path.exists(out_path):
         print(f"⚠️ 输出文件已存在，将被覆盖: {out_path}", file=sys.stderr)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html.replace("</body>",
                              f"<!-- generated by render_report.py {RENDERER_VERSION} -->\n</body>"))
 
+
+def _post_render_checks(repl: dict, fill: dict, out_path: str, quality: float, pre_risk: float,
+                        yellow_total: float, valuation: float, timing, red_flag: str,
+                        layer_scores: dict) -> None:
+    """渲染后校验：空章节片段告警 + 图形字段缺失"响亮"提醒 + 结果一行打印。"""
     empty = [k for k in ("CONCLUSION_HTML", "P0_HTML", "L1_HTML", "L3_HTML",
                          "L4_HTML", "VALUATION_HTML", "GAP_HTML", "PEERS_HTML",
                          "DASH_HTML", "POSITION_HTML") if not repl.get(k)]
@@ -1675,6 +1791,51 @@ def render(fill_path: str, out_path: str = None) -> str:
           (f" | 🔴红灯: {red_flag}" if red_flag else ""))
     if empty:
         print(f"⚠️ 以下章节片段为空（如非故意请检查 fill JSON）: {empty}")
+
+
+def render(fill_path: str, out_path: str = None) -> str:
+    fill = _load_fill(fill_path)
+    _check_required_scalars(fill)
+
+    _check_l4_order(fill.get("l4_html", ""))
+    cur = str(fill.get("currency") or "元")  # 币种单位（默认「元」，港股 fill 填 currency="港元"）
+
+    # 估值计算（valuation 字段存在时，目标价/中枢/赔率/离散度全部脚本算）
+    calc = compute_valuation(fill)
+    validate_content(fill, calc)
+
+    # 图形组件（脚本生成 SVG；数据缺省时为空串 → 模板条件块整块删除）
+    spectrum_html = build_scenario_spectrum(fill, calc)
+    scenario_block_html = build_scenario_block(calc, cur)
+    peers_plot_html = build_peers_plot(fill)
+    peers_html = _clean_peers_matrix(fill, peers_plot_html)
+
+    sc = compute_scores(fill)
+    layer_scores = sc["layer_scores"]
+    pre_risk = sc["pre_risk_quality"]
+    yellow_total = sc["yellow_total"]
+    quality = sc["quality"]
+    timing = sc["timing"]
+    red_flag = sc["red_flag"]
+
+    valuation, valuation_calc = _apply_valuation_score(fill, calc, sc["valuation"])
+
+    prev, review_html = _check_backtest_flags(fill)
+
+    date, subtitle, target_range = _build_context(fill, calc)
+    repl = _build_repl_map(fill, cur, calc, sc, valuation, valuation_calc, prev, review_html,
+                           date, subtitle, target_range, peers_html, spectrum_html,
+                           scenario_block_html, peers_plot_html)
+
+    html = _fill_template(repl)
+    _check_leftover(html)
+
+    if not out_path:
+        out_path = _make_output_path(fill_path, fill, date, quality, valuation, prev)
+    _write_html(html, out_path)
+
+    _post_render_checks(repl, fill, out_path, quality, pre_risk, yellow_total,
+                        valuation, timing, red_flag, layer_scores)
     return out_path
 
 

@@ -142,4 +142,26 @@ finally:
     em._get_via_urllib = _orig_urllib
 print("4. 429 硬停 通过")
 
+# ---------------- 5. 陈旧档拦截（无网络，mock get） ----------------
+
+_orig_get = em.get
+try:
+    # 北交所旧代码（已切换 920 段）：东财返回全零 + 名称含「已切换」→ 必须报错
+    em.get = lambda url: {"data": {"f43": 0, "f57": "832982", "f58": "锦波生物(已切换)",
+                                   "f116": 0, "f162": 0, "f167": 0, "f168": 0, "f170": 0}}
+    try:
+        em._em_quote("0.832982")
+        raise AssertionError("已切换标的全零行情必须抛 ValueError")
+    except ValueError as e:
+        assert "920" in str(e), "报错应提示北交所 920 新代码段"
+    # 正常标的：有价格有市值 → 不拦
+    em.get = lambda url: {"data": {"f43": 12099, "f57": "920982", "f58": "锦波生物",
+                                   "f116": 1.39e10, "f162": 2473, "f167": 683,
+                                   "f168": 103, "f170": -14}}
+    q = em._em_quote("0.920982")
+    assert q["名称"] == "锦波生物" and q["最新价"] == 120.99
+finally:
+    em.get = _orig_get
+print("5. 陈旧档拦截 通过")
+
 print("\n全部断言通过", file=sys.stderr)

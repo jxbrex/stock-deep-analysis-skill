@@ -49,6 +49,29 @@ def test_find_prev_report():
     print("OK find_prev_report（最新日期 / 无标记排除 / 他代码排除 / 空目录 None）")
 
 
+def test_find_include_unmarked():
+    """宽松档：无标记的 pre-v4.3 旧报告参与匹配；同日期带标记者优先。"""
+    with tempfile.TemporaryDirectory() as d:
+        unmarked = _write(d, "腾讯控股-00700-6.93-8.2-复盘-2026-08-23.html",
+                          "<html><body>pre-v4.3 无标记</body></html>")
+        assert E.find_prev_report("00700", d) is None, "严格档仍须排除无标记"
+        got = E.find_prev_report("00700", d, include_unmarked=True)
+        assert got == unmarked, f"宽松档应命中无标记旧报告，实际 {got}"
+        # 同日期存在带标记版本时，带标记者优先
+        marked = _write(d, "腾讯控股-00700-7.00-8.0-复盘-2026-08-23.html",
+                        FAKE_REPORT)
+        got = E.find_prev_report("00700", d, include_unmarked=True)
+        assert got == marked, f"同日期应优先带标记版本，实际 {got}"
+        # 无标记版本日期更新时，宽松档取无标记新版
+        got = E.find_prev_report("00700", d, include_unmarked=True)
+        _write(d, "腾讯控股-00700-6.50-7.0-2026-08-30.html",
+               "<html><body>更新的无标记</body></html>")
+        got = E.find_prev_report("00700", d, include_unmarked=True)
+        assert got.endswith("2026-08-30.html"), f"日期最新者应胜出，实际 {got}"
+        assert E.find_prev_report("00700", d) == marked, "严格档不受宽松档影响"
+    print("OK find_prev_report --include-unmarked（宽松命中 / 同日期带标记优先 / 严格档不受影响）")
+
+
 def test_extract_anchors():
     with tempfile.TemporaryDirectory() as d:
         p = _write(d, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
@@ -63,5 +86,6 @@ def test_extract_anchors():
 
 if __name__ == "__main__":
     test_find_prev_report()
+    test_find_include_unmarked()
     test_extract_anchors()
-    print("全部 2 项测试通过")
+    print("全部 3 项测试通过")

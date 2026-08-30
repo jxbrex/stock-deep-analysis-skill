@@ -103,6 +103,16 @@
 </div>
 ```
 
+**薄块正例（结构样板，内容为示意）**：正文 `<p>` 按「判词 → 论据 → 对比 → 收口」四拍写，
+每个维度块 200+ 字，论据必须带具体数字与出处（巨石/金诚信报告即此结构，DeepSeek 式一句话块属不达标）：
+
+```html
+<p><strong>判词：</strong>矿山服务龙头，海外收入占比 72% 是核心阿尔法。
+<strong>论据：</strong>2025 年报海外毛利 31.2 亿（+24%），单体矿山服务合同平均存续 8.5 年，续约率 91%（年报 P17）；
+<strong>对比：</strong>国内同业海外占比均值仅 18%，公司 ROIC 五年均值 18.4%，高同业 8-10pct；
+<strong>收口：</strong>护城河在长期服务协议锁定，而非单次勘探能力——铜价下行期续约率是唯一要先盯的先行指标。</p>
+```
+
 **徽章色规则**：≥7.0 → `badge-green`；4.0-6.9 → `badge-orange`；<4.0 → `badge-red`。
 
 **层小结（每层末尾）**：`<div class="layer-summary"><strong>L1小结：</strong>……</div>`
@@ -176,18 +186,9 @@
 **已填 `peers_plot` 就不要再写 matrix-table**——两图并存冗余，渲染器检测到会直接删除手写九宫格并告警。
 
 **估值-质量矩阵表（兜底）**：仅当 `peers_plot` 无法给出（如同业数据不全）时，
-在 `peers_html` 里写 `<table class="matrix-table">` 3×3 表格，表头**不用加任何类**，目标公司格用 `class="target"`：
-
-```html
-<table class="matrix-table">
-  <thead><tr><th>ROE＼PE</th><th>低PE(&lt;12x)</th><th>中PE(12-20x)</th><th>高PE(&gt;20x)</th></tr></thead>
-  <tbody>
-    <tr><td><strong>高ROE(&gt;15%)</strong></td><td>—</td><td>—</td><td>同业A(16%/40x)</td></tr>
-    <tr><td><strong>中ROE(8-15%)</strong></td><td class="target">目标公司(9%/11x)</td><td>同业B(11%/15x)</td><td>同业C(11%/21x)</td></tr>
-    <tr><td><strong>低ROE(&lt;8%)</strong></td><td>—</td><td>—</td><td>—</td></tr>
-  </tbody>
-</table>
-```
+在 `peers_html` 里写 `<table class="matrix-table">` 3×3 表格：行=ROE 高(>15%)/中(8-15%)/低(<8%)，
+列=PE 低/中/高（阈值按行业带自定），单元格写「公司名(ROE%/PEx)」、空位填 —；
+表头**不用加任何类**，目标公司格用 `class="target"`。
 
 **3年趋势表**（9 同业对比）：方向标注**一律用文字**（升/降/缓升/缓降/大升/大降/平），
 **不用单个箭头**（↑↓ 不直观）。幅度约定：|Δ|<0.5pct → 平；0.5-2pct → 缓升/缓降；
@@ -204,28 +205,12 @@
 目标价=profit×PE÷shares、中枢/赔率/离散度公式见 SKILL.md Phase 3），类名写死杜绝幻觉。
 `valuation_html` 正文只写：估值方法声明、PE 校准逻辑 info-card、条件性 DCF 表/概率提示——
 **不要再手写三情景表和三指标卡**（脚本生成版在前，手写会重复）。
-仅当无法给出结构化假设时，才退化为手写表格（骨架见下，scenario-table 类）+ 手写 `scenarios` 区间。
+仅当无法给出结构化假设时，才退化为手写表格（scenario-table 类）+ 手写 `scenarios` 区间。
 
-**三情景对比表**（**统一纵向列排列**——指标在行、情景在列，参照中国移动报告；
-表格加 `class="scenario-table"`：首列指标名不换行）：
-数值行 `<td class="num">`，纯文字行（时间维度/触发条件）不加类，情景列表头 `th class="center"`：
-
-```html
-<div class="table-scroll"><table class="scenario-table">
-  <thead><tr><th>指标</th><th class="center">悲观情景</th><th class="center">基础情景</th><th class="center">乐观情景</th></tr></thead>
-  <tbody>
-    <tr><td>时间维度</td><td class="center">12个月</td><td class="center">12个月</td><td class="center">12-24个月</td></tr>
-    <tr><td>触发条件</td><td>……</td><td>……</td><td>……</td></tr>
-    <tr><td>2026E净利</td><td class="num">1,300 亿（-5.2%）</td><td class="num">1,350 亿（-1.5%）</td><td class="num">1,400 亿（+2.1%）</td></tr>
-    <tr><td>EPS</td><td class="num">6.00</td><td class="num">6.23</td><td class="num">6.46</td></tr>
-    <tr><td>PE</td><td class="num">17x</td><td class="num">15x</td><td class="num">14x</td></tr>
-    <tr><td>目标价</td><td class="num">……</td><td class="num">……</td><td class="num">……</td></tr>
-    <tr><td>较现价</td><td class="num">……</td><td class="num">……</td><td class="num">……</td></tr>
-  </tbody>
-</table></div>
-```
-（禁止把情景放成行、指标放成列——统一指标纵列、情景横排。
-**渲染器已加方向自动校正**：检测到"情景在行"的旧写法会自动转置并告警，但仍建议按骨架写对。）
+**三情景对比表（兜底手写）**：指标在行、情景在列（禁止反过来），`<table class="scenario-table">`
+首列指标名不换行；行序=时间维度/触发条件/净利/EPS/PE/目标价/较现价；数值行 `<td class="num">`，
+纯文字行（时间维度/触发条件）不加类，情景列表头 `th class="center"`。
+**渲染器已加方向自动校正**：检测到"情景在行"的旧写法会自动转置并告警，但仍建议按规则写对。
 
 ## 评分计算规则（脚本执行，模型不要手算）
 

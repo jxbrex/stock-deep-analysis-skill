@@ -52,6 +52,8 @@ class HttpStatusError(RuntimeError):
 # 代码→市场映射表（secid_of / to_ts_code 共用，保证两边口径一致）：
 # 前缀 → (tushare 后缀, 东财 secid 前缀, 是否港股)
 # 注意顺序：北交所两位前缀必须先于沪B的单字符 "9" 判定（92 开头是北交所，不是沪B）
+# 北交所东财 secid 前缀 0. 已实测验证（920982 全链路通过，2026-08-30）；
+# 83/43 等旧代码 2025-10 起已切换 920 段，东财返回零值陈旧档，由 _em_quote 拦截报错
 _MKT_MAP = [
     (("43", "83", "87", "88", "92"), "BJ", "0", False),   # 北交所
     (("60", "68", "9"), "SH", "1", False),                # 沪市主板/科创板/沪B
@@ -278,6 +280,14 @@ def _em_quote(secid: str, is_hk: bool = False) -> dict:
     div_p = lambda v: None if v in (None, "-") else v / price_div
     div_r = lambda v: None if v in (None, "-") else v / ratio_div
     pe = div_r(d.get("f162"))
+    name = d.get("f58") or ""
+    # 陈旧档拦截：已切换/退市标的东财返回零值（价格 0 + 市值 0），直接报错给可操作建议，
+    # 避免零值静默流入报告（北交所旧代码 832982 实测返回「锦波生物(已切换)」全零，2026-08-30）
+    if "已切换" in name or (not div_p(d.get("f43")) and not d.get("f116")):
+        raise ValueError(
+            f"东财行情显示 {name or secid} 已切换代码或已退市（无有效报价）："
+            f"北交所旧代码（43/83/87/88 段）2025-10 起已切换 920 段新代码，请改用新代码重试；"
+            f"其他情形请人工核查证券状态")
     return {
         "名称": d.get("f58"), "代码": d.get("f57"),
         "最新价": div_p(d.get("f43")), "涨跌幅%": div_r(d.get("f170")),
@@ -1187,12 +1197,9 @@ def red_flags(annual: list) -> list:
 
 # ---------------- 汇总输出 ----------------
 
-def summarize(code: str, years: int, searches: list = None) -> str:
-    secid, secucode, is_hk = secid_of(code)
-    pure = secucode.split(".")[0]
-    mkt = "港股" if is_hk else "A股"
-    out = [f"# {pure} 数据摘要（{mkt}）\n"]
-
+def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
+    """E1 行情估值段：报价、PE/PB 带、披露计划、无风险利率、TTM股息率。"""
+    out = []
     try:
         q = fetch_quote(secid, is_hk)
         cur_s = "HK$" if is_hk else "¥"  # 港股用港元符号，不再硬编码 ¥
@@ -1238,96 +1245,116 @@ def summarize(code: str, years: int, searches: list = None) -> str:
                            "若公司确有分红请手工核查并标注路径]\n")
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
+    return out
 
-    if is_hk:
-        try:
-            hk_rows = _ts_hk_annual_rows(pure)
-            out.append("## E3 财务年表（年报，tushare hk_income → 东财 HKF10 兜底）")
-            out.append("报告期 | 营收亿 | 归母净利亿 | ROE% | 毛利率% | 净利率%")
-            for r in hk_rows:
-                out.append(f"{r['期']} | {r['营收亿']} | {r['归母净利亿']} | "
-                           f"{r['ROE%']} | {r['毛利率%']} | {r['净利率%']}")
-            out.append("\n## 盈利质量红旗\n[港股：现金含量/应收/存货周转天数港股接口不提供，按缺失处理；"
-                       "毛利率用上表对照同业；审计意见走必查项手工查证]\n")
-            out.append("有息负债: [港股分支跳过（tushare balancesheet 不覆盖港股），"
-                       "请降级：东财F10资产负债表]\n")
-        except Exception as e:
-            out.append(f"## E3 财务年表\n[tushare 港股无 hk_income 权限。**优先：妙想 MCP "
-                       f"mx_hk_finance_data 直查**（模型直调，实测可用）；次兜底：data-sources.md "
-                       f"港股手册 curl RPT_HKF10_FN_MAININDICATOR（字段映射见手册）。tushare 报错: {e}]\n")
-    else:
-        try:
-            annual = _ts_annual_rows(pure, secucode=secucode)
-            if not annual:
-                raise RuntimeError("tushare 年报序列为空")
-        except Exception:
-            annual = _em_f10(secucode, size=5, annual_only=True)
-        try:
-            q1 = _ts_latest_quarter(pure, secucode=secucode) or {}
-        except Exception:
-            q1 = {}
-        if not q1:
-            f10 = _em_f10(secucode, size=4)
-            q1 = f10[0] if f10 else {}
+
+def _sec_e3_hk(pure: str) -> list:
+    """E3 财务年表段（港股分支）。"""
+    out = []
+    try:
+        hk_rows = _ts_hk_annual_rows(pure)
+        out.append("## E3 财务年表（年报，tushare hk_income → 东财 HKF10 兜底）")
+        out.append("报告期 | 营收亿 | 归母净利亿 | ROE% | 毛利率% | 净利率%")
+        for r in hk_rows:
+            out.append(f"{r['期']} | {r['营收亿']} | {r['归母净利亿']} | "
+                       f"{r['ROE%']} | {r['毛利率%']} | {r['净利率%']}")
+        out.append("\n## 盈利质量红旗\n[港股：现金含量/应收/存货周转天数港股接口不提供，按缺失处理；"
+                   "毛利率用上表对照同业；审计意见走必查项手工查证]\n")
+        out.append("有息负债: [港股分支跳过（tushare balancesheet 不覆盖港股），"
+                   "请降级：东财F10资产负债表]\n")
+    except Exception as e:
+        out.append(f"## E3 财务年表\n[tushare 港股无 hk_income 权限。**优先：妙想 MCP "
+                   f"mx_hk_finance_data 直查**（模型直调，实测可用）；次兜底：data-sources.md "
+                   f"港股手册 curl RPT_HKF10_FN_MAININDICATOR（字段映射见手册）。tushare 报错: {e}]\n")
+    return out
+
+
+def _sec_e3(pure: str, secucode: str) -> tuple:
+    """E3 财务年表段（A股分支）：年表、最新报告期、capex、有息负债；返回 (out, annual)。"""
+    out = []
+    try:
+        annual = _ts_annual_rows(pure, secucode=secucode)
         if not annual:
-            out.append("## E3 财务年表\n[tushare 与东财均失败，按降级链走妙想 mx_ashare_finance_data 直查]\n")
+            raise RuntimeError("tushare 年报序列为空")
+    except Exception:
+        annual = _em_f10(secucode, size=5, annual_only=True)
+    try:
+        q1 = _ts_latest_quarter(pure, secucode=secucode) or {}
+    except Exception:
+        q1 = {}
+    if not q1:
+        f10 = _em_f10(secucode, size=4)
+        q1 = f10[0] if f10 else {}
+    if not annual:
+        out.append("## E3 财务年表\n[tushare 与东财均失败，按降级链走妙想 mx_ashare_finance_data 直查]\n")
+    else:
+        out.append("## E3 财务年表（年报）\n"
+                   "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
+        for r in annual:
+            out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
+                       f"{yi(r.get('PARENTNETPROFIT'))} | {yoy_text(r.get('PARENTNETPROFITTZ'))} | "
+                       f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
+                       f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
+                       f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
+    out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
+               f"同比{yoy_text(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
+               f"ROIC {pct(q1.get('ROIC'))}（{q1.get('REPORT_DATE_NAME')}累计，未年化，季报口径远小于全年，勿直接与 ROE 比）\n")
+    capex_bits = [f"{r['REPORT_DATE_NAME']} {yi(r.get('CAPEX'))}亿" for r in annual[:3]
+                  if r.get("CAPEX") is not None]
+    if capex_bits:
+        out.append("资本开支（购建固定资产/无形资产等支付现金，DCF capex 直接取此口径）: "
+                   + " ｜ ".join(capex_bits) + "\n")
+    # 有息负债（tushare balancesheet 最新报告期；短债=短期借款+一年内到期非流动负债，
+    # 长债=长期借款+应付债券；短债覆盖=货币资金÷短债，分母 0 显示「无短债」）
+    debt = fetch_debt(pure)
+    if debt:
+        def _f0(v):
+            try:
+                return float(v or 0)
+            except (TypeError, ValueError):
+                return 0.0
+        st_debt = _f0(debt.get("st_borr")) + _f0(debt.get("non_cur_liab_due_1y"))
+        lt_debt = _f0(debt.get("lt_borr")) + _f0(debt.get("bond_payable"))
+        mc = debt.get("money_cap")
+        if st_debt <= 0:
+            cover = "无短债"
+        elif mc is None:
+            cover = "—"
         else:
-            out.append("## E3 财务年表（年报）\n"
-                       "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
-            for r in annual:
-                out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
-                           f"{yi(r.get('PARENTNETPROFIT'))} | {yoy_text(r.get('PARENTNETPROFITTZ'))} | "
-                           f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
-                           f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
-                           f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
-        out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
-                   f"同比{yoy_text(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
-                   f"ROIC {pct(q1.get('ROIC'))}（{q1.get('REPORT_DATE_NAME')}累计，未年化，季报口径远小于全年，勿直接与 ROE 比）\n")
-        capex_bits = [f"{r['REPORT_DATE_NAME']} {yi(r.get('CAPEX'))}亿" for r in annual[:3]
-                      if r.get("CAPEX") is not None]
-        if capex_bits:
-            out.append("资本开支（购建固定资产/无形资产等支付现金，DCF capex 直接取此口径）: "
-                       + " ｜ ".join(capex_bits) + "\n")
-        # 有息负债（tushare balancesheet 最新报告期；短债=短期借款+一年内到期非流动负债，
-        # 长债=长期借款+应付债券；短债覆盖=货币资金÷短债，分母 0 显示「无短债」）
-        debt = fetch_debt(pure)
-        if debt:
-            def _f0(v):
-                try:
-                    return float(v or 0)
-                except (TypeError, ValueError):
-                    return 0.0
-            st_debt = _f0(debt.get("st_borr")) + _f0(debt.get("non_cur_liab_due_1y"))
-            lt_debt = _f0(debt.get("lt_borr")) + _f0(debt.get("bond_payable"))
-            mc = debt.get("money_cap")
-            if st_debt <= 0:
-                cover = "无短债"
-            elif mc is None:
-                cover = "—"
-            else:
-                cover = f"{float(mc) / st_debt:.2f}"
-            out.append(f"有息负债 {yi(st_debt + lt_debt)}亿（短债 {yi(st_debt)}亿 / 长债 {yi(lt_debt)}亿）"
-                       f"｜货币资金 {yi(mc)}亿｜短债覆盖 {cover}\n")
-        else:
-            out.append("有息负债: 未获取（tushare balancesheet 失败），请降级：东财F10资产负债表\n")
-        out.append("## 盈利质量红旗\n" + "\n".join(red_flags(annual)) + "\n")
-        # 审计意见独立行：供 L4 红灯 a 项判定，不计入 1D 红旗
-        audit = fetch_audit(pure)
-        if audit:
-            out.append(f"审计意见: {(audit.get('audit_result') or '').strip()}"
-                       f"（{(audit.get('end_date') or '')[:4]}年报，tushare fina_audit）"
-                       f"——供 L4 红灯 a 项判定，不计入 1D 红旗\n")
-        else:
-            out.append("审计意见: 未获取（tushare fina_audit 失败），请按 SKILL.md Step 1.1 手工查证年报"
-                       "——供 L4 红灯 a 项判定，不计入 1D 红旗\n")
-        forensic = fetch_forensic(pure)
-        if forensic:
-            out.append("## 财报可信度（初判）\n" + "\n".join(forensic) + "\n")
-        else:
-            out.append("## 财报可信度（初判）\n△ 数据不足（tushare 三表缺字段，应计比率/M-Score 无法计算）"
-                       "——请降级：东财 F10 补应计/M-Score 输入，或妙想 MCP 直查；"
-                       "此评级是 MANDATORY（C→黄灯扣分、D→红灯），禁止静默跳过\n")
+            cover = f"{float(mc) / st_debt:.2f}"
+        out.append(f"有息负债 {yi(st_debt + lt_debt)}亿（短债 {yi(st_debt)}亿 / 长债 {yi(lt_debt)}亿）"
+                   f"｜货币资金 {yi(mc)}亿｜短债覆盖 {cover}\n")
+    else:
+        out.append("有息负债: 未获取（tushare balancesheet 失败），请降级：东财F10资产负债表\n")
+    return out, annual
 
+
+def _sec_quality(pure: str, annual: list) -> list:
+    """盈利质量红旗 + 审计意见 + 财报可信度（A股，紧跟 E3 年表）。"""
+    out = []
+    out.append("## 盈利质量红旗\n" + "\n".join(red_flags(annual)) + "\n")
+    # 审计意见独立行：供 L4 红灯 a 项判定，不计入 1D 红旗
+    audit = fetch_audit(pure)
+    if audit:
+        out.append(f"审计意见: {(audit.get('audit_result') or '').strip()}"
+                   f"（{(audit.get('end_date') or '')[:4]}年报，tushare fina_audit）"
+                   f"——供 L4 红灯 a 项判定，不计入 1D 红旗\n")
+    else:
+        out.append("审计意见: 未获取（tushare fina_audit 失败），请按 SKILL.md Step 1.1 手工查证年报"
+                   "——供 L4 红灯 a 项判定，不计入 1D 红旗\n")
+    forensic = fetch_forensic(pure)
+    if forensic:
+        out.append("## 财报可信度（初判）\n" + "\n".join(forensic) + "\n")
+    else:
+        out.append("## 财报可信度（初判）\n△ 数据不足（tushare 三表缺字段，应计比率/M-Score 无法计算）"
+                   "——请降级：东财 F10 补应计/M-Score 输入，或妙想 MCP 直查；"
+                   "此评级是 MANDATORY（C→黄灯扣分、D→红灯），禁止静默跳过\n")
+    return out
+
+
+def _sec_e2(secid: str, years: int, is_hk: bool) -> list:
+    """E2 月线段：区间、最低/最高/最新、近12月收盘序列。"""
+    out = []
     try:
         kl = fetch_kline_monthly(secid, years, is_hk)
         if kl:
@@ -1338,7 +1365,12 @@ def summarize(code: str, years: int, searches: list = None) -> str:
                        f"近12月: " + " ".join(str(k['close']) for k in kl[-12:]) + "\n")
     except Exception as e:
         out.append(f"## E2 月线\n[失败: {e}]\n")
+    return out
 
+
+def _sec_e4(pure: str, is_hk: bool) -> list:
+    """E4 股东户数段。"""
+    out = []
     try:
         h = fetch_holders(pure)
         if h:
@@ -1355,55 +1387,69 @@ def summarize(code: str, years: int, searches: list = None) -> str:
             out.append("## E4 股东户数\n[港股不支持，跳过]\n")
     except Exception as e:
         out.append(f"## E4 股东户数\n[失败: {e}]\n")
+    return out
 
-    if not is_hk:
-        fe = fetch_forecast_express(pure)
-        if fe:
-            out.append("## 业绩预告/快报（tushare）")
-            for r in fe:
-                period = r.get("报告期") or "—"
-                period_s = f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(str(period)) == 8 else period
-                if r["类型"] == "快报":
-                    out.append(f"[快报] {period_s}（披露{r.get('披露')}）: 营收{r.get('营收')}亿 "
-                               f"归母净利{r.get('净利')}亿 同比{r.get('同比')}")
-                else:
-                    line = f"[预告] {period_s}（披露{r.get('披露')}）: {r.get('预告类型') or ''}"
-                    if r.get("净利区间"):
-                        line += f" 净利{r['净利区间']}"
-                    if r.get("变动幅度"):
-                        line += f" 变动{r['变动幅度']}"
-                    if r.get("摘要"):
-                        line += f" | {r['摘要']}"
-                    out.append(line)
-            out.append("")
-        else:
-            out.append("## 业绩预告/快报\n[未获取到（tushare forecast/express 无数据），"
-                       "请降级：东财业绩预告公开端点或妙想 MCP 直查；L3 催化剂判断缺少近期业绩信号]\n")
 
-        g = fetch_governance(pure)
-        glines = []
-        if g.get("pledge"):
-            p = g["pledge"]
-            glines.append(f"质押: 质押比例{p.get('质押比例%')}%（截至{p.get('日期')}）")
-        if g.get("trades"):
-            t_s = "；".join(f"{t['披露']}{t['股东']}{t['方向']}" for t in g["trades"][:4])
-            latest = str(g["trades"][0].get("披露") or "")
-            try:  # 最新增减持记录超过 24 个月视为陈旧，提示另行核查近 12 个月
-                stale = (date.today() - date(int(latest[:4]), int(latest[4:6]), int(latest[6:8]))).days > 730
-            except (ValueError, IndexError):
-                stale = False
-            if stale:
-                t_s += f"（⚠️ 最新记录止于 {latest}，已超 24 个月——近 12 个月增减持须另行核查并标注路径）"
-            glines.append(f"增减持: {t_s}")
-        if g.get("buyback"):
-            b_s = "；".join(f"{b['披露']}回购{b.get('金额') or ''}{b.get('进度') or ''}" for b in g["buyback"][:2])
-            glines.append(f"回购: {b_s}")
-        if glines:
-            out.append("## 1E 治理（tushare）\n" + "\n".join(glines) + "\n")
-        else:
-            out.append("## 1E 治理\n[未获取到质押/增减持/回购数据，请降级：10jqka event.html 或巨潮手工查，"
-                       "或妙想 MCP mx_finance_search_notice 直查；禁止在无数据时给 1E 满分锚定]\n")
+def _sec_forecast(pure: str) -> list:
+    """业绩预告/快报段（A股）。"""
+    out = []
+    fe = fetch_forecast_express(pure)
+    if fe:
+        out.append("## 业绩预告/快报（tushare）")
+        for r in fe:
+            period = r.get("报告期") or "—"
+            period_s = f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(str(period)) == 8 else period
+            if r["类型"] == "快报":
+                out.append(f"[快报] {period_s}（披露{r.get('披露')}）: 营收{r.get('营收')}亿 "
+                           f"归母净利{r.get('净利')}亿 同比{r.get('同比')}")
+            else:
+                line = f"[预告] {period_s}（披露{r.get('披露')}）: {r.get('预告类型') or ''}"
+                if r.get("净利区间"):
+                    line += f" 净利{r['净利区间']}"
+                if r.get("变动幅度"):
+                    line += f" 变动{r['变动幅度']}"
+                if r.get("摘要"):
+                    line += f" | {r['摘要']}"
+                out.append(line)
+        out.append("")
+    else:
+        out.append("## 业绩预告/快报\n[未获取到（tushare forecast/express 无数据），"
+                   "请降级：东财业绩预告公开端点或妙想 MCP 直查；L3 催化剂判断缺少近期业绩信号]\n")
+    return out
 
+
+def _sec_gov(pure: str) -> list:
+    """1E 治理段（A股）：质押、增减持、回购。"""
+    out = []
+    g = fetch_governance(pure)
+    glines = []
+    if g.get("pledge"):
+        p = g["pledge"]
+        glines.append(f"质押: 质押比例{p.get('质押比例%')}%（截至{p.get('日期')}）")
+    if g.get("trades"):
+        t_s = "；".join(f"{t['披露']}{t['股东']}{t['方向']}" for t in g["trades"][:4])
+        latest = str(g["trades"][0].get("披露") or "")
+        try:  # 最新增减持记录超过 24 个月视为陈旧，提示另行核查近 12 个月
+            stale = (date.today() - date(int(latest[:4]), int(latest[4:6]), int(latest[6:8]))).days > 730
+        except (ValueError, IndexError):
+            stale = False
+        if stale:
+            t_s += f"（⚠️ 最新记录止于 {latest}，已超 24 个月——近 12 个月增减持须另行核查并标注路径）"
+        glines.append(f"增减持: {t_s}")
+    if g.get("buyback"):
+        b_s = "；".join(f"{b['披露']}回购{b.get('金额') or ''}{b.get('进度') or ''}" for b in g["buyback"][:2])
+        glines.append(f"回购: {b_s}")
+    if glines:
+        out.append("## 1E 治理（tushare）\n" + "\n".join(glines) + "\n")
+    else:
+        out.append("## 1E 治理\n[未获取到质押/增减持/回购数据，请降级：10jqka event.html 或巨潮手工查，"
+                   "或妙想 MCP mx_finance_search_notice 直查；禁止在无数据时给 1E 满分锚定]\n")
+    return out
+
+
+def _sec_e5(pure: str, is_hk: bool) -> list:
+    """E5 一致预期段。"""
+    out = []
     try:
         c = fetch_consensus(pure)
         if c.get("_src") == "tushare":
@@ -1439,7 +1485,12 @@ def summarize(code: str, years: int, searches: list = None) -> str:
             out.append("## E5 一致预期\n[港股无覆盖（tushare report_rc/东财均空），预期差按档位C处理]\n")
     except Exception as e:
         out.append(f"## E5 一致预期\n[失败: {e}]\n")
+    return out
 
+
+def _sec_e6(secucode: str, is_hk: bool) -> list:
+    """E6 主营构成段。"""
+    out = []
     try:
         mo = fetch_mainop(secucode)
         # MAINOP_TYPE: 1=行业/地区 2=产品；优先展示按产品，其次按行业
@@ -1468,28 +1519,62 @@ def summarize(code: str, years: int, searches: list = None) -> str:
                        "1B/1C 评分缺核心输入]\n")
     except Exception:
         pass
+    return out
 
+
+def _sec_e7(searches: list) -> list:
+    """E7 定性站内搜索段（可选）。"""
+    out = []
     # E7 定性站内搜索（可选；tushare news 无权限，保持东财 E7）
+    out.append("## E7 定性站内搜索")
+    for kw in searches:
+        r = search_e7(kw)
+        if r["ok"] and r["items"]:
+            out.append(f"\n### 「{kw}」({len(r['items'])}条)")
+            for it in r["items"][:8]:
+                line = f"- [{it['date']}] {it['title']}"
+                if it["source"]:
+                    line += f" — {it['source']}"
+                out.append(line)
+                if it["summary"]:
+                    out.append(f"  {it['summary'][:120]}")
+        elif r["ok"]:
+            out.append(f"\n### 「{kw}」: 空结果（已换词/换type后仍空→降级）")
+            out.append(f"  诊断: {r['raw_head'][:300]}")
+        else:
+            out.append(f"\n### 「{kw}」: 调用失败")
+            out.append(f"  诊断: {r['raw_head'][:300]}")
+    out.append("")
+    return out
+
+
+def summarize(code: str, years: int, searches: list = None) -> str:
+    secid, secucode, is_hk = secid_of(code)
+    pure = secucode.split(".")[0]
+    mkt = "港股" if is_hk else "A股"
+    out = [f"# {pure} 数据摘要（{mkt}）\n"]
+
+    out.extend(_sec_e1(secid, is_hk, pure))
+
+    if is_hk:
+        out.extend(_sec_e3_hk(pure))
+    else:
+        e3_out, annual = _sec_e3(pure, secucode)
+        out.extend(e3_out)
+        out.extend(_sec_quality(pure, annual))
+
+    out.extend(_sec_e2(secid, years, is_hk))
+    out.extend(_sec_e4(pure, is_hk))
+
+    if not is_hk:
+        out.extend(_sec_forecast(pure))
+        out.extend(_sec_gov(pure))
+
+    out.extend(_sec_e5(pure, is_hk))
+    out.extend(_sec_e6(secucode, is_hk))
+
     if searches:
-        out.append("## E7 定性站内搜索")
-        for kw in searches:
-            r = search_e7(kw)
-            if r["ok"] and r["items"]:
-                out.append(f"\n### 「{kw}」({len(r['items'])}条)")
-                for it in r["items"][:8]:
-                    line = f"- [{it['date']}] {it['title']}"
-                    if it["source"]:
-                        line += f" — {it['source']}"
-                    out.append(line)
-                    if it["summary"]:
-                        out.append(f"  {it['summary'][:120]}")
-            elif r["ok"]:
-                out.append(f"\n### 「{kw}」: 空结果（已换词/换type后仍空→降级）")
-                out.append(f"  诊断: {r['raw_head'][:300]}")
-            else:
-                out.append(f"\n### 「{kw}」: 调用失败")
-                out.append(f"  诊断: {r['raw_head'][:300]}")
-        out.append("")
+        out.extend(_sec_e7(searches))
 
     return "\n".join(out)
 

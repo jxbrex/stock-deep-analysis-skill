@@ -228,11 +228,19 @@ def test_nice_ticks():
 def test_optional_charts_render():
     """v4.8 可选图：sensitivity/pe_history 填了才出图，缺省时条件块整块删除；
     评分横条图（数据现成）与侧栏目录始终生成；走廊图横版含单位注；
-    明细表已并入横条图（不再出现）；龙卷风 delta/amount 子行承载金额影响。"""
+    明细表已并入横条图（不再出现）；龙卷风 delta/amount 子行承载金额影响。
+    v4.7.1：PE 历史带挪挂第 10 章（cycle_html 必填），垫在手写时段拆解前；milestones 时点标注。"""
     extra = {
         "sensitivity": [{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
                         {"name": "产量", "impact": 13}],
-        "pe_history": {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年"},
+        "pe_history": {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年",
+                       "milestones": [{"label": "2021H1", "pe": 46.9}, {"label": "2023Q2", "pe": 13.7}]},
+        # v4.7.1 起 PE 历史带挂第 10 章：pe_history 与 cycle_html 绑定（schema 新规则）
+        "cycle_html": '<table><thead><tr><th>阶段</th><th class="num">时间</th><th class="num">PE</th>'
+                      '<th>驱动</th></tr></thead><tbody><tr><td>景气顶</td><td class="num">2021H1</td>'
+                      '<td class="num">46.9x</td><td>商品价格见顶</td></tr></tbody></table>'
+                      '<span class="source">阶段拆解：E2 月线 + 当年 EPS 估算 PE</span>'
+                      '<div class="conclusion-box"><strong>可复用规律：</strong>低分位≠便宜。</div>',
     }
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "_fill_t.json")
@@ -246,6 +254,12 @@ def test_optional_charts_render():
     assert "单位：元" in html, "走廊图应标注币种单位"
     assert "质量分明细" not in html, "明细表已并入评分横条图，不应再出现"
     assert "良好" in html, "横条图条端应含判词（7.0 → 良好）"
+    # v4.7.1：历史带位于第 10 章内、手写时段拆解之前（概览→明细）；milestones 时点标注渲染
+    s10_pos = html.find('id="s10"')
+    band_pos = html.find('aria-label="PE(TTM)历史带"')
+    cycle_pos = html.find("景气顶")
+    assert 0 <= s10_pos < band_pos < cycle_pos, "历史带应位于第 10 章内、时段表之前"
+    assert "2021H1 46.9x" in html, "milestones 时点标注应渲染"
     # 缺省渲染：可选图条件块必须整块删除
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "_fill_t.json")
@@ -315,6 +329,47 @@ def test_peers_label_within_bounds():
         x0 = x - w if anchor == "end" else (x - w / 2 if anchor == "middle" else x)
         assert x0 >= 0 and x0 + w <= 1000, f"标签越界: {txt} x0={x0:.0f} w={w:.0f}"
     assert found, "右缘同业标签未渲染"
+
+
+def test_writing_discipline_warns():
+    """v4.7.1 写作纪律告警：四拍挤段 / 三年并排 / pe_history 无第 10 章承载。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    # 四拍挤段：同一 <p> 含 ≥2 个拍名 → 告警
+    l1 = ('<div class="dim-block"><p><strong>判词：</strong>矿山服务龙头，海外占比 72% 是核心阿尔法。'
+          '<strong>论据：</strong>2025 年报海外毛利 31.2 亿（+24%），续约率 91%（年报 P17）。'
+          '<strong>收口：</strong>护城河在长期服务协议锁定，铜价下行期续约率是唯一先行指标。</p></div>')
+    fill4beat = minimal_fill(l1_html="".join(_dim("该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，"
+                                                  "行业地位稳固，具备长期参考价值。") for _ in range(5)) + l1)
+    assert "四拍挤段" in capture(fill4beat), "四拍挤段应告警"
+    l1_ok = "".join(_dim("该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，"
+                         "行业地位稳固，具备长期参考价值。") for _ in range(6))
+    assert "四拍挤段" not in capture(minimal_fill(l1_html=l1_ok)), "分段的四拍不应告警"
+    # 三年并排：连续三个年份 th / td 内年份:数值堆叠 → 告警
+    peers = ('<table><thead><tr><th>指标</th><th>2023</th><th>2024</th><th>2025</th></tr></thead>'
+             '<tbody><tr><td>ROE变化</td><td>8.0</td><td>15.2</td><td>30.8</td></tr></tbody></table>'
+             '<span class="source">来源：mx 批量</span>')
+    assert "三年数字并排" in capture(minimal_fill(peers_html=peers)), "三年并排应告警"
+    peers_stacked = ('<table><thead><tr><th>指标</th><th>3年走势</th></tr></thead>'
+                     '<tbody><tr><td>归母净利</td><td>2023: 8.0，2024: 15.2，2025: 30.8</td></tr></tbody></table>'
+                     '<span class="source">来源：mx 批量</span>')
+    assert "三年数字并排" in capture(minimal_fill(peers_html=peers_stacked)), "td 内年份堆叠应告警"
+    peers_ok = ('<table><thead><tr><th>指标</th><th>同业甲</th></tr></thead>'
+                '<tbody><tr><td>ROE变化</td><td>8.0→30.8（大升）</td></tr></tbody></table>'
+                '<span class="source">来源：mx 批量</span>')
+    assert "三年数字并排" not in capture(minimal_fill(peers_html=peers_ok)), "起→终格式不应告警"
+    # pe_history 与第 10 章绑定：cycle_html 缺失 → 告警；填了 → 不告警
+    ph = {"hist_lo": 13.7, "hist_hi": 83.2}
+    assert "cycle_html 缺失" in capture(minimal_fill(pe_history=ph)), "pe_history 无第 10 章承载应告警"
+    fill_ok = minimal_fill(pe_history=ph, cycle_html='<p>周期阶段分析正文，非空即渲染整章。</p>')
+    assert "cycle_html 缺失" not in capture(fill_ok), "cycle_html 已填不应告警"
 
 
 if __name__ == "__main__":

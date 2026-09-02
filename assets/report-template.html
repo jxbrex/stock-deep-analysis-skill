@@ -21,11 +21,11 @@ body {
 .up { color: #6ba86b; }
 .down { color: #c75b5b; }
 .mid { color: #c08a2e; }
-.plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; }
+.plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; overflow-x: auto; }
 .plot-wrap svg { max-width: 1000px; margin: 0 auto; }
 .hero { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
 .hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
-.hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; }
+.hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; justify-content: center; }
 .hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
 .hero h1 { font-size: 26px; font-weight: 700; color: #2b2620; margin: 0 0 4px; }
 .hero .subtitle { font-size: 12.5px; color: #8a8375; }
@@ -75,7 +75,8 @@ body {
 .badge-blue { background: #4a6fa5; }
 .badge-gray { background: #b3ab93; }
 .badge-lg { font-size: 15px; padding: 3px 10px; }
-.section-tag { display: inline-block; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+/* block + fit-content：标签独占一行，防手写正文直接跟在 span 后粘连（v4.7.1） */
+.section-tag { display: block; width: fit-content; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
 .muted { color: #8a8375; }
 .verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
@@ -304,9 +305,6 @@ html { scroll-behavior: smooth; }
     <!--IF:SCENARIO_SPECTRUM_HTML-->
     {{SCENARIO_SPECTRUM_HTML}}
     <!--ENDIF-->
-    <!--IF:PE_BAND_HTML-->
-    {{PE_BAND_HTML}}
-    <!--ENDIF-->
     <!--IF:SCENARIO_BLOCK_HTML-->
     {{SCENARIO_BLOCK_HTML}}
     <!--ENDIF-->
@@ -343,7 +341,8 @@ html { scroll-behavior: smooth; }
 </div>
 
 <!--IF:CYCLE_HTML-->
-<!-- 10 周期规律（条件章节） -->
+<!-- 10 周期规律（条件章节）：历史带图垫在手写时段拆解前（概览→明细；条件块嵌套不支持，
+     PE_BAND_HTML 空串时占位符替换为空、无残留） -->
 <div class="section" id="s10">
   <div class="section-header">
     <span class="section-num">10</span>
@@ -351,6 +350,7 @@ html { scroll-behavior: smooth; }
     <span class="section-meta">{{CYCLE_META}}</span>
   </div>
   <div class="section-body">
+    {{PE_BAND_HTML}}
     {{CYCLE_HTML}}
   </div>
 </div>

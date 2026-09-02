@@ -94,7 +94,8 @@ https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f
 - `klt=101` + beg=近6个月 → MA60/MA120、近期高低点（技术面）
 - PE 历史序列 ≈ 每月收盘价 × 总股本 ÷ 对应时点 TTM 净利（净利从 E3 取）
 
-**覆盖清单项**：历史 PE 区间、关键价位、周期阶段（Checklist #9 #10）
+**覆盖清单项**：历史 PE 区间、关键价位、周期阶段（Checklist #9 #10）；
+`pe_history.milestones` 的关键时点 PE（峰值/谷值/典型时段，3-6 个）同源取自本节月线序列
 
 ---
 

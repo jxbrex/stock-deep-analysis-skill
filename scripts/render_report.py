@@ -593,9 +593,9 @@ def _ticks(lo: float, hi: float, n: int = 5) -> list:
 
 def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     """05 目标价走廊（横版区间条）：x 轴=价格（nice 刻度+单位），每情景一条横向实心区间条
-    （悲观→乐观 从上到下，与三情景表列序一致），白条刻=区间中枢，条端=中枢值与较现价
-    涨跌幅，竖虚线=现价（全部脚本计算）。横版取代旧竖版：窄区间不再退化成幽灵胶囊，
-    标签空间充裕。calc（compute_valuation 结果）存在时用其算出的目标价区间；
+    （悲观→乐观 从上到下，与三情景表列序一致），白条刻=区间中枢，条上方=中枢值与较现价
+    涨跌幅，竖虚线=现价（全部脚本计算）。横版取代旧竖版：窄区间不再退化成幽灵胶囊。
+    calc（compute_valuation 结果）存在时用其算出的目标价区间；
     否则回退到 fill["scenarios"] 手写区间。缺数据 → 返回空串（模板条件块整块删除）。"""
     price = _num(fill.get("price"))
     cur = str(fill.get("currency") or "元")
@@ -629,7 +629,7 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     X = _lin_map(lo_d, hi_d, L, W - R)
 
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="目标价走廊" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="目标价走廊" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     axis_y = T + len(cols) * ROW_H + 6
     # 价格轴：竖向浅网格线 + nice 刻度 + 单位注
     for v in _ticks(lo_d, hi_d):
@@ -664,15 +664,19 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
                      f'stroke="#fffdf9" stroke-width="3"/>')
         pct = c["mid"] / price - 1
         vlabel = f'{_fmt_price(c["mid"])}（{pct * 100:+.1f}%）'
-        if x_hi + 12 + _text_w(vlabel, 12.5) <= W - 4:
-            parts.append(f'<text x="{x_hi + 12:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="12.5" '
-                         f'font-weight="700" fill="{c["color"]}">{vlabel}</text>')
-        else:  # 条外右侧放不下 → 条内右端白字
-            parts.append(f'<text x="{x_hi - 10:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" '
-                         f'font-size="12.5" font-weight="700" fill="#fffdf9">{vlabel}</text>')
+        # 中枢标签统一放条上方（v4.7.1：原"条外右侧放不下塞条内白字"与白刻交叠且手机上更挤）
+        vw = _text_w(vlabel, 12.5)
+        cx_mid = (x_lo + x_hi) / 2
+        anchor, tx = "middle", cx_mid
+        if cx_mid + vw / 2 > W - 4:
+            anchor, tx = "end", W - 4
+        elif cx_mid - vw / 2 < L:
+            anchor, tx = "start", L
+        parts.append(f'<text x="{tx:.1f}" y="{cy - 6:.1f}" text-anchor="{anchor}" font-size="12.5" '
+                     f'font-weight="700" fill="{c["color"]}">{vlabel}</text>')
     parts.append('</svg></div>')
     parts.append('<span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，'
-                 '白条刻=区间中枢，竖虚线=现价；条端=中枢值与较现价涨跌幅</span>')
+                 '白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅</span>')
     return "".join(parts)
 
 
@@ -919,7 +923,7 @@ def build_peers_plot(fill: dict) -> str:
     yb = [Y(b) for b in roe_bands]  # roe_bands[0]=8 → 下方线 yb[0] 更大；[1]=15 → 上方线
 
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="估值-质量散点图" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="估值-质量散点图" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     # 最优/最差象限底色（高ROE·低PE = 左上绿；低ROE·高PE = 右下红）
     parts.append(f'<rect x="{L}" y="{T}" width="{xb[0] - L:.1f}" height="{yb[1] - T:.1f}" fill="#6ba86b" fill-opacity="0.12"/>')
     parts.append(f'<rect x="{xb[1]:.1f}" y="{yb[0]:.1f}" width="{W - R - xb[1]:.1f}" height="{H - B - yb[0]:.1f}" fill="#c75b5b" fill-opacity="0.12"/>')
@@ -1028,7 +1032,7 @@ def build_score_bars(sc: dict) -> str:
 
     parts = ['<span class="section-tag">评分分布</span>',
              f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="九维评分分布" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="九维评分分布" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     for v in _ticks(0, 10, 6):
         gx = X(v)
         parts.append(f'<line x1="{gx:.1f}" y1="{T - 8}" x2="{gx:.1f}" y2="{H - 30}" stroke="#ece7db" stroke-width="1"/>')
@@ -1083,15 +1087,15 @@ def build_sensitivity_tornado(fill: dict) -> str:
         return ""
     items.sort(key=lambda r: -r["impact"])
     has_detail = any(it["delta"] or it["amount"] for it in items)
-    W = 1000
-    NL, X0, HALF = 216, 580, 300    # 变量名列右缘 / 中轴 / 中轴到满幅端
+    W = 860
+    NL, X0, HALF = 200, 520, 260    # 变量名列右缘 / 中轴 / 中轴到满幅端（v4.7.1 收窄：手机缩放比例提高）
     T, ROW_H, BAR_H = 30, 56 if has_detail else 46, 22
     H = T + len(items) * ROW_H + 44
     imax = items[0]["impact"]
     k = HALF / imax if imax else 1.0
     parts = ['<span class="section-tag">敏感性排序</span>',
              f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="敏感性龙卷风" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="敏感性龙卷风" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     axis_y = T + len(items) * ROW_H + 4
     for v in _ticks(0, imax, 4):
         for sign in (-1, 1):
@@ -1108,21 +1112,21 @@ def build_sensitivity_tornado(fill: dict) -> str:
         if has_detail:
             # 双行：变量名 + 「变动幅度 → 金额影响」（替代旧敏感性表的信息）
             detail = " → ".join(x for x in (it["delta"], it["amount"]) if x)
-            parts.append(f'<text x="{NL}" y="{cy + 3:.1f}" text-anchor="end" font-size="12.5" '
+            parts.append(f'<text x="{NL}" y="{cy + 3:.1f}" text-anchor="end" font-size="13" '
                          f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
                          f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
             if detail:
-                parts.append(f'<text x="{NL}" y="{cy + 19:.1f}" text-anchor="end" font-size="10.5" '
+                parts.append(f'<text x="{NL}" y="{cy + 19:.1f}" text-anchor="end" font-size="11" '
                              f'fill="#8a8375">{_esc(detail)}</text>')
         else:
-            parts.append(f'<text x="{NL}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12.5" '
+            parts.append(f'<text x="{NL}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="13" '
                          f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
                          f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
         parts.append(f'<rect x="{X0 - w:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#c75b5b"/>')
         parts.append(f'<rect x="{X0:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#6ba86b"/>')
-        parts.append(f'<text x="{X0 - w - 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="11.5" '
+        parts.append(f'<text x="{X0 - w - 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12" '
                      f'font-weight="700" fill="#c75b5b">−{_fmt(it["impact"])}%</text>')
-        parts.append(f'<text x="{X0 + w + 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="11.5" '
+        parts.append(f'<text x="{X0 + w + 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="12" '
                      f'font-weight="700" fill="#6ba86b">+{_fmt(it["impact"])}%</text>')
     parts.append('</svg></div>')
     parts.append('<span class="source">敏感性龙卷风（脚本按 sensitivity 字段生成）：条长=变量变动对归母净利的'
@@ -1132,9 +1136,12 @@ def build_sensitivity_tornado(fill: dict) -> str:
 
 
 def build_pe_band(fill: dict) -> str:
-    """07 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
-    横向子弹图——浅带=历史 PE 区间，钢蓝段=合理带，黑刻=当前值；「低分位≠便宜」一图证成。
-    pe_history: {"hist_lo":13.7, "hist_hi":83.2, "label":"近5年"}（label 可选）；
+    """07→10 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
+    横向子弹图——浅带=历史 PE 区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点。
+    v4.7.1 起图挪至 10 周期规律章（手写时段拆解前，概览→明细）。
+    pe_history: {"hist_lo":13.7, "hist_hi":83.2, "label":"近5年",
+                 "milestones":[{"label":"2021H1","pe":46.9}, …]}（label 可选；milestones 可选，
+                 建议 3-6 个关键时点：峰值/谷值/典型时段，与时段拆解表同源取数）；
     字段缺失或与 valuation_inputs 不齐 → 返回空串（可选增强，静默跳过）。"""
     ph = fill.get("pe_history") or {}
     vi = fill.get("valuation_inputs") or {}
@@ -1153,7 +1160,7 @@ def build_pe_band(fill: dict) -> str:
     plabel = str(ph.get("label") or "历史")
     parts = [f'<span class="section-tag">{_esc(mlabel)} 历史带</span>',
              f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="{_esc(mlabel)}历史带" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="{_esc(mlabel)}历史带" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     for v in _ticks(lo_d, hi_d, 6):
         gx = X(v)
         parts.append(f'<line x1="{gx:.1f}" y1="38" x2="{gx:.1f}" y2="{cy + BH + 10}" stroke="#ece7db" stroke-width="1"/>')
@@ -1187,9 +1194,31 @@ def build_pe_band(fill: dict) -> str:
         anchor, tx = "end", min(cxp + 4, W - R)
     parts.append(f'<text x="{tx:.1f}" y="{cy - 20}" text-anchor="{anchor}" font-size="12" '
                  f'font-weight="700" fill="#2b2620">{cur_label}</text>')
+    # 关键时点标注（v4.7.1 milestones 可选）：灰虚刻 + 带上方单层标签
+    # debt: 标签单层排布，pe 过近会叠——现网 3-6 个时点足够分散，真叠时升级为上下双层交错
+    ms_items = []
+    for ms in ph.get("milestones") or []:
+        mv = _num(ms.get("pe"))
+        mlbl = str(ms.get("label") or "").strip()
+        if mv is None or not mlbl or not (lo_d <= mv <= hi_d):
+            continue
+        ms_items.append((mv, mlbl))
+    for mv, mlbl in sorted(ms_items):  # 按 pe 升序 = 画布从左到右
+        mx = X(mv)
+        parts.append(f'<line x1="{mx:.1f}" y1="{cy - 6:.1f}" x2="{mx:.1f}" y2="{cy + BH + 6:.1f}" '
+                     f'stroke="#8a8375" stroke-width="1.2" stroke-dasharray="3 3"/>')
+        mtext = f'{mlbl} {_fmt(mv)}x'
+        mw = _text_w(mtext, 10.5)
+        ma, mtx = "middle", mx
+        if mx + mw / 2 > W - 4:
+            ma, mtx = "end", W - 4
+        elif mx - mw / 2 < 4:
+            ma, mtx = "start", 4
+        parts.append(f'<text x="{mtx:.1f}" y="{cy - 58}" text-anchor="{ma}" font-size="10.5" '
+                     f'fill="#57524a">{_esc(mtext)}</text>')
     parts.append('</svg></div>')
     parts.append(f'<span class="source">{_esc(mlabel)} 历史带（脚本按 pe_history + valuation_inputs 生成）：'
-                 f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值；三者同一口径</span>')
+                 f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点 PE；三者同一口径</span>')
     return "".join(parts)
 
 
@@ -1213,7 +1242,7 @@ def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) 
     X = _lin_map(0, 10, BAR_A, BAR_B)
     parts = ['<span class="section-tag">三轨分新旧对比</span>',
              f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
-             f'aria-label="三轨分新旧对比" style="width:100%;height:auto;display:block;font-family:inherit;">']
+             f'aria-label="三轨分新旧对比" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
     for v in _ticks(0, 10, 6):
         gx = X(v)
         parts.append(f'<line x1="{gx:.1f}" y1="{T - 6}" x2="{gx:.1f}" y2="{H - 30}" stroke="#ece7db" stroke-width="1"/>')
@@ -1564,6 +1593,35 @@ def _check_internal_codes(fill: dict, warns: list) -> None:
                          f"请改用章节编号/名称（第 3 章 / 3.4 / 第 5 章风险评估）")
 
 
+def _check_writing_discipline(fill: dict, warns: list) -> None:
+    """v4.7.1 写作纪律告警（东方电气反馈）：四拍挤段 / 3 年趋势三年并排 / pe_history 无第 10 章承载。"""
+    # 四拍各自成段（fill-schema dim-block 四拍结构）：判词/论据/对比/收口挤进同一个 <p> → 提示拆段
+    beats = ("判词：", "论据：", "对比：", "收口：")
+    for name in ("l1_html", "l3_html"):
+        for pm in re.finditer(r"<p[^>]*>(.*?)</p>", fill.get(name) or "", flags=re.S):
+            hits = sum(1 for b in beats if b in pm.group(1))
+            if hits >= 2:
+                warns.append(f"{name} 存在四拍挤段（单段含 {hits} 个拍名）："
+                             f"判词/论据/对比/收口应各自成段（fill-schema dim-block 四拍结构）")
+                break  # 每字段报一次即可
+    # 3 年趋势表只写 起→终（方向词）：三年数字并排反而看不出趋势
+    peers = fill.get("peers_html") or ""
+    if "<table" in peers:
+        yseq = []
+        for tm in re.finditer(r"<th[^>]*>(.*?)</th>", peers, flags=re.S):
+            t = re.sub(r"<[^>]+>", "", tm.group(1)).strip()
+            yseq.append(bool(re.fullmatch(r"20\d{2}年?", t)))
+        stacked = any(len(re.findall(r"20\d{2}\s*[：:]", cdm.group(1))) >= 2
+                      for cdm in re.finditer(r"<td[^>]*>(.*?)</td>", peers, flags=re.S))
+        if any(yseq[i] and yseq[i + 1] and yseq[i + 2] for i in range(len(yseq) - 2)) or stacked:
+            warns.append("3 年趋势表疑似三年数字并排：应写「起→终（方向词）」"
+                         "（如 8.0→30.8（大升），方向词按指标语义着色），见 fill-schema 趋势表规则")
+    # pe_history 图已挂第 10 章（v4.7.1）：cycle_html 缺失 → 整章删除，图无处显示
+    if (fill.get("pe_history") or {}).get("hist_lo") is not None and not (fill.get("cycle_html") or "").strip():
+        warns.append("pe_history 已填但 cycle_html 缺失：PE 历史带图挂第 10 章，整章被删后图不显示"
+                     "——v4.7.1 起四类分型（周期/稳健成长/稳定价值/困境反转）应写第 10 章，或删除 pe_history")
+
+
 def _check_prev_fields(fill: dict, warns: list) -> None:
     """prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）。"""
     # prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）
@@ -1632,6 +1690,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_timing_table_cells(fill, warns)
     _check_dim_blocks(fill, warns)
     _check_internal_codes(fill, warns)
+    _check_writing_discipline(fill, warns)
     _check_prev_fields(fill, warns)
     _check_misc_required(fill, warns)
     _check_quote_present(fill, warns)

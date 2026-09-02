@@ -7,7 +7,7 @@ param([switch]$Go)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $env:USERPROFILE '.agents\skills\stock-deep-analysis'
-$xd = @('.git', '__pycache__', 'artifacts', '.backup-pre-v48')
+$xd = @('.git', '__pycache__', 'artifacts', '.backup-pre-v48', 'handoffs')
 
 if (-not $Go) {
     robocopy $repo $dest /MIR /L /XD $xd /NJH | Out-Null

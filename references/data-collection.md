@@ -31,11 +31,15 @@ python "<技能目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[pe
 cmd 下用 `dir /s`），修正路径后重跑。**禁止因路径问题放弃脚本**——放弃脚本 = 触发
 全套低效降级链。
 
-脚本一次输出：E1 行情估值（A股附 PE/PB 5年带与当前分位、下次财报披露计划日）、
+脚本一次输出：E1 行情估值（A股附 PE/PB 5年带与当前分位、PE P25-P75 分位区、下次财报披露计划日、
+**时机素材一行**：现价/MA60/MA120/52 周高低，全部日线序列计算并随 `--out` 落盘 `timing` 字段——
+**11 章时机判定小表的技术面信号一律取自落盘 `timing`，禁止手估**（神华假 MA60 同源修复））、
 E3 五年财务年表+红旗四项判定（三态：✓真通过/✗真恶化/△数据不足）+ 有息负债与短债覆盖行、
 审计意见 tushare 自动填（供 L4 红灯 a 判定）、
-E2 月线区间、E4 股东户数、业绩预告/快报、1E 治理包（质押/增减持/回购）、
-E5 一致预期+目标价、E6 主营构成，含全部 peer。
+E2 月线区间、E4 股东户数（回填 `holders` 图字段）、业绩预告/快报、1E 治理包（质押/增减持/回购）、
+E5 一致预期+目标价（目标价区间回填 `consensus` 图字段）、
+E6 主营构成（含**毛利额与毛利占比**，回填 `segments` 图字段；分部净利润无公开披露，口径=毛利；
+同收入同成本的重复条目脚本已去重），含全部 peer。
 **禁止给 em_fetch 加 `| tail` / `| head` 等截断管道**（新华保险实证：`| tail -120` 砍掉头部，
 而输出头部正是目标公司本体数据，尾部只剩同业——截断=丢本体留同业，还得重跑一遍）。
 输出本就是紧凑摘要（约 3.5KB/股），直接进上下文是安全的。
@@ -189,7 +193,7 @@ peer <3 只时主会话直接跑，不必委派。其余委派仅允许边界清
 
 - [ ] Current price, market cap, PE(TTM), PB — **E1**
 - [ ] Last 3-5 years: revenue, net profit, ROE, gross margin, net margin, debt ratio, FCF, capex, dividend — **E3**
-- [ ] Core business breakdown (segment revenue %), industry chain position — **E6** + 定性搜索
+- [ ] Core business breakdown（业务构成图 `segments` 字段：E6 回填收入/收入占比/毛利率/毛利额/毛利占比，利润口径=毛利，禁编造分部净利） — **E6**；industry chain position（产业链图 `industry_chain` 字段：只列行业不列企业，上游/下游各 1-6 个） — 定性搜索（年报「经营情况讨论」/妙想 mx_finance_search_notice/10jqka operate.html，无 API）
 - [ ] Competitive moat analysis (cost structure, scale, tech, policy, brand) — 定性搜索（E3 的研发占比/毛利率作辅证）
 - [ ] Major projects in pipeline (approval status, timeline, capex, capacity contribution) — 定性搜索
 - [ ] 3-5 key peers with comparable metrics — **E1+E3 对每个 peer 并行调用**（em_fetch.py --peers）

@@ -419,8 +419,12 @@ def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
             if cur is None:
                 return None
             return round(bisect_right(vals, cur) / len(vals) * 100)
-        return {"n": len(pes), "years": years,
+        # 分位点（v4.8：供 pe_history 图 P25-P75 分位区；索引取 (n-1)*q 整部位）
+        n = len(pes)
+        pe_p25, pe_p75 = pes[int((n - 1) * 0.25)], pes[int((n - 1) * 0.75)]
+        return {"n": n, "years": years,
                 "pe_min": pes[0], "pe_max": pes[-1], "pe_cur": latest_pe, "pe_pct": pctile(pes, latest_pe),
+                "pe_p25": pe_p25, "pe_p75": pe_p75,
                 "pb_min": pbs[0], "pb_max": pbs[-1], "pb_cur": latest_pb, "pb_pct": pctile(pbs, latest_pb)}
     except Exception:
         return None
@@ -1090,8 +1094,41 @@ def _em_mainop(secucode: str) -> list:
         return []
 
 
+def _mainop_norm_em(rows: list) -> list:
+    """东财 E6 原始行补 GROSS_PROFIT（毛利额，元）：优先原始字段 MAIN_BUSINESS_RPOFIT，
+    缺失用 收入×毛利率 折算（GROSS_RPOFIT_RATIO 为小数口径，见 data-sources.md E6 节）。
+    同收入同毛利率的重复条目（同源改名残留）一并去重，留先发行。"""
+    seen = set()
+    deduped = []
+    for r in rows:
+        sig = (r.get("MAIN_BUSINESS_INCOME"), r.get("GROSS_RPOFIT_RATIO"))
+        if sig in seen:
+            continue
+        seen.add(sig)
+        deduped.append(r)
+    rows = deduped
+    for r in rows:
+        gp = r.get("MAIN_BUSINESS_RPOFIT")
+        if gp is None:
+            inc, gpr = r.get("MAIN_BUSINESS_INCOME"), r.get("GROSS_RPOFIT_RATIO")
+            if inc is not None and gpr is not None:
+                try:
+                    r["GROSS_PROFIT"] = float(inc) * float(gpr)
+                except (TypeError, ValueError):
+                    pass
+            continue
+        try:
+            r["GROSS_PROFIT"] = float(gp)
+        except (TypeError, ValueError):
+            pass
+    return rows
+
+
 def fetch_mainop(secucode: str) -> list:
-    """E6 主营构成（东财键名同构）。tushare fina_mainbz 优先（产品P→行业D次序），东财兜底。"""
+    """E6 主营构成（东财键名同构）。tushare fina_mainbz 优先（产品P→行业D次序），东财兜底。
+    v4.8 起各分部带 GROSS_PROFIT（毛利额，元）：tushare 取 bz_profit（缺则 收入−成本），
+    东财取 MAIN_BUSINESS_RPOFIT（缺则 收入×毛利率 折算）。分部净利润无公开数据源，
+    业务构成图的利润口径一律为毛利。"""
     code, _ = secucode.split(".")
     try:
         ts = to_ts_code(code)
@@ -1108,11 +1145,29 @@ def fetch_mainop(secucode: str) -> list:
             raise RuntimeError("fina_mainbz 空返回")
         latest_ed = max(r.get("end_date") or "" for r in rows)
         items = [r for r in rows if r.get("end_date") == latest_ed]
+        # 源头重复条目去重（2026-09-02 宝丰实证：fina_mainbz 会同时返回「烯烃产品」与「烯烃」两行，
+        # 收入/成本完全一致——同源改名跟踪残留。签名=（收入,成本）全等即同一条业务线，留先发行）
+        seen_sig, deduped = set(), []
+        for r in items:
+            sig = (r.get("bz_sales"), r.get("bz_cost"))
+            if sig in seen_sig:
+                continue
+            seen_sig.add(sig)
+            deduped.append(r)
+        if len(deduped) < len(items):
+            print(f"注：fina_mainbz 重复条目已去重 {len(items)}→{len(deduped)}"
+                  f"（同收入同成本，同源改名残留）", file=sys.stderr)
+        items = deduped
         total = sum(float(r["bz_sales"]) for r in items if r.get("bz_sales")) or None
         out = []
         for r in items:
             sales = float(r["bz_sales"]) if r.get("bz_sales") else None
             cost = float(r["bz_cost"]) if r.get("bz_cost") else None
+            gp = None
+            if r.get("bz_profit") is not None:
+                gp = float(r["bz_profit"])
+            elif sales is not None and cost is not None:
+                gp = sales - cost
             out.append({
                 "REPORT_DATE": _fmt_date(latest_ed),
                 "REPORT_NAME": f"{latest_ed[:4]}年报" if latest_ed.endswith("1231") else latest_ed,
@@ -1121,10 +1176,11 @@ def fetch_mainop(secucode: str) -> list:
                 "MAIN_BUSINESS_INCOME": sales,
                 "MBI_RATIO": (sales / total if (sales and total) else None),
                 "GROSS_RPOFIT_RATIO": ((sales - cost) / sales if (sales and cost is not None) else None),
+                "GROSS_PROFIT": gp,
             })
         return out
     except Exception:
-        return _em_mainop(secucode)
+        return _mainop_norm_em(_em_mainop(secucode))
 
 
 # ---------------- 审计意见（供 L4 红灯 a 项判定，不计入 1D 红旗） ----------------
@@ -1190,6 +1246,36 @@ def fetch_div_yield(code: str, price: float):
         per_share = sum(by_ex.values())
         items = sorted(by_ex.items(), reverse=True)
         return per_share, per_share / price * 100, items
+    except Exception:
+        return None
+
+
+def fetch_timing_material(code: str, is_hk: bool = False):
+    """时机分素材（v4.8，技术面六信号数据源唯一化——神华事故里假 MA60/假月线的产生环节
+    正是「模型手拼」，与 quote 防伪同源）：现价/MA60/MA120/52 周高低，全部出自日线序列
+    （A股 tushare daily 近 430 天；港股复用 hk_daily 缓存）。失败返回 None。"""
+    try:
+        if is_hk:
+            rows = _hk_daily_series(f"{code}.HK")
+            closes = [float(r["close"]) for r in rows
+                      if r.get("close") is not None and r.get("trade_date")]
+        else:
+            end = date.today().strftime("%Y%m%d")
+            beg = (date.today() - timedelta(days=430)).strftime("%Y%m%d")
+            rows = ts_call("daily", {"ts_code": to_ts_code(code), "start_date": beg, "end_date": end},
+                           fields="ts_code,trade_date,close")
+            rows = sorted((r for r in rows if r.get("trade_date") and r.get("close") is not None),
+                          key=lambda x: x["trade_date"])
+            closes = [float(r["close"]) for r in rows]
+        if len(closes) < 60:
+            return None
+
+        def _ma(n):
+            return round(sum(closes[-n:]) / n, 2) if len(closes) >= n else None
+        win = closes[-250:]  # 52 周 ≈ 250 个交易日
+        return {"price": round(closes[-1], 2), "ma60": _ma(60), "ma120": _ma(120),
+                "high_52w": round(max(win), 2), "low_52w": round(min(win), 2),
+                "n": len(closes)}
     except Exception:
         return None
 
@@ -1327,9 +1413,13 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
             if band:
                 _E1_CAPTURE["pe_band"] = [band["pe_min"], band["pe_max"]]
                 _E1_CAPTURE["pe_pct"] = band["pe_pct"]
+                _E1_CAPTURE["pe_p25"] = band.get("pe_p25")
+                _E1_CAPTURE["pe_p75"] = band.get("pe_p75")
                 out.append(f"PE(TTM) {band['years']}年带: {band['pe_min']:.1f}~{band['pe_max']:.1f}x，"
                            f"当前分位{band['pe_pct']}% | PB 带: {band['pb_min']:.2f}~{band['pb_max']:.2f}x，"
-                           f"当前分位{band['pb_pct']}%（n={band['n']}交易日）\n")
+                           f"当前分位{band['pb_pct']}%（n={band['n']}交易日）\n"
+                           f"PE 分位区 P25-P75: {band.get('pe_p25'):.1f}~{band.get('pe_p75'):.1f}x"
+                           f"（pe_history 图分位段直接引用）\n")
             else:
                 out.append("PE/PB 历史分位带: [未获取到（tushare daily_basic 无数据或样本<20）]"
                            "——请降级：EM 月线×总股本÷TTM净利手工推算分位，或妙想 MCP 直查；"
@@ -1362,6 +1452,17 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
             else:
                 out.append("TTM股息率: [近12个月无实施分红记录或 tushare dividend 失败；"
                            "若公司确有分红请手工核查并标注路径]\n")
+        # 时机分素材（v4.8）：现价/MA60/MA120/52周高低出自日线序列，随 --out 落盘，
+        # fill 时机判定小表的技术面信号一律取自本行，禁止手估（神华假 MA60 同源修复）
+        tm = fetch_timing_material(pure, is_hk)
+        if tm:
+            _E1_CAPTURE["timing"] = tm
+            out.append(f"时机素材: 现价{tm['price']} | MA60 {tm.get('ma60')} / "
+                       f"MA120 {tm.get('ma120') or '—'} | 52周高低 {tm['high_52w']}/{tm['low_52w']}"
+                       f"（{tm['n']}个交易日，日线序列计算——技术面信号一律取自本行，禁止手估）\n")
+        else:
+            out.append("时机素材: [未获取到（日线序列失败或不足60个交易日），"
+                       "技术面信号须注明手工口径与来源]\n")
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
     return out
@@ -1623,13 +1724,19 @@ def _sec_e6(secucode: str, is_hk: bool) -> list:
             latest_date = items_all[0].get("REPORT_DATE")
             items = [r for r in items_all if r.get("REPORT_DATE") == latest_date][:8]
             latest = (items_all[0].get("REPORT_NAME") or "")
+            # 毛利占比分母：各分部毛利额合计（v4.8 业务构成图用；分部净利无公开数据，口径=毛利）
+            gp_total = sum(float(r["GROSS_PROFIT"]) for r in items if r.get("GROSS_PROFIT")) or None
             out.append(f"## E6 主营构成（{latest}，按{'产品' if typed.get('2') else '行业/地区'}）")
             for r in items:
                 ratio = r.get("MBI_RATIO")
                 gpr = r.get("GROSS_RPOFIT_RATIO")
+                gp = r.get("GROSS_PROFIT")
+                gp_pct = (float(gp) / gp_total * 100) if (gp is not None and gp_total) else None
                 out.append(f"{r.get('ITEM_NAME')}: 收入{yi(r.get('MAIN_BUSINESS_INCOME'))}亿 "
                            f"占比{ratio is not None and f'{ratio*100:.1f}%' or '—'} "
-                           f"毛利率{gpr is not None and f'{gpr*100:.1f}%' or '—'}")
+                           f"毛利率{gpr is not None and f'{gpr*100:.1f}%' or '—'} "
+                           f"毛利{yi(gp) if gp is not None else '—'}亿"
+                           f"{f'（毛利占比{gp_pct:.1f}%）' if gp_pct is not None else ''}")
             out.append("")
         elif is_hk:
             out.append("## E6 主营构成\n[港股不支持（tushare/东财均无港股主营构成接口），定性搜索补]\n")

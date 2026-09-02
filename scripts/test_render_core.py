@@ -372,6 +372,176 @@ def test_writing_discipline_warns():
     assert "cycle_html 缺失" not in capture(fill_ok), "cycle_html 已填不应告警"
 
 
+def test_segments_chain_charts():
+    """v4.8 业务构成图（3.1 锚点 <!--SEGMENTS-->）与产业链图（3.2 锚点 <!--CHAIN-->）：
+    锚点在位→原位替换；锚点缺失→追加章末+告警；字段缺失→锚点静默清除；占比和偏离→告警。"""
+    import contextlib
+    import io
+    extra = {
+        "segments": {"period": "2025年报", "by": "按产品", "items": [
+            {"name": "烯烃产品", "revenue": 156.2, "rev_pct": 48.1, "gross_margin": 36.4,
+             "gross_profit": 56.8, "gp_pct": 62.0},
+            {"name": "焦化产品", "revenue": 98.5, "rev_pct": 30.3, "gross_margin": 22.1,
+             "gross_profit": 21.8, "gp_pct": 23.8},
+            {"name": "其他", "revenue": 70.0, "rev_pct": 21.6, "gross_margin": 18.5,
+             "gross_profit": 13.0, "gp_pct": 14.2}]},
+        "industry_chain": {"upstream": ["煤炭开采", "电力"], "self_note": "煤制烯烃一体化",
+                           "downstream": ["聚烯烃加工", "包装", "家电"]},
+    }
+    long_text = "该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。"
+    dims = [f'<div class="dim-block"><p>{long_text}</p></div>' for _ in range(6)]
+    # 锚点在位：分别钉在 3.1 / 3.2 维度块后
+    dims[0] += "<!--SEGMENTS-->"
+    dims[1] += "<!--CHAIN-->"
+    fill = minimal_fill(l1_html="".join(dims), **extra)
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(fill, fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    assert 'aria-label="业务构成"' in html, "业务构成图应生成"
+    assert 'aria-label="产业链位置"' in html, "产业链图应生成"
+    assert "<!--SEGMENTS-->" not in html and "<!--CHAIN-->" not in html, "锚点必须被替换"
+    assert "毛利 56.8亿（占 62%）" in html, "右列应标注毛利与毛利占比（_fmt 为 %g，62.0→62）"
+    assert "利润口径为毛利" in html, "毛利口径注记必须在位（分部净利无公开披露）"
+    assert "上游 · 供给端" in html and "煤制烯烃一体化" in html, "产业链三栏与公司定位注应渲染"
+    # 锚点缺失但字段已填 → 追加第 3 章末尾 + stderr 告警
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        l1_no_anchor = "".join(f'<div class="dim-block"><p>{long_text}</p></div>' for _ in range(6))
+        fill2 = minimal_fill(l1_html=l1_no_anchor, **extra)
+        html2 = R._fill_template(R._build_repl_map(
+            fill2, "元", R.compute_valuation(fill2), R.compute_scores(fill2), 5.5,
+            R.compute_valuation_score(R.compute_valuation(fill2), fill2["valuation_inputs"]),
+            None, "", fill2["date"], fill2["subtitle"], "10-12", fill2["peers_html"],
+            R.build_scenario_spectrum(fill2, R.compute_valuation(fill2)),
+            R.build_scenario_block(R.compute_valuation(fill2), "元"),
+            R.build_peers_plot(fill2)))
+    assert "缺 <!--SEGMENTS--> 锚点" in buf.getvalue(), "锚点缺失应告警"
+    assert 'aria-label="业务构成"' in html2, "锚点缺失时图应追加第 3 章末尾"
+    # 字段缺失但锚点在 → 锚点静默清除、图不生成
+    fill3 = minimal_fill(l1_html="".join(dims))  # dims 带锚点，但无 segments/industry_chain
+    html3 = R._fill_template(R._build_repl_map(
+        fill3, "元", R.compute_valuation(fill3), R.compute_scores(fill3), 5.5,
+        R.compute_valuation_score(R.compute_valuation(fill3), fill3["valuation_inputs"]),
+        None, "", fill3["date"], fill3["subtitle"], "10-12", fill3["peers_html"],
+        R.build_scenario_spectrum(fill3, R.compute_valuation(fill3)),
+        R.build_scenario_block(R.compute_valuation(fill3), "元"),
+        R.build_peers_plot(fill3)))
+    assert 'aria-label="业务构成"' not in html3, "字段未填图不应生成"
+    assert "<!--SEGMENTS-->" not in html3 and "<!--CHAIN-->" not in html3, "空锚点应静默清除"
+    # 占比和偏离 100% → 告警
+    bad = minimal_fill(segments={"items": [{"name": "A", "rev_pct": 40}, {"name": "B", "rev_pct": 40}]})
+    buf2 = io.StringIO()
+    with contextlib.redirect_stderr(buf2):
+        R.validate_content(bad, R.compute_valuation(bad))
+    assert "偏离 100%" in buf2.getvalue(), "占比和偏离 100% 应告警"
+
+
+def test_price_history_and_holders():
+    """v4.8 ①发丝图挂第 10 章（历史带之后、时段表之前）；②户数趋势挂第 11 章（时机判定后、
+    三轨判定卡之前）；缺字段时两图整块消失。"""
+    months = []
+    for y in (2023, 2024, 2025):
+        for m in range(1, 13):
+            months.append({"m": f"{y}-{m:02d}", "close": 10 + (y - 2023) * 2 + m * 0.1,
+                           "pe": 12 + m * 0.3})
+    extra = {
+        "price_history": {"label": "近3年", "series": months},
+        "holders": [{"date": "2025-03-31", "num": 188153, "chg": None},
+                    {"date": "2025-06-30", "num": 175200, "chg": -6.9},
+                    {"date": "2025-09-30", "num": 160800, "chg": -8.2},
+                    {"date": "2025-12-31", "num": 152300, "chg": -5.3}],
+        "cycle_html": '<table><tr><td>景气顶</td></tr></table>'
+                      '<span class="source">阶段拆解：E2 月线</span>',
+    }
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(**extra), fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    assert 'aria-label="股价与PE历史走势"' in html, "发丝图应生成"
+    assert 'aria-label="股东户数趋势"' in html, "户数趋势图应生成"
+    # 发丝图在第 10 章内；户数图在第 11 章内、三轨判定卡之前
+    assert html.find('id="s10"') < html.find('aria-label="股价与PE历史走势"'), "发丝图应在第 10 章"
+    s11_pos = html.find('id="s11"')
+    holders_pos = html.find('aria-label="股东户数趋势"')
+    card_pos = html.find("三轨判定与仓位结论")
+    assert s11_pos < holders_pos < card_pos, "户数图应在第 11 章内、三轨判定卡之前"
+    assert "188,153" in html, "户数应带千位符"
+    # 缺字段：两图整块消失
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(), fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html2 = open(out, encoding="utf-8").read()
+    assert 'aria-label="股价与PE历史走势"' not in html2, "缺字段发丝图应消失"
+    assert 'aria-label="股东户数趋势"' not in html2, "缺字段户数图应消失"
+
+
+def test_consensus_band_and_pe_iqr():
+    """v4.8 ③走廊图叠加卖方一致目标价带（consensus）；④PE 历史带 P25-P75 分位段。"""
+    fill = minimal_fill(consensus={"lo": 9, "hi": 13})
+    html = R.build_scenario_spectrum(fill, R.compute_valuation(fill))
+    assert "卖方目标价" in html and "0.13" in html, "走廊图应渲染卖方目标价灰带"
+    html_no = R.build_scenario_spectrum(minimal_fill(), R.compute_valuation(minimal_fill()))
+    assert "卖方目标价" not in html_no, "缺 consensus 字段灰带不应出现"
+    ph = {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年", "p25": 18.5, "p75": 45.6}
+    fill2 = minimal_fill(pe_history=ph)
+    html2 = R.build_pe_band(fill2)
+    assert "P25" in html2 and "18.5–45.6" in html2, "PE 带应渲染 P25-P75 分位段"
+    ph2 = {"hist_lo": 13.7, "hist_hi": 83.2}
+    html3 = R.build_pe_band(minimal_fill(pe_history=ph2))
+    assert "P25" not in html3, "缺 p25/p75 分位段不应出现"
+
+
+def test_quote_four_piece():
+    """v4.8 防伪链四件套扩展：valuation_inputs.pe_ttm 偏差>1% 拒；pe_band 完全越界历史带拒；
+    risk_free 偏差>0.3pct 告警不拒；港股 div_yield 不比对。"""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as d:
+        ref = os.path.join(d, "_em_quote.json")
+        with open(ref, "w", encoding="utf-8") as fp:
+            json.dump({"price": 10.0, "pe_ttm": 11.0, "pe_band": [8.0, 20.0],
+                       "risk_free": 1.7, "div_yield": 2.0, "market": "A股"}, fp)
+        q = {"source_file": ref, "date": "2026-08-27"}
+        # 一致 → 过
+        f = minimal_fill(quote=q)
+        R.validate_content(f, R.compute_valuation(f))
+        # valuation_inputs.pe_ttm 偏差 9% → 拒
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["pe_ttm"] = 12.0
+        _expect_valueerror(f, "valuation_inputs.pe_ttm 与落盘值偏差>1%")
+        # pe_band [30,40] 完全落在历史带 [8,20] 之外 → 拒
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["pe_band"] = [30, 40]
+        _expect_valueerror(f, "pe_band 完全越界历史带")
+        # pe_band 部分重叠 → 过
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["pe_band"] = [15, 25]
+        R.validate_content(f, R.compute_valuation(f))
+        # risk_free 偏差 0.8pct → 告警不拒
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["risk_free"] = 2.5
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(f, R.compute_valuation(f))  # 不拒
+        assert "risk_free" in buf.getvalue() and ">0.3pct" in buf.getvalue(), "risk_free 偏差应告警"
+        # 港股 div_yield 偏差不做机械比对（税后折算差异天然大）
+        with open(ref, "w", encoding="utf-8") as fp:
+            json.dump({"price": 10.0, "pe_ttm": 11.0, "market": "港股"}, fp)
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["div_yield"] = 3.5
+        buf2 = io.StringIO()
+        with contextlib.redirect_stderr(buf2):
+            R.validate_content(f, R.compute_valuation(f))
+        assert "div_yield" not in buf2.getvalue(), "港股 div_yield 不应机械比对"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

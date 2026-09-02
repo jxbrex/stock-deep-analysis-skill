@@ -73,7 +73,9 @@ https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f44,f45,f4
 | f168 | 换手率% | ÷100 |
 | f169 / f170 | 涨跌额 / 涨跌幅% | ÷100 |
 
-**覆盖清单项**：当前股价、市值、PE(TTM)、PB（Checklist #1）
+**覆盖清单项**：当前股价、市值、PE(TTM)、PB（Checklist #1）；
+`--out` 落盘另含 pe_band/pe_pct/pe_p25/pe_p75（分位带）、risk_free、div_yield、
+**timing**（现价/MA60/MA120/52 周高低，日线序列计算——时机判定小表技术面信号的唯一合法来源）
 
 ---
 
@@ -188,7 +190,11 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 | MAIN_BUSINESS_INCOME | 分部收入（元） |
 | **MBI_RATIO** | 收入占比（**小数**，0.3177 = 31.77%） |
 | **GROSS_RPOFIT_RATIO** | 分部毛利率（**小数**，0.364 = 36.4%） |
+| GROSS_PROFIT（脚本归一） | 分部毛利额（元）：tushare 路径取 `bz_profit`（缺则 收入−成本）；东财路径取 MAIN_BUSINESS_RPOFIT（缺则 收入×毛利率 折算）。**分部净利润无公开数据，业务构成图利润口径=毛利** |
 | REPORT_NAME / REPORT_DATE | 报告期（同一股票可能多期混排，需按最新 REPORT_DATE 过滤） |
+
+注：tushare `fina_mainbz` 偶发同源改名重复条目（「烯烃产品」与「烯烃」两行收入/成本完全一致，
+2026-09-02 宝丰实证）——脚本已按（收入,成本）签名去重，留先发行。
 
 **覆盖清单项**：业务分部收入占比（Checklist #3）
 

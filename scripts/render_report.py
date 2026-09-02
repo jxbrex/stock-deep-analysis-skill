@@ -70,7 +70,7 @@ LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.7"
+RENDERER_VERSION = "v4.8"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -546,6 +546,14 @@ def _esc(s) -> str:
             .replace('"', "&quot;"))
 
 
+def _fmt_amt(v) -> str:
+    """亿元金额标签：≥1000 带千位符，去尾零（1,156.0 → 1,156；56.8 → 56.8）。v4.8 业务构成图用。"""
+    if v is None:
+        return "—"
+    s = f"{float(v):,.1f}"
+    return s[:-2] if s.endswith(".0") else s
+
+
 _SCENARIO_COLORS = {"pess": "#c75b5b", "base": "#c08a2e", "opt": "#6ba86b"}
 _SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
 
@@ -624,8 +632,14 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     ROW_H, BAR_H = 52, 28
     AXIS_PAD = 46                   # 末行条到刻度标签的纵向空间
     H = T + len(cols) * ROW_H + AXIS_PAD
-    lo_d, hi_d = _pad_domain(min([c["low"] for c in cols] + [price]),
-                             max([c["high"] for c in cols] + [price]), 0.06)
+    # 卖方一致目标价带（v4.8，可选 fill["consensus"]={"lo":…,"hi":…}，E5 数据）：
+    # 灰带垫在情景区间条下方，「卖方怎么看 vs 我们怎么算」一眼对照
+    cons = fill.get("consensus") or {}
+    c_lo, c_hi = _num(cons.get("lo")), _num(cons.get("hi"))
+    cons_ok = c_lo is not None and c_hi is not None and c_hi > c_lo
+    dom_lo = [c["low"] for c in cols] + [price] + ([c_lo] if cons_ok else [])
+    dom_hi = [c["high"] for c in cols] + [price] + ([c_hi] if cons_ok else [])
+    lo_d, hi_d = _pad_domain(min(dom_lo), max(dom_hi), 0.06)
     X = _lin_map(lo_d, hi_d, L, W - R)
 
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
@@ -638,6 +652,21 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
         parts.append(f'<text x="{gx:.1f}" y="{axis_y + 17}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}</text>')
     parts.append(f'<line x1="{L}" y1="{axis_y}" x2="{W - R}" y2="{axis_y}" stroke="#e0d7c3" stroke-width="1.2"/>')
     parts.append(f'<text x="4" y="{axis_y + 17}" font-size="11" fill="#8a8375">单位：{_esc(cur)}</text>')
+    # 卖方一致目标价灰带（垫在情景条下方）+ 轴下标签
+    if cons_ok:
+        x1, x2 = X(c_lo), X(c_hi)
+        parts.append(f'<rect x="{x1:.1f}" y="{T - 10}" width="{x2 - x1:.1f}" '
+                     f'height="{axis_y - (T - 10):.1f}" fill="#8a8375" fill-opacity="0.13"/>')
+        clabel = f'卖方目标价 {_fmt_price(c_lo)}–{_fmt_price(c_hi)}'
+        cw = _text_w(clabel, 10.5)
+        cx_c = (x1 + x2) / 2
+        c_anchor, c_tx = "middle", cx_c
+        if cx_c + cw / 2 > W - 4:
+            c_anchor, c_tx = "end", W - 4
+        elif cx_c - cw / 2 < L:
+            c_anchor, c_tx = "start", L
+        parts.append(f'<text x="{c_tx:.1f}" y="{axis_y + 32}" text-anchor="{c_anchor}" '
+                     f'font-size="10.5" fill="#8a8375">{clabel}</text>')
     # 现价竖虚线 + 顶部标签（近边缘时改对齐防溢出）
     px = X(price)
     parts.append(f'<line x1="{px:.1f}" y1="{T - 12}" x2="{px:.1f}" y2="{axis_y}" '
@@ -676,7 +705,8 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
                      f'font-weight="700" fill="{c["color"]}">{vlabel}</text>')
     parts.append('</svg></div>')
     parts.append('<span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，'
-                 '白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅</span>')
+                 '白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅'
+                 + ('；灰带=卖方一致目标价区间（E5 研报）' if cons_ok else '') + '</span>')
     return "".join(parts)
 
 
@@ -1152,6 +1182,9 @@ def build_pe_band(fill: dict) -> str:
     band_hi = _num(band[1]) if len(band) >= 2 else None
     if None in (hist_lo, hist_hi, cur, band_lo, band_hi) or hist_hi <= hist_lo or band_hi < band_lo:
         return ""
+    # 分位区（v4.8，可选 pe_history.p25/p75，em_fetch E1 分位带直接回填）：带内深沙段
+    p25, p75 = _num(ph.get("p25")), _num(ph.get("p75"))
+    iq_ok = p25 is not None and p75 is not None and hist_lo <= p25 < p75 <= hist_hi
     lo_d, hi_d = _pad_domain(min(hist_lo, band_lo, cur), max(hist_hi, band_hi, cur), 0.04, floor=0.0)
     W, H, L, R = 1000, 196, 64, 64
     X = _lin_map(lo_d, hi_d, L, W - R)
@@ -1170,8 +1203,13 @@ def build_pe_band(fill: dict) -> str:
     xh_lo, xh_hi = X(hist_lo), X(hist_hi)
     parts.append(f'<rect x="{xh_lo:.1f}" y="{cy}" width="{xh_hi - xh_lo:.1f}" height="{BH}" rx="8" '
                  f'fill="#efe9db" stroke="#e0d7c3"/>')
+    # P25–P75 分位区（深沙段，v4.8）
+    if iq_ok:
+        parts.append(f'<rect x="{X(p25):.1f}" y="{cy}" width="{X(p75) - X(p25):.1f}" height="{BH}" '
+                     f'fill="#ddd3bd"/>')
+    iq_note = f'（P25–P75 {_fmt(p25)}–{_fmt(p75)}x）' if iq_ok else ''
     parts.append(f'<text x="{xh_lo:.1f}" y="{cy - 40}" font-size="11" fill="#8a8375">'
-                 f'{_esc(plabel)} {_esc(mlabel)} 区间 {_fmt(hist_lo)}–{_fmt(hist_hi)}x</text>')
+                 f'{_esc(plabel)} {_esc(mlabel)} 区间 {_fmt(hist_lo)}–{_fmt(hist_hi)}x{iq_note}</text>')
     # 合理带（钢蓝实心段；标签放得下就带内白字，否则带下灰字）
     xb_lo, xb_hi = X(band_lo), X(band_hi)
     band_label = f'合理带 {_fmt(band_lo)}–{_fmt(band_hi)}x'
@@ -1218,7 +1256,304 @@ def build_pe_band(fill: dict) -> str:
                      f'fill="#57524a">{_esc(mtext)}</text>')
     parts.append('</svg></div>')
     parts.append(f'<span class="source">{_esc(mlabel)} 历史带（脚本按 pe_history + valuation_inputs 生成）：'
-                 f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点 PE；三者同一口径</span>')
+                 f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点 PE；三者同一口径'
+                 + ('；深沙段=P25–P75 分位区（em_fetch E1 分位带回填）' if iq_ok else '') + '</span>')
+    return "".join(parts)
+
+
+def build_segments_plot(fill: dict) -> str:
+    """03 公司本质·业务构成横条图（fill["segments"] 可选字段，锚点 <!--SEGMENTS--> 挂 3.1）：
+    每分部一行，条长=收入占比（0-100% 定域），第一条钢蓝=第一大业务、其余暖灰（明度即数据）；
+    条端=占比，右列=收入·毛利率·毛利及毛利占比。
+    分部净利润无公开披露（tushare/东财/妙想均只到毛利）——利润口径一律为毛利，图注明示。
+    segments: {"period":"2025年报","by":"按产品",
+               "items":[{"name":"烯烃产品","revenue":156.2,"rev_pct":48.1,
+                         "gross_margin":36.4,"gross_profit":56.8,"gp_pct":62.0}, ...]}
+    （金额单位=亿元；rev_pct/gross_margin/gp_pct 为百分数；name+rev_pct 必填，其余可省。
+    有效条目 <2 → 返回空串，静默跳过）"""
+    seg = fill.get("segments") or {}
+    items = []
+    for it in seg.get("items") or []:
+        name = str(it.get("name") or "").strip()
+        rp = _num(it.get("rev_pct"))
+        if not name or rp is None:
+            continue
+        items.append({"name": name, "rev_pct": rp,
+                      "revenue": _num(it.get("revenue")),
+                      "gross_margin": _num(it.get("gross_margin")),
+                      "gross_profit": _num(it.get("gross_profit")),
+                      "gp_pct": _num(it.get("gp_pct"))})
+    if len(items) < 2:
+        return ""
+    items.sort(key=lambda r: -r["rev_pct"])  # 第一大业务置顶
+
+    W = 1000
+    NL, BAR_A, BAR_B = 190, 200, 580   # 名称列右缘 / 条形起点（0%）/ 条形终点（100%）
+    T, ROW_H, BAR_H = 30, 40, 20
+    H = T + len(items) * ROW_H + 34
+    X = _lin_map(0, 100, BAR_A, BAR_B)
+    period = str(seg.get("period") or "").strip()
+    by = str(seg.get("by") or "").strip()
+    tag = "业务构成" + (f'（{_esc(period)}{"·" + _esc(by) if by else ""}）' if period or by else "")
+    parts = [f'<span class="section-tag">{tag}</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="业务构成" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
+    for v in _ticks(0, 100, 5):
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="{T - 8}" x2="{gx:.1f}" y2="{H - 28}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{H - 12}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}%</text>')
+    for i, it in enumerate(items):
+        cy = T + i * ROW_H + (ROW_H - BAR_H) / 2
+        color = "#4a6fa5" if i == 0 else "#b3ab93"
+        w = max(X(it["rev_pct"]) - BAR_A, 2)
+        parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{BAR_B - BAR_A}" height="{BAR_H}" rx="5" fill="#efe9db"/>')
+        parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{w:.1f}" height="{BAR_H}" rx="5" fill="{color}"/>')
+        parts.append(f'<text x="{NL}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12" '
+                     f'fill="#3a362e">{_esc(it["name"])}</text>')
+        parts.append(f'<text x="{BAR_A + w + 7:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="12" '
+                     f'font-weight="700" fill="{color}">{_fmt(it["rev_pct"])}%</text>')
+        bits = []
+        if it["revenue"] is not None:
+            bits.append(f'收入 {_fmt_amt(it["revenue"])}亿')
+        if it["gross_margin"] is not None:
+            bits.append(f'毛利率 {_fmt(it["gross_margin"])}%')
+        gp = []
+        if it["gross_profit"] is not None:
+            gp.append(_fmt_amt(it["gross_profit"]) + "亿")
+        if it["gp_pct"] is not None:
+            gp.append(f'占 {_fmt(it["gp_pct"])}%')
+        if gp:
+            bits.append("毛利 " + "（".join(gp) + ("）" if len(gp) > 1 else ""))
+        if bits:
+            parts.append(f'<text x="{BAR_B + 16}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="11" '
+                         f'fill="#57524a">{_esc("｜".join(bits))}</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">业务构成（脚本按 segments 字段生成，数据来自 em_fetch E6/年报）：'
+                 '条长=收入占比（0-100% 定域），首条=第一大业务；右列=收入·毛利率·毛利与毛利占比；'
+                 '<strong>利润口径为毛利——分部净利润无公开披露</strong></span>')
+    return "".join(parts)
+
+
+def build_chain_plot(fill: dict) -> str:
+    """03 公司本质·产业链位置图（fill["industry_chain"] 可选字段，锚点 <!--CHAIN--> 挂 3.2）：
+    三栏流向——左=上游行业（供给端），中=本公司（钢蓝卡），右=下游行业（需求端），
+    发丝线=供需关系。只列行业不列企业（上下游玩家众多，列企业反而以偏概全）。
+    industry_chain: {"upstream":["煤炭开采","电力"], "self_note":"煤制烯烃一体化",
+                     "downstream":["聚烯烃加工","包装","家电"]}
+    （上游/下游各 1-6 个、各至少 1 个，否则返回空串静默跳过；单个名称建议 ≤10 字）"""
+    ch = fill.get("industry_chain") or {}
+    ups = [str(x).strip() for x in ch.get("upstream") or [] if str(x).strip()][:6]
+    downs = [str(x).strip() for x in ch.get("downstream") or [] if str(x).strip()][:6]
+    if not ups or not downs:
+        return ""
+    company = str(fill.get("company") or "本公司")
+    note = str(ch.get("self_note") or "").strip()
+
+    W = 1000
+    COL_W = 250                      # 上下游栏宽
+    LX, RX = 30, W - 30 - COL_W      # 左栏 x / 右栏 x
+    MX0, MX1 = 390, 610              # 本公司卡横向范围
+    BOX_H, GAP, TOP = 34, 14, 46
+    rows = max(len(ups), len(downs))
+    H = TOP + rows * (BOX_H + GAP) + 16
+    cy_mid = TOP + rows * (BOX_H + GAP) / 2   # 公司卡纵向中心
+    CARD_H = 64
+
+    parts = ['<span class="section-tag">产业链位置</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="产业链位置" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
+    # 栏目标题
+    parts.append(f'<text x="{LX + COL_W / 2:.0f}" y="26" text-anchor="middle" font-size="12" '
+                 f'font-weight="600" fill="#8a8375">上游 · 供给端</text>')
+    parts.append(f'<text x="{(MX0 + MX1) / 2:.0f}" y="26" text-anchor="middle" font-size="12" '
+                 f'font-weight="600" fill="#8a8375">本公司</text>')
+    parts.append(f'<text x="{RX + COL_W / 2:.0f}" y="26" text-anchor="middle" font-size="12" '
+                 f'font-weight="600" fill="#8a8375">下游 · 需求端</text>')
+
+    def _col(items, x, links_to_left):
+        for i, name in enumerate(items):
+            by = TOP + i * (BOX_H + GAP)
+            parts.append(f'<rect x="{x}" y="{by}" width="{COL_W}" height="{BOX_H}" rx="8" '
+                         f'fill="#efe9db" stroke="#e0d7c3"/>')
+            parts.append(f'<text x="{x + COL_W / 2:.0f}" y="{by + BOX_H / 2 + 4.5:.0f}" '
+                         f'text-anchor="middle" font-size="12" fill="#3a362e">{_esc(name)}</text>')
+            # 供需连线：上游 → 公司卡左缘；公司卡右缘 → 下游
+            if links_to_left:
+                parts.append(f'<path d="M{x + COL_W},{by + BOX_H / 2} L{MX0},{cy_mid:.1f}" '
+                             f'stroke="#b3ab93" stroke-width="1.2" fill="none"/>')
+            else:
+                parts.append(f'<path d="M{MX1},{cy_mid:.1f} L{x},{by + BOX_H / 2}" '
+                             f'stroke="#b3ab93" stroke-width="1.2" fill="none"/>')
+
+    _col(ups, LX, True)
+    _col(downs, RX, False)
+    # 本公司卡（钢蓝实心，双行：公司名 + 定位注）
+    parts.append(f'<rect x="{MX0}" y="{cy_mid - CARD_H / 2:.1f}" width="{MX1 - MX0}" height="{CARD_H}" '
+                 f'rx="10" fill="#4a6fa5"/>')
+    parts.append(f'<text x="{(MX0 + MX1) / 2:.0f}" y="{cy_mid - (6 if note else -4.5):.1f}" '
+                 f'text-anchor="middle" font-size="13" font-weight="700" fill="#fffdf9">'
+                 f'{_esc(company)}</text>')
+    if note:
+        parts.append(f'<text x="{(MX0 + MX1) / 2:.0f}" y="{cy_mid + 16:.1f}" text-anchor="middle" '
+                     f'font-size="10.5" fill="#fffdf9" fill-opacity="0.85">{_esc(note)}</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">产业链位置（脚本按 industry_chain 字段生成，内容来自年报/定性检索）：'
+                 '左=上游行业，右=下游行业，连线=供需关系；只列行业不列企业，不代表全部玩家</span>')
+    return "".join(parts)
+
+
+def _inject_l1_charts(l1_html: str, fill: dict) -> str:
+    """3.1/3.2 图锚点注入（v4.8）：l1_html 里的 <!--SEGMENTS--> / <!--CHAIN--> 注释替换为
+    对应脚本图；锚点缺失但字段已填 → 图追加第 3 章末尾 + 告警；字段未填 → 锚点静默清除。
+    （与第 10 章 {{PE_BAND_HTML}} 裸占位符同款思路：避开模板条件块不支持嵌套的限制，
+    又让模型保留图在维度块内的位置控制权。）"""
+    for anchor, html, field in (("<!--SEGMENTS-->", build_segments_plot(fill), "segments"),
+                                ("<!--CHAIN-->", build_chain_plot(fill), "industry_chain")):
+        if anchor in l1_html:
+            l1_html = l1_html.replace(anchor, html)
+        elif html:
+            l1_html += "\n" + html
+            print(f"⚠️ l1_html 缺 {anchor} 锚点：{field} 图已追加到第 3 章末尾"
+                  f"（建议把锚点放到对应维度块内，3.1=业务构成 / 3.2=产业链位置）", file=sys.stderr)
+    return l1_html
+
+
+def build_price_history(fill: dict) -> str:
+    """10 周期规律·股价/PE 历史发丝图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
+    左轴=月收盘价（深灰发丝），右轴=PE(TTM)（钢蓝发丝，过半点缺 PE 则只画股价），
+    横轴按年 tick，末端标注最新值。概览→明细：垫在历史带之后、手写时段拆解之前。
+    price_history: {"label":"近5年", "series":[{"m":"2021-09","close":12.3,"pe":15.2}, ...]}
+    （旧→新，月频；有效点 <12 → 返回空串，数据太短画不出形态，静默跳过）"""
+    ph = fill.get("price_history") or {}
+    pts = []
+    for p in ph.get("series") or []:
+        m = str(p.get("m") or "").strip()
+        c = _num(p.get("close"))
+        if not m or c is None:
+            continue
+        pts.append({"m": m, "close": c, "pe": _num(p.get("pe"))})
+    if len(pts) < 12:
+        return ""
+    n = len(pts)
+    has_pe = sum(1 for p in pts if p["pe"] is not None) >= max(12, n // 2)
+
+    W, H, L, R, T, B = 1000, 300, 56, 64, 34, 36
+    X = lambda i: L + i / (n - 1) * (W - L - R)
+    closes = [p["close"] for p in pts]
+    lo_c, hi_c = _pad_domain(min(closes), max(closes), 0.08, floor=0.0)
+    Yc = _lin_map(lo_c, hi_c, H - B, T)
+    if has_pe:
+        pes = [p["pe"] for p in pts if p["pe"] is not None]
+        lo_p, hi_p = _pad_domain(min(pes), max(pes), 0.08, floor=0.0)
+        Yp = _lin_map(lo_p, hi_p, H - B, T)
+
+    label = str(ph.get("label") or "").strip()
+    cur = str(fill.get("currency") or "元")
+    # PE 序列同源 E2 月线（价格×股本÷TTM净利），恒为 PE(TTM) 口径，不随 metric_label 换标签
+    parts = [f'<span class="section-tag">股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="股价与PE历史走势" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
+    # 图例（左上）
+    parts.append(f'<line x1="{L}" y1="{T - 12}" x2="{L + 26}" y2="{T - 12}" stroke="#3a362e" stroke-width="1.6"/>')
+    parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="#3a362e">股价（左轴，{_esc(cur)}）</text>')
+    if has_pe:
+        lx2 = L + 32 + _text_w(f"股价（左轴，{cur}）", 11) + 24
+        parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" stroke="#4a6fa5" stroke-width="1.6"/>')
+        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="#4a6fa5">PE(TTM)（右轴）</text>')
+    # 左轴（股价）网格与刻度
+    for v in _ticks(lo_c, hi_c, 5):
+        gy = Yc(v)
+        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="#8a8375">{_fmt(v)}</text>')
+    # 右轴（PE）刻度
+    if has_pe:
+        for v in _ticks(lo_p, hi_p, 5):
+            gy = Yp(v)
+            parts.append(f'<text x="{W - R + 8}" y="{gy + 4:.1f}" font-size="11" fill="#4a6fa5">{_fmt(v)}</text>')
+    # 横轴：按年 tick（每年首个点）
+    seen_years = set()
+    for i, p in enumerate(pts):
+        y = p["m"][:4]
+        if y.isdigit() and y not in seen_years:
+            seen_years.add(y)
+            parts.append(f'<text x="{X(i):.1f}" y="{H - 10}" text-anchor="middle" font-size="11" '
+                         f'fill="#8a8375">{y}</text>')
+    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    # 股价发丝线
+    path = "M" + " L".join(f"{X(i):.1f},{Yc(p['close']):.1f}" for i, p in enumerate(pts))
+    parts.append(f'<path d="{path}" fill="none" stroke="#3a362e" stroke-width="1.3"/>')
+    # PE 发丝线（允许中间缺值：缺值处分段）
+    if has_pe:
+        run = []
+        for i, p in enumerate(pts + [{"pe": None}]):  # 哨兵收尾
+            if p["pe"] is not None:
+                run.append(i)
+            elif run:
+                d = "M" + " L".join(f"{X(j):.1f},{Yp(pts[j]['pe']):.1f}" for j in run)
+                parts.append(f'<path d="{d}" fill="none" stroke="#4a6fa5" stroke-width="1.3"/>')
+                run = []
+    # 末端点与最新值标注
+    parts.append(f'<circle cx="{X(n - 1):.1f}" cy="{Yc(closes[-1]):.1f}" r="3" fill="#3a362e"/>')
+    parts.append(f'<text x="{X(n - 1) - 6:.1f}" y="{Yc(closes[-1]) - 8:.1f}" text-anchor="end" '
+                 f'font-size="11" font-weight="700" fill="#3a362e">{_fmt(closes[-1])}</text>')
+    if has_pe:
+        last_pe = next((p["pe"] for p in reversed(pts) if p["pe"] is not None), None)
+        if last_pe is not None:
+            parts.append(f'<text x="{X(n - 1) - 6:.1f}" y="{Yp(last_pe) + 16:.1f}" text-anchor="end" '
+                         f'font-size="11" font-weight="700" fill="#4a6fa5">{_fmt(last_pe)}x</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
+                 '深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）；双轴各自定标，读交叉不读绝对高度</span>')
+    return "".join(parts)
+
+
+def build_holders_plot(fill: dict) -> str:
+    """11 仓位与时机决策·股东户数趋势（fill["holders"] 可选字段，E4 数据回填）：
+    柱状图，暖灰柱=历史期、钢蓝柱=最新期；柱上=户数（千位符），柱下=截止日与环比——
+    环比按筹码语义着色：户数增=筹码分散=红，户数减=集中=绿。
+    holders: [{"date":"2025-03-31","num":188153,"chg":5.2}, ...]（旧→新，chg 为环比%，可省；
+    有效点 <3 → 返回空串，静默跳过）"""
+    pts = []
+    for p in fill.get("holders") or []:
+        d = str(p.get("date") or "").strip()
+        num = _num(p.get("num"))
+        if not d or num is None:
+            continue
+        pts.append({"date": d, "num": num, "chg": _num(p.get("chg"))})
+    if len(pts) < 3:
+        return ""
+    pts.sort(key=lambda r: r["date"])  # 旧→新
+
+    W, H, L, R, T, B = 1000, 260, 60, 20, 40, 44
+    n = len(pts)
+    slot = (W - L - R) / n
+    bar_w = min(slot * 0.56, 72)
+    hi = max(p["num"] for p in pts) * 1.18  # 不断轴（柱=真实数值契约），顶部留给数值标签
+    Y = _lin_map(0, hi, H - B, T)
+
+    parts = ['<span class="section-tag">股东户数趋势</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="股东户数趋势" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
+    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    for i, p in enumerate(pts):
+        x = L + i * slot + (slot - bar_w) / 2
+        y = Y(p["num"])
+        color = "#4a6fa5" if i == n - 1 else "#b3ab93"
+        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{H - B - y:.1f}" '
+                     f'rx="4" fill="{color}"/>')
+        parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{y - 6:.1f}" text-anchor="middle" '
+                     f'font-size="11" font-weight="{700 if i == n - 1 else 400}" '
+                     f'fill="{"#4a6fa5" if i == n - 1 else "#57524a"}">{p["num"]:,.0f}</text>')
+        parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{H - B + 16}" text-anchor="middle" '
+                     f'font-size="10.5" fill="#8a8375">{_esc(p["date"][2:7])}</text>')
+        if p["chg"] is not None:
+            chg_color = "#c75b5b" if p["chg"] > 0 else "#6ba86b"  # 户数增=分散=红；减=集中=绿
+            parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{H - B + 31}" text-anchor="middle" '
+                         f'font-size="10.5" fill="{chg_color}">{p["chg"]:+.1f}%</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">股东户数趋势（脚本按 holders 字段生成，数据来自 em_fetch E4）：'
+                 '柱=期末股东户数，柱下=截止日与环比；<strong>户数增=筹码分散（红），户数减=集中（绿）</strong>，'
+                 '钢蓝柱=最新一期</span>')
     return "".join(parts)
 
 
@@ -1331,6 +1666,35 @@ def _check_quote_consistency(fill: dict) -> None:
             raise ValueError(f"{fill_key} 与 E1 落盘值不一致: fill={fv:g} vs {src}={rv:g}"
                              f"（偏差 {abs(fv - rv) / abs(rv) * 100:.1f}% > 1%）——现价类数字禁止手填，"
                              f"以 em_fetch --out 落盘值为准修正后重渲")
+    # v4.8 四件套扩展比对（方向一防伪链闭环：神华是「真碎片+假框架」整套自洽，
+    # 只比 price/pe_ttm 两个点不够，估值分输入必须同源）
+    vi = fill.get("valuation_inputs") or {}
+    if not vi.get("metric_label"):  # 行业口径（P/NAV、P/rNPV 等）下 pe 语义非 PE(TTM)，跳过
+        vpe, rpe = _num(vi.get("pe_ttm")), _num(ref.get("pe_ttm"))
+        if vpe is not None and rpe:
+            if abs(vpe - rpe) / abs(rpe) > 0.01:
+                raise ValueError(f"valuation_inputs.pe_ttm 与 E1 落盘值不一致: fill={vpe:g} vs "
+                                 f"{src}={rpe:g}（偏差 {abs(vpe - rpe) / abs(rpe) * 100:.1f}% > 1%）"
+                                 f"——估值分输入与现价同级防伪，以落盘值为准修正后重渲")
+        # 合理带完全落在历史极值带之外 = 校准逻辑或取数必有一假（完全无交集才拦，部分重叠正常）
+        band, hb = vi.get("pe_band") or [], ref.get("pe_band") or []
+        if len(band) >= 2 and len(hb) >= 2:
+            blo, bhi = _num(band[0]), _num(band[1])
+            hlo, hhi = _num(hb[0]), _num(hb[1])
+            if None not in (blo, bhi, hlo, hhi) and (bhi < hlo or blo > hhi):
+                raise ValueError(f"valuation_inputs.pe_band [{_fmt(blo)},{_fmt(bhi)}] 与 E1 落盘历史带 "
+                                 f"[{_fmt(hlo)},{_fmt(hhi)}] 完全无交集——合理带须来自历史时段匹配校准，"
+                                 f"越界即防伪链疑点，请核对 pe_band 取数与校准逻辑后重渲")
+    # risk_free / div_yield 偏差 >0.3pct 告警不拒（允许手工估算/税后折算，但必须可见）
+    for k in ("risk_free", "div_yield"):
+        fv, rv = _num(vi.get(k)), _num(ref.get(k))
+        if fv is None or rv is None:
+            continue
+        if k == "div_yield" and ref.get("market") != "A股":
+            continue  # 港股通/红筹税后折算差异天然 >0.3pct，不做机械比对
+        if abs(fv - rv) > 0.3:
+            print(f"⚠️ 内容校验: valuation_inputs.{k}（{fv:g}）与 E1 落盘值（{rv:g}）偏差 >0.3pct"
+                  f"——若为手工估算或税后折算口径，请在 .source 注明", file=sys.stderr)
 
 
 def _check_score_ranges(fill: dict) -> None:
@@ -1664,6 +2028,26 @@ def _check_quote_present(fill: dict, warns: list) -> None:
                      "——新报告应在 em_fetch 时加 --out 落盘，并在 fill 回填 quote.source_file")
 
 
+def _check_optional_charts(fill: dict, warns: list) -> None:
+    """v4.8 可选图字段纪律：业务构成占比和 / 产业链两端 / 发丝图与第 10 章绑定 / 户数期数。"""
+    seg = fill.get("segments") or {}
+    items = seg.get("items") or []
+    if items:
+        s = sum(_num(it.get("rev_pct")) or 0 for it in items)
+        if abs(s - 100) > 5:
+            warns.append(f"segments 收入占比合计 {s:.1f}% 偏离 100%：请核对是否漏列分部"
+                         f"（E6 各分部占比之和应≈100%，若有「其他」项请补列）")
+    ch = fill.get("industry_chain") or {}
+    if ch and (not ch.get("upstream") or not ch.get("downstream")):
+        warns.append("industry_chain 上游/下游缺一：链条图需两端各至少 1 个行业，缺端图不生成")
+    if (fill.get("price_history") or {}).get("series") and not (fill.get("cycle_html") or "").strip():
+        warns.append("price_history 已填但 cycle_html 缺失：股价/PE 发丝图挂第 10 章，整章被删后图不显示"
+                     "——与 pe_history 同规则（v4.7.1 绑定关系）")
+    holders = fill.get("holders") or []
+    if holders and len(holders) < 3:
+        warns.append("holders 有效点 <3：户数趋势图不生成（E4 默认返回近 8 期，请回填 ≥3 期）")
+
+
 def validate_content(fill: dict, calc: dict = None) -> None:
     """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
     硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
@@ -1694,6 +2078,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_prev_fields(fill, warns)
     _check_misc_required(fill, warns)
     _check_quote_present(fill, warns)
+    _check_optional_charts(fill, warns)
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)
 
@@ -2100,7 +2485,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "TARGET_SUB_HTML": fill.get("target_sub_html", ""),
         "CONCLUSION_HTML": fill.get("conclusion_html", ""),
         "P0_HTML": fill.get("p0_html", ""),
-        "L1_HTML": fill.get("l1_html", ""),
+        # v4.8：3.1 业务构成图 / 3.2 产业链图由锚点 <!--SEGMENTS--> / <!--CHAIN--> 注入 l1_html
+        "L1_HTML": _inject_l1_charts(fill.get("l1_html", ""), fill),
         "L3_HTML": fill.get("l3_html", ""),
         "L4_HTML": fill.get("l4_html", ""),
         "VALUATION_METHOD": fill.get("valuation_method", ""),
@@ -2126,6 +2512,10 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "SCORE_BARS_HTML": build_score_bars(sc),
         "SENSITIVITY_PLOT_HTML": build_sensitivity_tornado(fill),
         "PE_BAND_HTML": build_pe_band(fill),
+        # v4.8 新增：10 章股价/PE 发丝图（price_history，随第 10 章条件块同生共灭）、
+        # 11 章股东户数趋势（holders，裸占位符空串替换）
+        "PRICE_HIST_HTML": build_price_history(fill),
+        "HOLDERS_PLOT_HTML": build_holders_plot(fill),
         "REVIEW_PLOT_HTML": build_review_dumbbell(prev, quality, valuation, timing),
         "VALUATION_PROCESS_HTML": build_valuation_process_card(calc, valuation_calc,
                                                                fill.get("valuation_inputs") or {}),

@@ -258,4 +258,52 @@ finally:
     em._TS_CACHE.clear()
 print("7. 磁盘缓存（命中 / TTL 过期重取 / NO_CACHE 旁路）通过")
 
+# ---------------- 8. E6 毛利额回填（无网络，mock ts_call） ----------------
+# v4.8：fetch_mainop 各分部带 GROSS_PROFIT——tushare 取 bz_profit，缺则 收入−成本。
+_orig_ts8 = em.ts_call
+try:
+    em.ts_call = lambda api, params=None, fields="": [
+        {"end_date": "20251231", "bz_item": "烯烃产品", "bz_sales": 1.5e10, "bz_cost": 9e9,
+         "bz_profit": 6e9},
+        {"end_date": "20251231", "bz_item": "焦化产品", "bz_sales": 5e9, "bz_cost": 4e9,
+         "bz_profit": None},   # 缺 bz_profit → 应按 收入−成本 回填 1e9
+        {"end_date": "20251231", "bz_item": "烯烃", "bz_sales": 1.5e10, "bz_cost": 9e9,
+         "bz_profit": 6e9},   # 与第一行同收入同成本 → 同源改名残留，应去重
+    ] if api == "fina_mainbz" else []
+    mo = em.fetch_mainop("600989.SH")
+    assert len(mo) == 2, f"同收入同成本重复条目应去重，实际 {len(mo)} 行"
+    assert mo[0]["GROSS_PROFIT"] == 6e9, "bz_profit 应直接透传"
+    assert mo[1]["GROSS_PROFIT"] == 1e9, "缺 bz_profit 应按 收入−成本 回填"
+    assert abs(mo[0]["MBI_RATIO"] - 0.75) < 1e-9, "占比=分部收入÷合计（去重后分母）"
+finally:
+    em.ts_call = _orig_ts8
+print("8. E6 毛利额回填 通过")
+
+# ---------------- 9. PE 带 P25/P75 与时机素材（无网络，mock ts_call） ----------------
+_orig_ts9 = em.ts_call
+try:
+    # 100 个交易日 pe_ttm = 1..100（单调，分位点可精确断言）
+    rows_db = [{"trade_date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "pe_ttm": float(i + 1),
+                "pb": 1.5} for i in range(100)]
+    em.ts_call = lambda api, params=None, fields="": rows_db if api == "daily_basic" else []
+    band = em.fetch_pe_pb_band("600989", years=5)
+    assert band["pe_p25"] == 25.0 and band["pe_p75"] == 75.0, \
+        f"P25/P75 应为 25/75，实际 {band['pe_p25']}/{band['pe_p75']}"
+    assert band["pe_min"] == 1.0 and band["pe_max"] == 100.0
+
+    # 时机素材：300 个交易日 close = 1..300（递增）→ MA60/MA120/52周高低可精确断言
+    rows_d = [{"trade_date": f"2026{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "close": float(i + 1)}
+              for i in range(300)]
+    em.ts_call = lambda api, params=None, fields="": rows_d if api == "daily" else []
+    tm = em.fetch_timing_material("600989", False)
+    assert tm["ma60"] == 270.5 and tm["ma120"] == 240.5, f"实际 {tm}"
+    assert tm["high_52w"] == 300.0 and tm["low_52w"] == 51.0, "52周窗口=最后250个交易日"
+    assert tm["n"] == 300
+    # 数据不足 60 日 → None（新股不硬画）
+    em.ts_call = lambda api, params=None, fields="": rows_d[:30] if api == "daily" else []
+    assert em.fetch_timing_material("600989", False) is None
+finally:
+    em.ts_call = _orig_ts9
+print("9. PE 带 P25/P75 + 时机素材 通过")
+
 print("\n全部断言通过", file=sys.stderr)

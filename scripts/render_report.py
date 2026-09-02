@@ -16,6 +16,7 @@ fill JSON 契约见 references/fill-schema.md。
 - 渲染后校验：残留 {{...}} 或 【...】 占位符即报错退出
 """
 import json
+import math
 import os
 import re
 import sys
@@ -69,7 +70,7 @@ LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.6"
+RENDERER_VERSION = "v4.7"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -469,6 +470,9 @@ def compute_scores(fill: dict):
         "red_total": red_total, "red_deductions": red_deductions,
         "valuation": valuation, "timing": timing,
         "red_flag": red_flag,
+        # 供评分横条图使用（与汇总表同一份口径：1D 已含红旗扣减，权重为实际生效值）
+        "weights": weights,
+        "adj_scores": {k: float(scores[k]) for k, _l, _n, _w in DIMS},
     }
 
 
@@ -561,17 +565,40 @@ def _lin_map(a: float, b: float, A: float, B: float):
     return lambda v: A + (v - a) / (b - a) * (B - A)
 
 
+def _text_w(s: str, font_size: float) -> float:
+    """粗估 SVG 文本像素宽（中文/全角≈1em、ASCII≈0.56em），用于标签避让与碰撞检测。"""
+    return sum(1.0 if ord(ch) > 0x2E7F else 0.56 for ch in str(s)) * font_size
+
+
 def _ticks(lo: float, hi: float, n: int = 5) -> list:
-    """n 个等距刻度值。"""
-    return [lo + (hi - lo) * i / (n - 1) for i in range(n)]
+    """nice-number 刻度：步长取 1/2/2.5/5×10^k，返回落在 [lo,hi] 内的步长整数倍刻度。
+    取代旧版「等距后取整」（会产出 19/32/44/57/69 这类间隔观感不齐的读数）。"""
+    span = hi - lo
+    if not span > 0:
+        return [lo]
+    raw = span / (n - 1)
+    mag = 10 ** math.floor(math.log10(raw))
+    step = mag
+    for m in (1, 2, 2.5, 5, 10):
+        if m * mag >= raw:
+            step = m * mag
+            break
+    t = math.ceil(lo / step - 1e-9) * step
+    out = []
+    while t <= hi + 1e-9:
+        out.append(round(t, 9))
+        t += step
+    return out
 
 
 def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
-    """05 目标价走廊：竖向柱版——x 轴=悲观/基础/乐观（与三情景表列方向一致），y 轴=价格，
-    区间竖条 + 中枢横刻 + 现价水平虚线 + 中枢较现价涨跌幅（全部脚本计算）。
-    calc（compute_valuation 结果）存在时用其算出的目标价区间（与三情景表严格一致）；
+    """05 目标价走廊（横版区间条）：x 轴=价格（nice 刻度+单位），每情景一条横向实心区间条
+    （悲观→乐观 从上到下，与三情景表列序一致），白条刻=区间中枢，条端=中枢值与较现价
+    涨跌幅，竖虚线=现价（全部脚本计算）。横版取代旧竖版：窄区间不再退化成幽灵胶囊，
+    标签空间充裕。calc（compute_valuation 结果）存在时用其算出的目标价区间；
     否则回退到 fill["scenarios"] 手写区间。缺数据 → 返回空串（模板条件块整块删除）。"""
     price = _num(fill.get("price"))
+    cur = str(fill.get("currency") or "元")
     if calc:
         cols = [{"label": r["label"], "low": r["low"], "high": r["high"], "mid": r["mid"],
                  "color": r["color"]} for r in calc["rows"]]
@@ -585,57 +612,67 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
             cols.append({"key": key,
                          "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
                          "low": lo, "high": hi, "mid": (lo + hi) / 2,
-                         "color": _SCENARIO_COLORS.get(key, "#8899a6")})
+                         "color": _SCENARIO_COLORS.get(key, "#8a8375")})
     if not cols or not price:
         return ""
     if not calc:
         order = {"pess": 0, "base": 1, "opt": 2}
-        cols.sort(key=lambda r: order.get(r.get("key", ""), 1))  # 悲观/基础/乐观 从左到右
+        cols.sort(key=lambda r: order.get(r.get("key", ""), 1))  # 悲观/基础/乐观 从上到下
 
-    W, H, L, R, T, B = 1000, 400, 64, 24, 46, 64
+    W = 1000
+    L, R, T = 128, 24, 34           # 左列=情景名+区间；上=现价标签
+    ROW_H, BAR_H = 52, 28
+    AXIS_PAD = 46                   # 末行条到刻度标签的纵向空间
+    H = T + len(cols) * ROW_H + AXIS_PAD
     lo_d, hi_d = _pad_domain(min([c["low"] for c in cols] + [price]),
-                             max([c["high"] for c in cols] + [price]), 0.08)
-    Y = _lin_map(lo_d, hi_d, H - B, T)
-
-    n = len(cols)
-    plot_w = W - L - R
-    col_w = plot_w / n
-    bar_w = min(80, col_w * 0.42)
+                             max([c["high"] for c in cols] + [price]), 0.06)
+    X = _lin_map(lo_d, hi_d, L, W - R)
 
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
              f'aria-label="目标价走廊" style="width:100%;height:auto;display:block;font-family:inherit;">']
-    # 价格轴（左侧刻度 + 横向浅网格线）
+    axis_y = T + len(cols) * ROW_H + 6
+    # 价格轴：竖向浅网格线 + nice 刻度 + 单位注
     for v in _ticks(lo_d, hi_d):
-        gy = Y(v)
-        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="#eef1f5" stroke-width="1"/>')
-        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v))}</text>')
-    # 现价水平虚线 + 右端标签
-    py = Y(price)
-    parts.append(f'<line x1="{L}" y1="{py:.1f}" x2="{W - R}" y2="{py:.1f}" '
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="{T - 10}" x2="{gx:.1f}" y2="{axis_y}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{axis_y + 17}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}</text>')
+    parts.append(f'<line x1="{L}" y1="{axis_y}" x2="{W - R}" y2="{axis_y}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    parts.append(f'<text x="4" y="{axis_y + 17}" font-size="11" fill="#8a8375">单位：{_esc(cur)}</text>')
+    # 现价竖虚线 + 顶部标签（近边缘时改对齐防溢出）
+    px = X(price)
+    parts.append(f'<line x1="{px:.1f}" y1="{T - 12}" x2="{px:.1f}" y2="{axis_y}" '
                  f'stroke="#4a6fa5" stroke-width="1.5" stroke-dasharray="5 4"/>')
-    parts.append(f'<text x="{W - R}" y="{py - 8:.1f}" text-anchor="end" font-size="12" '
-                 f'font-weight="700" fill="#4a6fa5">现价 {_fmt(price)}</text>')
-    # 情景柱
+    price_label = f"现价 {_fmt(price)}"
+    anchor, tx = "middle", px
+    if px - _text_w(price_label, 12) / 2 < L:
+        anchor, tx = "start", max(px - 2, L)
+    elif px + _text_w(price_label, 12) / 2 > W - R:
+        anchor, tx = "end", min(px + 2, W - R)
+    parts.append(f'<text x="{tx:.1f}" y="{T - 18}" text-anchor="{anchor}" font-size="12" '
+                 f'font-weight="700" fill="#4a6fa5">{price_label}</text>')
+    # 情景区间条
     for i, c in enumerate(cols):
-        cx = L + col_w * (i + 0.5)
-        y_hi, y_lo, y_mid = Y(c["high"]), Y(c["low"]), Y(c["mid"])
+        cy = T + i * ROW_H + (ROW_H - BAR_H) / 2
+        x_lo, x_hi, x_mid = X(c["low"]), X(c["high"]), X(c["mid"])
+        parts.append(f'<text x="{L - 12}" y="{cy + 11}" text-anchor="end" font-size="13" '
+                     f'font-weight="600" fill="#3a362e">{_esc(c["label"])}</text>')
+        parts.append(f'<text x="{L - 12}" y="{cy + 25}" text-anchor="end" font-size="10.5" '
+                     f'fill="#8a8375">{_fmt_price(c["low"])}–{_fmt_price(c["high"])}</text>')
+        parts.append(f'<rect x="{x_lo:.1f}" y="{cy:.1f}" width="{max(x_hi - x_lo, 3):.1f}" '
+                     f'height="{BAR_H}" rx="8" fill="{c["color"]}"/>')
+        parts.append(f'<line x1="{x_mid:.1f}" y1="{cy + 5:.1f}" x2="{x_mid:.1f}" y2="{cy + BAR_H - 5:.1f}" '
+                     f'stroke="#fffdf9" stroke-width="3"/>')
         pct = c["mid"] / price - 1
-        pct_color = "#6ba86b" if pct >= 0 else "#c75b5b"
-        parts.append(f'<rect x="{cx - bar_w / 2:.1f}" y="{y_hi:.1f}" width="{bar_w:.1f}" height="{y_lo - y_hi:.1f}" rx="8" '
-                     f'fill="{c["color"]}" fill-opacity="0.14" stroke="{c["color"]}" stroke-width="1.5"/>')
-        parts.append(f'<line x1="{cx - bar_w / 2 - 5:.1f}" y1="{y_mid:.1f}" x2="{cx + bar_w / 2 + 5:.1f}" y2="{y_mid:.1f}" '
-                     f'stroke="{c["color"]}" stroke-width="2.5"/>')
-        parts.append(f'<text x="{cx:.1f}" y="{y_hi - 24:.1f}" text-anchor="middle" font-size="13" '
-                     f'font-weight="700" fill="{c["color"]}">{_fmt_price(c["mid"])}</text>')
-        parts.append(f'<text x="{cx:.1f}" y="{y_hi - 9:.1f}" text-anchor="middle" font-size="11.5" '
-                     f'font-weight="700" fill="{pct_color}">{pct * 100:+.1f}%</text>')
-        parts.append(f'<text x="{cx:.1f}" y="{H - B + 20}" text-anchor="middle" font-size="13" '
-                     f'font-weight="600" fill="#2c3e50">{_esc(c["label"])}</text>')
-        parts.append(f'<text x="{cx:.1f}" y="{H - B + 37}" text-anchor="middle" font-size="11" '
-                     f'fill="#8899a6">{_fmt_price(c["low"])} - {_fmt_price(c["high"])}</text>')
+        vlabel = f'{_fmt_price(c["mid"])}（{pct * 100:+.1f}%）'
+        if x_hi + 12 + _text_w(vlabel, 12.5) <= W - 4:
+            parts.append(f'<text x="{x_hi + 12:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="12.5" '
+                         f'font-weight="700" fill="{c["color"]}">{vlabel}</text>')
+        else:  # 条外右侧放不下 → 条内右端白字
+            parts.append(f'<text x="{x_hi - 10:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" '
+                         f'font-size="12.5" font-weight="700" fill="#fffdf9">{vlabel}</text>')
     parts.append('</svg></div>')
-    parts.append('<span class="source">目标价走廊（脚本按 scenarios 字段生成）：竖条=情景目标价区间，'
-                 '横刻=区间中枢，虚线=现价；柱顶=中枢值与较现价涨跌幅</span>')
+    parts.append('<span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，'
+                 '白条刻=区间中枢，竖虚线=现价；条端=中枢值与较现价涨跌幅</span>')
     return "".join(parts)
 
 
@@ -675,7 +712,7 @@ def compute_valuation(fill: dict):
             continue
         mid = (lo + hi) / 2
         rows.append({"key": key, "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
-                     "color": _SCENARIO_COLORS.get(key, "#8899a6"),
+                     "color": _SCENARIO_COLORS.get(key, "#8a8375"),
                      "trigger": str(s.get("trigger") or ""), "horizon": str(s.get("horizon") or v.get("horizon") or "12个月"),
                      "profit": profit, "pe_lo": pe_lo, "pe_hi": pe_hi,
                      "mcap_lo": mc_lo, "mcap_hi": mc_hi,
@@ -884,52 +921,346 @@ def build_peers_plot(fill: dict) -> str:
     parts = [f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
              f'aria-label="估值-质量散点图" style="width:100%;height:auto;display:block;font-family:inherit;">']
     # 最优/最差象限底色（高ROE·低PE = 左上绿；低ROE·高PE = 右下红）
-    parts.append(f'<rect x="{L}" y="{T}" width="{xb[0] - L:.1f}" height="{yb[1] - T:.1f}" fill="#6ba86b" fill-opacity="0.06"/>')
-    parts.append(f'<rect x="{xb[1]:.1f}" y="{yb[0]:.1f}" width="{W - R - xb[1]:.1f}" height="{H - B - yb[0]:.1f}" fill="#c75b5b" fill-opacity="0.06"/>')
+    parts.append(f'<rect x="{L}" y="{T}" width="{xb[0] - L:.1f}" height="{yb[1] - T:.1f}" fill="#6ba86b" fill-opacity="0.12"/>')
+    parts.append(f'<rect x="{xb[1]:.1f}" y="{yb[0]:.1f}" width="{W - R - xb[1]:.1f}" height="{H - B - yb[0]:.1f}" fill="#c75b5b" fill-opacity="0.12"/>')
     # 象限角标签
-    parts.append(f'<text x="{L + 8}" y="{T + 16}" font-size="11" fill="#8899a6">高质量 · 低估值</text>')
-    parts.append(f'<text x="{W - R - 8}" y="{T + 16}" text-anchor="end" font-size="11" fill="#8899a6">高质量 · 高估值</text>')
-    parts.append(f'<text x="{L + 8}" y="{H - B - 8}" font-size="11" fill="#8899a6">低质量 · 低估值</text>')
-    parts.append(f'<text x="{W - R - 8}" y="{H - B - 8}" text-anchor="end" font-size="11" fill="#8899a6">低质量 · 高估值</text>')
+    parts.append(f'<text x="{L + 8}" y="{T + 16}" font-size="11" fill="#8a8375">高质量 · 低估值</text>')
+    parts.append(f'<text x="{W - R - 8}" y="{T + 16}" text-anchor="end" font-size="11" fill="#8a8375">高质量 · 高估值</text>')
+    parts.append(f'<text x="{L + 8}" y="{H - B - 8}" font-size="11" fill="#8a8375">低质量 · 低估值</text>')
+    parts.append(f'<text x="{W - R - 8}" y="{H - B - 8}" text-anchor="end" font-size="11" fill="#8a8375">低质量 · 高估值</text>')
     # 分带虚线
     for bx in xb:
-        parts.append(f'<line x1="{bx:.1f}" y1="{T}" x2="{bx:.1f}" y2="{H - B}" stroke="#d7dee6" stroke-width="1" stroke-dasharray="4 4"/>')
+        parts.append(f'<line x1="{bx:.1f}" y1="{T}" x2="{bx:.1f}" y2="{H - B}" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/>')
     for by in yb:
-        parts.append(f'<line x1="{L}" y1="{by:.1f}" x2="{W - R}" y2="{by:.1f}" stroke="#d7dee6" stroke-width="1" stroke-dasharray="4 4"/>')
+        parts.append(f'<line x1="{L}" y1="{by:.1f}" x2="{W - R}" y2="{by:.1f}" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/>')
     # 坐标轴 + 刻度
-    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
-    parts.append(f'<line x1="{L}" y1="{T}" x2="{L}" y2="{H - B}" stroke="#dde3ea" stroke-width="1.2"/>')
-    for v, v2 in zip(_ticks(pe_lo, pe_hi), _ticks(roe_lo, roe_hi)):
-        parts.append(f'<text x="{X(v):.1f}" y="{H - B + 18}" text-anchor="middle" font-size="11" fill="#8899a6">{_fmt(round(v))}x</text>')
-        parts.append(f'<text x="{L - 8}" y="{Y(v2) + 4:.1f}" text-anchor="end" font-size="11" fill="#8899a6">{_fmt(round(v2))}%</text>')
-    parts.append(f'<text x="{W - R}" y="{H - 8}" text-anchor="end" font-size="11" fill="#8899a6">PE(TTM)</text>')
-    parts.append(f'<text x="{L}" y="{T - 12}" font-size="11" fill="#8899a6">ROE</text>')
-    # 数据点（直接标注，免图例；点位于右半区时文字放左侧防溢出）
+    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    parts.append(f'<line x1="{L}" y1="{T}" x2="{L}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    for v in _ticks(pe_lo, pe_hi):
+        parts.append(f'<text x="{X(v):.1f}" y="{H - B + 18}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}x</text>')
+    for v2 in _ticks(roe_lo, roe_hi):
+        parts.append(f'<text x="{L - 8}" y="{Y(v2) + 4:.1f}" text-anchor="end" font-size="11" fill="#8a8375">{_fmt(v2)}%</text>')
+    parts.append(f'<text x="{W - R}" y="{H - 8}" text-anchor="end" font-size="11" fill="#8a8375">PE(TTM)</text>')
+    parts.append(f'<text x="{L}" y="{T - 12}" font-size="11" fill="#8a8375">ROE</text>')
+    # 数据点（直接标注，免图例；可选 size 字段编码市值——面积 ∝ 市值，sqrt 换算半径；
+    # 标签按候选位做简单碰撞避让，目标公司 上/右/下/左，同业 右/左/上/下）
+    def _box(lx, ly, anchor, w, fs):
+        x0 = lx - w / 2 if anchor == "middle" else (lx - w if anchor == "end" else lx)
+        return (x0, ly - fs, x0 + w, ly + 4)
+
+    def _overlap(b, boxes):
+        return any(not (b[2] < p[0] or b[0] > p[2] or b[3] < p[1] or b[1] > p[3]) for p in boxes)
+
+    def _pick_label(cands, fw, fs, boxes):
+        """按偏好顺序取第一个「不越出 SVG 边界且不压已有标签」的位置；
+        全都压标签时退回首个不越界位（v4.8 修复：右缘公司标签曾越界被裁）。"""
+        in_bounds = [c for c in cands
+                     if 8 <= _box(c[0], c[1], c[2], fw, fs)[0]
+                     and _box(c[0], c[1], c[2], fw, fs)[2] <= W - 8]
+        pool = in_bounds or cands
+        for c in pool:
+            if not _overlap(_box(c[0], c[1], c[2], fw, fs), boxes):
+                return c
+        return pool[0]
+
+    placed = [  # 四个象限角标的近似盒，数据标签先让它们
+        (L + 6, T + 4, L + 150, T + 20), (W - R - 156, T + 4, W - R - 6, T + 20),
+        (L + 6, H - B - 20, L + 150, H - B - 4), (W - R - 156, H - B - 20, W - R - 6, H - B - 4),
+    ]
+    sizes = [sv for sv in (_num(p.get("size")) for p in pts) if sv]
+    max_size = max(sizes) if sizes else None
     for p in pts:
         cx, cy = X(p["pe"]), Y(p["roe"])
+        r = 6.0
+        if max_size:
+            sv = _num(p.get("size")) or 0.0
+            r = max(5.0, min(12.0, 4 + 8 * math.sqrt(max(sv, 0.0) / max_size)))
         label = f'{p["name"]} {_fmt(p["roe"])}%/{_fmt(p["pe"])}x'
         if p["target"]:
-            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="8" fill="#4a6fa5" stroke="#fff" stroke-width="2">'
+            rr = r + 2
+            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{rr:.1f}" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2">'
                          f'<title>{_esc(label)}</title></circle>')
-            # 靠近顶部/右侧时标签改放下方/左侧，避免与象限角标、图边重叠
+            # 近顶优先放下方，近右优先放左侧；其余放上方；再与已放置标签做碰撞避让
+            cands = []
             if cy < T + 50:
-                lx, ly, anchor = cx, cy + 24, "middle"
-            elif cx > L + (W - L - R) * 0.75:
-                lx, ly, anchor = cx - 14, cy + 4, "end"
-            else:
-                lx, ly, anchor = cx, cy - 14, "middle"
+                cands.append((cx, cy + rr + 16, "middle"))
+            if cx > L + (W - L - R) * 0.75:
+                cands.append((cx - rr - 10, cy + 4, "end"))
+            cands += [(cx, cy - rr - 8, "middle"), (cx + rr + 10, cy + 4, "start"),
+                      (cx - rr - 10, cy + 4, "end"), (cx, cy + rr + 16, "middle")]
+            fs, fw = 12, _text_w(label, 12)
+            lx, ly, anchor = _pick_label(cands, fw, fs, placed)
+            placed.append(_box(lx, ly, anchor, fw, fs))
             parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" font-size="12" '
                          f'font-weight="700" fill="#4a6fa5">{_esc(label)}</text>')
         else:
-            anchor, lx = ("end", cx - 12) if cx > L + (W - L - R) * 0.68 else ("start", cx + 12)
-            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="6" fill="#9aa7b4">'
+            parts.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="#66604f">'
                          f'<title>{_esc(label)}</title></circle>')
-            parts.append(f'<text x="{lx:.1f}" y="{cy + 4:.1f}" text-anchor="{anchor}" font-size="11.5" '
-                         f'fill="#5a6b7d">{_esc(label)}</text>')
+            cands = [(cx + r + 10, cy + 4, "start"), (cx - r - 10, cy + 4, "end"),
+                     (cx, cy - r - 8, "middle"), (cx, cy + r + 16, "middle")]
+            fs, fw = 12, _text_w(label, 12)
+            lx, ly, anchor = _pick_label(cands, fw, fs, placed)
+            placed.append(_box(lx, ly, anchor, fw, fs))
+            parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anchor}" font-size="12" '
+                         f'fill="#57524a">{_esc(label)}</text>')
     parts.append('</svg></div>')
+    size_note = '；点大小 ∝ 总市值（sqrt 缩放）' if max_size else ''
     parts.append('<span class="source">估值-质量散点图（脚本按 peers_plot 字段生成）：横轴 PE(TTM)、纵轴 ROE，'
-                 '虚线为低/中/高分带；左上绿底=优质低估区，右下红底=低质高估区</span>')
+                 '虚线为低/中/高分带；左上绿底=优质低估区，右下红底=低质高估区' + size_note + '；'
+                 '目标公司与同业须同口径（A/H 股、IFRS/经调整），混排须在 peers_meta 注明</span>')
     return "".join(parts)
+
+
+def build_score_bars(sc: dict) -> str:
+    """06 质量分汇总·九维评分横条图：条长=维度得分（0-10 定域，跨报告可比），条色=徽章档，
+    条端=得分，最右列=层内权重；按层分组（公司本质/未来预期），虚线=7.0 良好线。
+    数据全部来自 compute_scores（adj_scores/weights，与汇总表同一份口径）。"""
+    adj, weights, ls = sc.get("adj_scores") or {}, sc.get("weights") or {}, sc["layer_share"]
+    if not adj:
+        return ""
+    W = 1000
+    NL, BAR_A, BAR_B = 200, 210, 820  # 名称列右缘 / 条形起点（0 分） / 条形终点（10 分）
+    WT_X = 965                        # 权重·加权列右缘
+    T, ROW_H, BAR_H, GROUP_GAP = 34, 32, 18, 26
+    H = T + 9 * ROW_H + GROUP_GAP + 36
+    X = _lin_map(0, 10, BAR_A, BAR_B)
+    badge_color = {"badge-green": "#6ba86b", "badge-orange": "#c08a2e", "badge-red": "#c75b5b"}
+
+    parts = ['<span class="section-tag">评分分布</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="九维评分分布" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    for v in _ticks(0, 10, 6):
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="{T - 8}" x2="{gx:.1f}" y2="{H - 30}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{H - 14}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}</text>')
+    gx7 = X(7.0)
+    parts.append(f'<line x1="{gx7:.1f}" y1="{T - 8}" x2="{gx7:.1f}" y2="{H - 30}" stroke="#c9bfa8" stroke-width="1.2" stroke-dasharray="5 4"/>')
+    parts.append(f'<text x="{gx7:.1f}" y="{T - 14}" text-anchor="middle" font-size="10.5" fill="#8a8375">良好线 7.0</text>')
+    y = T
+    for layer in ("L1", "L3"):
+        dims = [d for d in DIMS if d[1] == layer]
+        parts.append(f'<text x="0" y="{y - 8}" font-size="11" font-weight="600" fill="#8a8375">'
+                     f'{LAYER_NAMES[layer]} · 占质量分 {ls[layer]:.0f}%</text>')
+        for key, _l, name, _dw in dims:
+            s = float(adj.get(key, 0))
+            w = float(weights.get(key, 0))
+            cy = y + 2
+            color = badge_color[badge_class(s)]
+            parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{BAR_B - BAR_A}" height="{BAR_H}" rx="5" fill="#efe9db"/>')
+            parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{max((BAR_B - BAR_A) * s / 10.0, 3):.1f}" '
+                         f'height="{BAR_H}" rx="5" fill="{color}"/>')
+            parts.append(f'<text x="{NL - 10}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12" '
+                         f'fill="#3a362e">{_esc(name)}</text>')
+            parts.append(f'<text x="{BAR_A + max((BAR_B - BAR_A) * s / 10.0, 3) + 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" '
+                         f'font-size="12" font-weight="700" fill="{color}">{s:.1f} {_dim_verdict(s)}</text>')
+            parts.append(f'<text x="{WT_X}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="11" '
+                         f'fill="#8a8375">{w:g}% · {s * w / 100:.2f}</text>')
+            y += ROW_H
+        y += GROUP_GAP
+    parts.append('</svg></div>')
+    parts.append('<span class="source">评分分布（脚本按 scores/weights 生成）：条长=维度得分（0-10 定域），'
+                 '条色=徽章档（≥7 绿 / 4-6.9 橙 / &lt;4 红），条端=得分与判词，右列=层内权重 · 加权得分，'
+                 '虚线=7.0 良好线</span>')
+    return "".join(parts)
+
+
+def build_sensitivity_tornado(fill: dict) -> str:
+    """02 关键利润驱动·敏感性龙卷风（fill["sensitivity"] 可选字段）：变量 ±10% 变动对归母净利
+    影响幅度（%）的双向条，红=不利方向、绿=有利方向，排序=弹性大小（首行=第一变量）。
+    sensitivity: [{"name":"矿产金售价（金价）","impact":20,"delta":"±10%","amount":"约±9-10亿元"}, ...]
+    （impact 取绝对值；delta/amount 可选——填了即在变量名下展示「变动幅度 → 金额影响」，
+    信息覆盖旧敏感性表，填了本字段 P0 就不必再手写敏感性表）。字段缺失 → 返回空串。"""
+    items = []
+    for s in fill.get("sensitivity") or []:
+        imp = _num(s.get("impact"))
+        name = str(s.get("name") or "").strip()
+        if imp is None or not name:
+            continue
+        items.append({"name": name, "impact": abs(imp),
+                      "delta": str(s.get("delta") or "").strip(),
+                      "amount": str(s.get("amount") or "").strip()})
+    if not items:
+        return ""
+    items.sort(key=lambda r: -r["impact"])
+    has_detail = any(it["delta"] or it["amount"] for it in items)
+    W = 1000
+    NL, X0, HALF = 216, 580, 300    # 变量名列右缘 / 中轴 / 中轴到满幅端
+    T, ROW_H, BAR_H = 30, 56 if has_detail else 46, 22
+    H = T + len(items) * ROW_H + 44
+    imax = items[0]["impact"]
+    k = HALF / imax if imax else 1.0
+    parts = ['<span class="section-tag">敏感性排序</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="敏感性龙卷风" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    axis_y = T + len(items) * ROW_H + 4
+    for v in _ticks(0, imax, 4):
+        for sign in (-1, 1):
+            gx = X0 + sign * v * k
+            parts.append(f'<line x1="{gx:.1f}" y1="{T - 6}" x2="{gx:.1f}" y2="{axis_y}" stroke="#ece7db" stroke-width="1"/>')
+            lbl = f'{"+" if sign > 0 else "−"}{_fmt(v)}%' if v > 0 else "0"
+            if v > 0 or sign > 0:
+                parts.append(f'<text x="{gx:.1f}" y="{axis_y + 16}" text-anchor="middle" font-size="11" fill="#8a8375">{lbl}</text>')
+    parts.append(f'<line x1="{X0}" y1="{T - 6}" x2="{X0}" y2="{axis_y}" stroke="#b3ab93" stroke-width="1.2"/>')
+    for i, it in enumerate(items):
+        cy = T + i * ROW_H + (ROW_H - BAR_H) / 2
+        w = it["impact"] * k
+        first = (i == 0)
+        if has_detail:
+            # 双行：变量名 + 「变动幅度 → 金额影响」（替代旧敏感性表的信息）
+            detail = " → ".join(x for x in (it["delta"], it["amount"]) if x)
+            parts.append(f'<text x="{NL}" y="{cy + 3:.1f}" text-anchor="end" font-size="12.5" '
+                         f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
+                         f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
+            if detail:
+                parts.append(f'<text x="{NL}" y="{cy + 19:.1f}" text-anchor="end" font-size="10.5" '
+                             f'fill="#8a8375">{_esc(detail)}</text>')
+        else:
+            parts.append(f'<text x="{NL}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12.5" '
+                         f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
+                         f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
+        parts.append(f'<rect x="{X0 - w:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#c75b5b"/>')
+        parts.append(f'<rect x="{X0:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#6ba86b"/>')
+        parts.append(f'<text x="{X0 - w - 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="11.5" '
+                     f'font-weight="700" fill="#c75b5b">−{_fmt(it["impact"])}%</text>')
+        parts.append(f'<text x="{X0 + w + 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="11.5" '
+                     f'font-weight="700" fill="#6ba86b">+{_fmt(it["impact"])}%</text>')
+    parts.append('</svg></div>')
+    parts.append('<span class="source">敏感性龙卷风（脚本按 sensitivity 字段生成）：条长=变量变动对归母净利的'
+                 '影响幅度（估算绝对值），红=不利方向、绿=有利方向，左列=变动幅度与金额影响，'
+                 '排序=弹性大小（首行=第一变量）；填了本字段，P0 不必再写敏感性表</span>')
+    return "".join(parts)
+
+
+def build_pe_band(fill: dict) -> str:
+    """07 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
+    横向子弹图——浅带=历史 PE 区间，钢蓝段=合理带，黑刻=当前值；「低分位≠便宜」一图证成。
+    pe_history: {"hist_lo":13.7, "hist_hi":83.2, "label":"近5年"}（label 可选）；
+    字段缺失或与 valuation_inputs 不齐 → 返回空串（可选增强，静默跳过）。"""
+    ph = fill.get("pe_history") or {}
+    vi = fill.get("valuation_inputs") or {}
+    hist_lo, hist_hi = _num(ph.get("hist_lo")), _num(ph.get("hist_hi"))
+    cur = _num(vi.get("pe_ttm"))
+    band = vi.get("pe_band") or []
+    band_lo = _num(band[0]) if len(band) >= 1 else None
+    band_hi = _num(band[1]) if len(band) >= 2 else None
+    if None in (hist_lo, hist_hi, cur, band_lo, band_hi) or hist_hi <= hist_lo or band_hi < band_lo:
+        return ""
+    lo_d, hi_d = _pad_domain(min(hist_lo, band_lo, cur), max(hist_hi, band_hi, cur), 0.04, floor=0.0)
+    W, H, L, R = 1000, 196, 64, 64
+    X = _lin_map(lo_d, hi_d, L, W - R)
+    cy, BH = 100, 30
+    mlabel = str(vi.get("metric_label") or "PE(TTM)")
+    plabel = str(ph.get("label") or "历史")
+    parts = [f'<span class="section-tag">{_esc(mlabel)} 历史带</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="{_esc(mlabel)}历史带" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    for v in _ticks(lo_d, hi_d, 6):
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="38" x2="{gx:.1f}" y2="{cy + BH + 10}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{cy + BH + 26}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}x</text>')
+    parts.append(f'<line x1="{L}" y1="{cy + BH + 10}" x2="{W - R}" y2="{cy + BH + 10}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    # 历史区间浅带 + 带标签
+    xh_lo, xh_hi = X(hist_lo), X(hist_hi)
+    parts.append(f'<rect x="{xh_lo:.1f}" y="{cy}" width="{xh_hi - xh_lo:.1f}" height="{BH}" rx="8" '
+                 f'fill="#efe9db" stroke="#e0d7c3"/>')
+    parts.append(f'<text x="{xh_lo:.1f}" y="{cy - 40}" font-size="11" fill="#8a8375">'
+                 f'{_esc(plabel)} {_esc(mlabel)} 区间 {_fmt(hist_lo)}–{_fmt(hist_hi)}x</text>')
+    # 合理带（钢蓝实心段；标签放得下就带内白字，否则带下灰字）
+    xb_lo, xb_hi = X(band_lo), X(band_hi)
+    band_label = f'合理带 {_fmt(band_lo)}–{_fmt(band_hi)}x'
+    parts.append(f'<rect x="{xb_lo:.1f}" y="{cy}" width="{max(xb_hi - xb_lo, 2):.1f}" height="{BH}" rx="8" fill="#4a6fa5"/>')
+    if _text_w(band_label, 11) + 14 <= xb_hi - xb_lo:
+        parts.append(f'<text x="{(xb_lo + xb_hi) / 2:.1f}" y="{cy + BH / 2 + 4:.1f}" text-anchor="middle" '
+                     f'font-size="11" font-weight="700" fill="#fffdf9">{band_label}</text>')
+    else:
+        parts.append(f'<text x="{(xb_lo + xb_hi) / 2:.1f}" y="{cy + BH + 40}" text-anchor="middle" '
+                     f'font-size="11" fill="#4a6fa5">{band_label}</text>')
+    # 当前值黑刻 + 标签（近边缘改对齐）
+    cxp = X(cur)
+    parts.append(f'<line x1="{cxp:.1f}" y1="{cy - 12}" x2="{cxp:.1f}" y2="{cy + BH + 12}" stroke="#2b2620" stroke-width="3"/>')
+    parts.append(f'<circle cx="{cxp:.1f}" cy="{cy + BH / 2}" r="5" fill="#2b2620"/>')
+    cur_label = f'当前 {_fmt(cur)}x'
+    anchor, tx = "middle", cxp
+    if cxp - _text_w(cur_label, 12) / 2 < L:
+        anchor, tx = "start", max(cxp - 4, L)
+    elif cxp + _text_w(cur_label, 12) / 2 > W - R:
+        anchor, tx = "end", min(cxp + 4, W - R)
+    parts.append(f'<text x="{tx:.1f}" y="{cy - 20}" text-anchor="{anchor}" font-size="12" '
+                 f'font-weight="700" fill="#2b2620">{cur_label}</text>')
+    parts.append('</svg></div>')
+    parts.append(f'<span class="source">{_esc(mlabel)} 历史带（脚本按 pe_history + valuation_inputs 生成）：'
+                 f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值；三者同一口径</span>')
+    return "".join(parts)
+
+
+def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) -> str:
+    """13 回测复盘·三轨分新旧对比哑铃图（0-10 定域）：灰点=上版、蓝点=本版，
+    连线绿=上调、红=下调，右列=分差。prev 为空 → 返回空串。"""
+    if not prev:
+        return ""
+    rows = []
+    for label, old, new in (("质量分", _num(prev.get("quality", prev.get("research"))), quality),
+                            ("估值分", _num(prev.get("valuation")), valuation),
+                            ("时机分", _num(prev.get("timing")), timing)):
+        if old is None or new is None:
+            continue
+        rows.append({"label": label, "old": old, "new": float(new)})
+    if not rows:
+        return ""
+    W, NL, BAR_A, BAR_B = 1000, 110, 140, 890
+    T, ROW_H = 30, 50
+    H = T + len(rows) * ROW_H + 36
+    X = _lin_map(0, 10, BAR_A, BAR_B)
+    parts = ['<span class="section-tag">三轨分新旧对比</span>',
+             f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
+             f'aria-label="三轨分新旧对比" style="width:100%;height:auto;display:block;font-family:inherit;">']
+    for v in _ticks(0, 10, 6):
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="{T - 6}" x2="{gx:.1f}" y2="{H - 30}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{H - 14}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}</text>')
+    for i, r in enumerate(rows):
+        cy = T + i * ROW_H + ROW_H / 2 - 6
+        xo, xn = X(r["old"]), X(r["new"])
+        d = r["new"] - r["old"]
+        dcolor = "#6ba86b" if d >= 0 else "#c75b5b"
+        parts.append(f'<line x1="{xo:.1f}" y1="{cy:.1f}" x2="{xn:.1f}" y2="{cy:.1f}" stroke="{dcolor}" stroke-width="3"/>')
+        parts.append(f'<circle cx="{xo:.1f}" cy="{cy:.1f}" r="6" fill="#b3ab93"/>')
+        parts.append(f'<circle cx="{xn:.1f}" cy="{cy:.1f}" r="7.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2"/>')
+        parts.append(f'<text x="{NL}" y="{cy + 4.5:.1f}" text-anchor="end" font-size="12.5" fill="#3a362e">{r["label"]}</text>')
+        # 新旧点过近时旧值改放下方，避免两个数值标签重叠
+        old_y = cy + 24 if abs(xn - xo) < 70 else cy - 14
+        parts.append(f'<text x="{xo:.1f}" y="{old_y:.1f}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(r["old"])}</text>')
+        parts.append(f'<text x="{xn:.1f}" y="{cy - 14:.1f}" text-anchor="middle" font-size="12" '
+                     f'font-weight="700" fill="#4a6fa5">{_fmt(r["new"])}</text>')
+        parts.append(f'<text x="{BAR_B + 10}" y="{cy + 4.5:.1f}" font-size="12" font-weight="700" '
+                     f'fill="{dcolor}">{d:+.2f}</text>')
+    parts.append('</svg></div>')
+    parts.append(f'<span class="source">三轨分新旧对比（脚本按 prev 字段生成）：灰点={_esc(str(prev.get("date", "上版")))} 上版，'
+                 f'蓝点=本版；连线绿=上调、红=下调；右列=分差；0-10 定域</span>')
+    return "".join(parts)
+
+
+# 侧栏目录条目：(锚点 id, 完整章节名[title 悬停提示], 侧栏简称)
+_TOC_MAIN = [("s1", "1 核心结论", "结论"), ("s2", "2 关键利润驱动", "驱动"),
+             ("s3", "3 公司本质", "本质"), ("s4", "4 未来预期", "预期"),
+             ("s5", "5 风险评估", "风险"), ("s6", "6 质量分汇总", "评分"),
+             ("s7", "7 估值与安全边际", "估值"), ("s8", "8 市场预期差", "分歧"),
+             ("s9", "9 同业对比", "同业")]
+_TOC_TAIL = [("s11", "11 仓位与时机决策", "仓位"), ("s12", "12 跟踪仪表盘", "跟踪")]
+
+
+def build_toc(has_cycle: bool, has_review: bool) -> str:
+    """右缘固定侧栏目录（纯 CSS 零 JS；宽屏显示，窄屏与打印隐藏）：章节用两字简称，
+    悬停可见全名（title）；条件章节（10 周期 / 13 回测）按存在性生成，
+    编号与模板固定章节号一致。"""
+    secs = list(_TOC_MAIN)
+    if has_cycle:
+        secs.append(("s10", "10 周期规律", "周期"))
+    secs += _TOC_TAIL
+    if has_review:
+        secs.append(("s13", "13 回测复盘", "复盘"))
+    links = "".join(f'<a href="#{i}" title="{_esc(full)}">{_esc(short)}</a>' for i, full, short in secs)
+    return f'<nav class="toc-side">{links}</nav>'
 
 
 def _plain_text(frag: str) -> str:
@@ -945,6 +1276,32 @@ def _check_price_date(fill: dict) -> None:
                          f"（Hero 指标卡与估值三情景计算都依赖现价）")
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(fill.get("date") or "")):
         raise ValueError(f"date 格式非法: {fill.get('date')!r}（必须严格 YYYY-MM-DD）")
+
+
+def _check_quote_consistency(fill: dict) -> None:
+    """quote 防伪（神华 601088 现价造假事故修复）：fill 声明 quote.source_file 时，
+    读 em_fetch --out 落盘 JSON，比对 price/pe_ttm，偏差 >1% 拒渲染（与估值分四件套同级）。
+    quote 字段缺失不拒（存量 fill 兼容），由 _check_quote_present 走告警。"""
+    q = fill.get("quote")
+    if q is None:
+        return
+    if not isinstance(q, dict) or not q.get("source_file"):
+        raise ValueError('quote 字段需为 {"source_file": "em_fetch --out 落盘路径", "date": "YYYY-MM-DD"}')
+    src = q["source_file"]
+    try:
+        with open(src, encoding="utf-8") as f:
+            ref = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        raise ValueError(f"quote.source_file 读取失败: {src}（{e}）——防伪链断裂不能静默放行，"
+                         f"请重跑 em_fetch --out 落盘后再渲染")
+    for fill_key, ref_key in (("price", "price"), ("pe_ttm", "pe_ttm")):
+        fv, rv = _num(fill.get(fill_key)), _num(ref.get(ref_key))
+        if fv is None or rv is None or rv == 0:
+            continue
+        if abs(fv - rv) / abs(rv) > 0.01:
+            raise ValueError(f"{fill_key} 与 E1 落盘值不一致: fill={fv:g} vs {src}={rv:g}"
+                             f"（偏差 {abs(fv - rv) / abs(rv) * 100:.1f}% > 1%）——现价类数字禁止手填，"
+                             f"以 em_fetch --out 落盘值为准修正后重渲")
 
 
 def _check_score_ranges(fill: dict) -> None:
@@ -1131,7 +1488,7 @@ def _check_thesis_info_floor(fill: dict, warns: list) -> None:
 
 
 def _check_peers_plot_target(fill: dict, warns: list) -> None:
-    """peers_plot 目标公司标记。"""
+    """peers_plot 目标公司标记 + 目标点 PE 与估值四件套口径一致性。"""
     # peers_plot 目标公司标记
     pp = fill.get("peers_plot")
     pts = (pp.get("points") if isinstance(pp, dict) else pp) or []
@@ -1141,6 +1498,13 @@ def _check_peers_plot_target(fill: dict, warns: list) -> None:
             warns.append("peers_plot 没有 target=true 的目标公司点")
         elif fill.get("company") and str(fill["company"]) not in str(tg[0].get("name", "")):
             warns.append(f"peers_plot 目标点名称「{tg[0].get('name')}」与公司名「{fill['company']}」不一致")
+        # 口径一致性（赤峰 2026-09-02 实证：图中目标点用 A 股 PE 23.58x，正文用 H 股 18.6x）
+        if tg:
+            tpe = _num(tg[0].get("pe"))
+            vpe = _num((fill.get("valuation_inputs") or {}).get("pe_ttm"))
+            if tpe and vpe and abs(tpe - vpe) / abs(vpe) > 0.3:
+                warns.append(f"peers_plot 目标公司 PE（{tpe:g}）与 valuation_inputs.pe_ttm（{vpe:g}）偏差 >30%："
+                             f"请确认口径一致（A/H 股、IFRS/经调整、TTM/预测），确需混排在 peers_meta 注明")
 
 
 def _check_timing_table_cells(fill: dict, warns: list) -> None:
@@ -1235,6 +1599,13 @@ def _check_misc_required(fill: dict, warns: list) -> None:
         warns.append("subtitle 含「报告日期」：模板 Hero 会自动追加报告日期，subtitle 请勿再写日期")
 
 
+def _check_quote_present(fill: dict, warns: list) -> None:
+    """quote 缺失 → 告警不拒（存量 fill 兼容）；quote 存在但不一致已在 _check_quote_consistency 拒渲染。"""
+    if not fill.get("quote"):
+        warns.append("quote 字段缺失：现价/PE(TTM) 无 em_fetch --out 落盘防伪（神华 601088 事故修复项）"
+                     "——新报告应在 em_fetch 时加 --out 落盘，并在 fill 回填 quote.source_file")
+
+
 def validate_content(fill: dict, calc: dict = None) -> None:
     """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
     硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
@@ -1242,6 +1613,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
     calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
     _check_price_date(fill)
+    _check_quote_consistency(fill)
     _check_score_ranges(fill)
 
     _check_valuation_inputs(fill)
@@ -1262,6 +1634,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_internal_codes(fill, warns)
     _check_prev_fields(fill, warns)
     _check_misc_required(fill, warns)
+    _check_quote_present(fill, warns)
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)
 
@@ -1348,9 +1721,9 @@ def _valuation_four_rows(calc: dict, vc: dict, inputs: dict):
 
 
 def build_score_summary(sc: dict) -> str:
-    """6 质量分汇总章节（全部脚本生成）：9 行维度明细（得分+判词+权重+加权）保留为表；
-    层分×占比/红旗/黄灯/最终质量分合并为表下一条公式 footer（.layer-summary），
-    不再占 5 行表格——算术复述合并后信息零损失。估值/时机明细不在此章。"""
+    """6 质量分汇总章尾公式条（脚本生成）：层分×占比 ± 黄灯 → 最终质量分。
+    9 行维度明细表已并入上方的评分分布横条图（得分/判词/权重/加权全部由图承载，见
+    build_score_bars），本章不再重复表格——footer 只保留算式与最终分。"""
     layer_scores, ls = sc["layer_scores"], sc["layer_share"]
     quality, yellow_total = sc["quality"], sc["yellow_total"]
     red_total = sc["red_total"]
@@ -1362,21 +1735,15 @@ def build_score_summary(sc: dict) -> str:
     if yellow_total:
         parts.append(f"− 黄灯 {yellow_total:.1f}")
     formula = " ".join(parts)
-    # 红旗扣分已在 1D 维度分内先行扣减（1D 行内注解展示扣前分），算式不重复列入，
-    # 否则 footer 等式不成立（层分已含扣减，再列一次 = 双重扣分）
+    # 红旗扣分已在 1D 维度分内先行扣减（图上 3.4 条为扣后分），算式不重复列入
     red_note = ""
     if red_total:
         red_items = "；".join(str(r.get("item", "")) for r in sc["red_deductions"])
-        red_note = (f' <span class="muted">（1D 得分已含红旗扣分 {red_total:.1f}'
+        red_note = (f' <span class="muted">（3.4 财务健康得分已含红旗扣分 {red_total:.1f}'
                     + (f'：{_esc(red_items)}' if red_items else "") + '）</span>')
-    footer = (
-        f'<div class="layer-summary">质量分 = {formula} = '
-        f'<span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span>'
-        f' <strong>{_quality_verdict(quality)}</strong>{red_note}</div>')
-    return ('<span class="section-tag">质量分明细</span>'
-            '<div class="table-scroll"><table><thead><tr><th>层</th><th>维度</th>'
-            '<th class="center">得分</th><th class="center">判词</th><th class="num">权重</th><th class="num">加权</th></tr></thead>'
-            '<tbody>' + sc["rows_html"] + '</tbody></table></div>' + footer)
+    return (f'<div class="layer-summary">质量分 = {formula} = '
+            f'<span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span>'
+            f' <strong>{_quality_verdict(quality)}</strong>{red_note}</div>')
 
 
 def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
@@ -1560,6 +1927,19 @@ def _strip_unit(v, units: str) -> str:
     return re.sub(rf"\s*[{units}]+$", "", str(v or "—").strip())
 
 
+def _fmt_thousands(v: str) -> str:
+    """Hero 金额类数值卡显示层千位符归一（神华修复版 Hero 总市值 10330.7 裸数字事故修复）：
+    "10330.7" / "10,330.7" → "10,330.7"；整数部分 <1000、非纯数字（"—"、已带单位）原样返回。
+    只用于纯展示字段（mcap）；price 走 _num 解析，禁止带逗号，不经此函数。"""
+    s = str(v or "").strip()
+    if not re.fullmatch(r"\d[\d,]*\.?\d*", s):
+        return s
+    int_part, dot, frac = s.replace(",", "").partition(".")
+    if len(int_part) < 4:
+        return int_part + (dot + frac if dot else "")
+    return f"{int(int_part):,}" + (dot + frac if dot else "")
+
+
 def _check_required_scalars(fill: dict) -> None:
     """必填标量字段（company/code/date）缺失即拒渲染。"""
     for k in REQUIRED_SCALAR:
@@ -1644,7 +2024,6 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
     red_flag = sc["red_flag"]
     yellow_total = sc["yellow_total"]
     repl = {
-        "TOP_ICON": _esc(fill.get("top_icon") or fill["company"][0]),
         "DATE": _esc(date),
         "COMPANY": _esc(fill["company"]),
         "CODE": _esc(fill["code"]),
@@ -1653,7 +2032,7 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "THESIS_HTML": fill.get("thesis_html", ""),
         "PRICE": str(fill.get("price", "—")),
         "PRICE_SUB_HTML": fill.get("price_sub_html", ""),
-        "MCAP": _strip_unit(fill.get("mcap"), "亿万"),
+        "MCAP": _fmt_thousands(_strip_unit(fill.get("mcap"), "亿万")),
         "MCAP_SUB": fill.get("mcap_sub", ""),
         "PE_TTM": _strip_unit(fill.get("pe_ttm"), "xX倍"),
         "PE_SUB": fill.get("pe_sub", ""),
@@ -1682,6 +2061,13 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "POSITION_HTML": _tag_timing_table(fill.get("position_html", "")),
         # 脚本生成区块：6 质量分汇总 / 7 估值过程卡 / 11 三轨判定与仓位结论卡
         "SCORE_SUMMARY_HTML": build_score_summary(sc),
+        # v4.8 图表与导航增强（评分分布横条 / 敏感性龙卷风 / PE 历史带 / 回测哑铃 / 侧栏目录；
+        # 龙卷风与 PE 带依赖可选字段，缺失返回空串 → 模板条件块整块删除）
+        "TOC_HTML": build_toc(bool(fill.get("cycle_html")), bool(review_html)),
+        "SCORE_BARS_HTML": build_score_bars(sc),
+        "SENSITIVITY_PLOT_HTML": build_sensitivity_tornado(fill),
+        "PE_BAND_HTML": build_pe_band(fill),
+        "REVIEW_PLOT_HTML": build_review_dumbbell(prev, quality, valuation, timing),
         "VALUATION_PROCESS_HTML": build_valuation_process_card(calc, valuation_calc,
                                                                fill.get("valuation_inputs") or {}),
         "POSITION_CARD_HTML": build_position_card(fill, quality, valuation, timing, calc, red_flag),
@@ -1871,4 +2257,9 @@ if __name__ == "__main__":
     if "check" in flags:
         check_fill(args[0])
     else:
-        render(args[0], opts.get("out"))
+        try:
+            render(args[0], opts.get("out"))
+        except ValueError as e:
+            # 与 --check 同款友好捕获：校验失败不把完整 traceback 吐进 agent 上下文
+            print(f"✗ 渲染被拒绝：\n  {e}", file=sys.stderr)
+            sys.exit(2)

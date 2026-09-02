@@ -14,103 +14,95 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-  font-size: 14px; line-height: 1.7; color: #2c3e50;
-  background: #eef1f5; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
+  font-size: 14px; line-height: 1.7; color: #3a362e;
+  background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 .up { color: #6ba86b; }
 .down { color: #c75b5b; }
 .mid { color: #c08a2e; }
-.plot-wrap { margin: 4px 0 6px; border: 1px solid #eef1f5; border-radius: 6px; background: #fbfcfd; padding: 12px 10px 6px; }
+.plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; }
 .plot-wrap svg { max-width: 1000px; margin: 0 auto; }
-.topbar { display: flex; justify-content: space-between; align-items: center; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 24px; margin-bottom: 16px; }
-.topbar-left { display: flex; align-items: center; gap: 12px; }
-.topbar-icon { width: 36px; height: 36px; background: #4a6fa5; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 15px; }
-.topbar-title { font-size: 15px; font-weight: 600; color: #2c3e50; }
-.topbar-sub { font-size: 11px; color: #8899a6; }
-.topbar-right { display: flex; align-items: center; gap: 16px; }
-.topbar-tag { font-size: 11px; color: #8899a6; border: 1px solid #dde3ea; border-radius: 4px; padding: 3px 8px; }
-.topbar-tag.active { background: #4a6fa5; color: #fff; border-color: #4a6fa5; }
-.hero { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
+.hero { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
 .hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
 .hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; }
 .hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
-.hero h1 { font-size: 26px; font-weight: 700; color: #1a2b4a; margin: 0 0 4px; }
-.hero .subtitle { font-size: 12.5px; color: #8899a6; }
-.hero .thesis { font-size: 14px; line-height: 1.8; color: #4a5568; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
+.hero h1 { font-size: 26px; font-weight: 700; color: #2b2620; margin: 0 0 4px; }
+.hero .subtitle { font-size: 12.5px; color: #8a8375; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #57524a; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
 /* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
 .hero-tracks { display: flex; gap: 16px; align-items: stretch; flex-shrink: 0; }
-.hero-track { text-align: center; border: 1px solid #dde3ea; border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
-.hero-track.quality { background: #f0f5fa; }
-.hero-track.valuation { background: #fff; }
-.hero-track .s-label { font-size: 12px; color: #8899a6; letter-spacing: 1.2px; margin-bottom: 4px; }
+.hero-track { text-align: center; border: 1px solid #e0d7c3; border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
+.hero-track.quality { background: #f2eddd; }
+.hero-track.valuation { background: #fffdf9; }
+.hero-track .s-label { font-size: 12px; color: #8a8375; letter-spacing: 1.2px; margin-bottom: 4px; }
 .hero-track .s-value { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .hero-track.quality .s-value { color: #4a6fa5; }
 .hero-track.valuation .s-value.score-good { color: #6ba86b; }
 .hero-track.valuation .s-value.score-mid { color: #c08a2e; }
 .hero-track.valuation .s-value.score-bad { color: #c75b5b; }
-.hero-track .s-sub { font-size: 12px; color: #8899a6; margin-top: 3px; }
+.hero-track .s-sub { font-size: 12px; color: #8a8375; margin-top: 3px; }
 /* 时机分：一行灰字，弱化但可读（不偷感） */
-.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #9aa7b4; letter-spacing: 0.3px; text-align: center; }
+.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #9a917f; letter-spacing: 0.3px; text-align: center; }
 .hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
-.hero-data-strip { display: flex; border-top: 1px solid #eef1f5; padding-top: 10px; }
+.hero-data-strip { display: flex; border-top: 1px solid #ece7db; padding-top: 10px; }
 .hero-data-strip .d-item { flex: 1; min-width: 0; text-align: center; }
-.hero-data-strip .d-item + .d-item { border-left: 1px solid #eef1f5; padding-left: 18px; margin-left: 18px; }
-.hero-data-strip .d-label { font-size: 11px; color: #8899a6; margin-bottom: 3px; }
-.hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
-.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #8899a6; }
-.hero-data-strip .d-sub { font-size: 11px; color: #8899a6; margin-top: 3px; }
+.hero-data-strip .d-item + .d-item { border-left: 1px solid #ece7db; padding-left: 18px; margin-left: 18px; }
+.hero-data-strip .d-label { font-size: 11px; color: #8a8375; margin-bottom: 3px; }
+.hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #8a8375; }
+.hero-data-strip .d-sub { font-size: 11px; color: #8a8375; margin-top: 3px; }
 .metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
-.metric-card { flex: 1; background: #fff; border: 1px solid #dde3ea; border-radius: 8px; padding: 16px 18px; text-align: center; }
-.metric-card .label { font-size: 11px; color: #8899a6; margin-bottom: 4px; }
-.metric-card .value { font-size: 24px; font-weight: 700; color: #1a2b4a; font-variant-numeric: tabular-nums; }
-.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #8899a6; }
-.metric-card .sub { font-size: 11px; color: #8899a6; margin-top: 4px; }
+.metric-card { flex: 1; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 16px 18px; text-align: center; }
+.metric-card .label { font-size: 11px; color: #8a8375; margin-bottom: 4px; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #8a8375; }
+.metric-card .sub { font-size: 11px; color: #8a8375; margin-top: 4px; }
 /* 三指标卡 value 着色（优先级高于 .metric-card .value 的默认色） */
 .metric-card .value.up { color: #6ba86b; }
 .metric-card .value.down { color: #c75b5b; }
 .metric-card .value.mid { color: #c08a2e; }
-.section { background: #fff; border: 1px solid #dde3ea; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
-.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #eef1f5; background: #fafbfc; }
-.section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #eef2f7; border-radius: 4px; padding: 2px 8px; }
-.section-title { font-size: 15px; font-weight: 600; color: #1a2b4a; }
-.section-meta { margin-left: auto; font-size: 11px; color: #8899a6; }
+.section { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #ece7db; background: #f7f2e7; }
+.section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #efe9db; border-radius: 4px; padding: 2px 8px; }
+.section-title { font-size: 15px; font-weight: 600; color: #2b2620; }
+.section-meta { margin-left: auto; font-size: 11px; color: #8a8375; }
 .section-body { padding: 20px 24px; }
 .badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
 .badge-green { background: #6ba86b; }
 .badge-orange { background: #c08a2e; }
 .badge-red { background: #c75b5b; }
 .badge-blue { background: #4a6fa5; }
-.badge-gray { background: #b0bac4; }
+.badge-gray { background: #b3ab93; }
 .badge-lg { font-size: 15px; padding: 3px 10px; }
-.section-tag { display: inline-block; background: #eef2f7; color: #4a6fa5; border: 1px solid #dde3ea; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.section-tag { display: inline-block; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
-.muted { color: #8899a6; }
-.verdict { color: #8899a6; margin: 8px 0 16px; font-size: 13px; border-left: 2px solid #dde3ea; padding-left: 10px; }
+.muted { color: #8a8375; }
+.verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
-th { background: #f5f7fa; color: #8899a6; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #dde3ea; }
-td { padding: 8px 12px; border-bottom: 1px solid #eef1f5; color: #2c3e50; }
-tbody tr:nth-child(even) td { background: #fafbfc; }
-tr:hover td { background: #f0f5fa; }
+th { background: #f1ebdd; color: #8a8375; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
+tbody tr:nth-child(even) td { background: #f7f2e7; }
+tr:hover td { background: #f2eddd; }
 td.num, th.num { text-align: right; }
 td.center, th.center { text-align: center; }
-.freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fff; z-index: 2; box-shadow: 1px 0 0 #eef1f5; }
-.freeze-first th:first-child { background: #f5f7fa; z-index: 3; }
-.freeze-first tbody tr:nth-child(even) td:first-child { background: #fafbfc; }
-.freeze-first tbody tr:hover td:first-child { background: #f0f5fa; }
-.source { display: block; font-size: 11px; color: #8899a6; margin: 4px 0 12px; }
-.conclusion-box { background: #f8fafc; border: 1px solid #dde3ea; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
+.freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fffdf9; z-index: 2; box-shadow: 1px 0 0 #ece7db; }
+.freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
+.freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
+.freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
+.source { display: block; font-size: 11px; color: #8a8375; margin: 4px 0 12px; }
+.conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
 .warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .danger-card { background: #fdf0f0; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
-.info-card { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .deduction { color: #c75b5b; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
 .deduction + br { display: none; }
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
 /* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分 */
-.timing-table tr.total td { font-weight: 700; background: #f0f5fa; }
-.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #eef1f5; font-size: 12px; color: #5a6b7d; }
-.prev-tag { display: inline-block; background: #eef2f7; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
+.timing-table tr.total td { font-weight: 700; background: #f2eddd; }
+.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ece7db; font-size: 12px; color: #66604f; }
+.prev-tag { display: inline-block; background: #efe9db; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
 .rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
 td.rev, th.rev { padding: 8px 12px; }
 .scenario-pess { color: #c75b5b; }
@@ -120,21 +112,30 @@ td.rev, th.rev { padding: 8px 12px; }
 .flag-bad { color: #c75b5b; font-weight: 600; }
 .flag-na { color: #b8955a; font-weight: 600; }
 .matrix-table th, .matrix-table td { text-align: center; font-size: 12px; padding: 14px 10px; }
-.matrix-table .target { background: #eef2f7; font-weight: 700; color: #4a6fa5; }
-.layer-summary { background: #f0f5fa; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+.matrix-table .target { background: #efe9db; font-weight: 700; color: #4a6fa5; }
+.layer-summary { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
 .dim-block { margin-bottom: 20px; }
-.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eef1f5; }
-.dim-name { font-size: 14px; font-weight: 600; color: #2c3e50; }
-.dim-weight { font-size: 11px; color: #8899a6; }
+.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #ece7db; }
+.dim-name { font-size: 14px; font-weight: 600; color: #3a362e; }
+.dim-weight { font-size: 11px; color: #8a8375; }
 /* 10 三轨评分三行公式（精简汇总） */
-.track-summary { background: #f8fafc; border: 1px solid #dde3ea; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
+.track-summary { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
 .ts-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
-.ts-row + .ts-row { border-top: 1px solid #eef1f5; }
-.ts-label { min-width: 48px; color: #8899a6; font-size: 12px; }
-.ts-formula { color: #5a6b7d; font-variant-numeric: tabular-nums; }
-.decision-bar { background: #f0f5fa; border: 1px solid #dde3ea; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
-.disclaimer { color: #8899a6; font-size: 11px; padding-top: 16px; margin-top: 24px; }
+.ts-row + .ts-row { border-top: 1px solid #ece7db; }
+.ts-label { min-width: 48px; color: #8a8375; font-size: 12px; }
+.ts-formula { color: #66604f; font-variant-numeric: tabular-nums; }
+.decision-bar { background: #f2eddd; border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
+.disclaimer { color: #8a8375; font-size: 11px; padding-top: 16px; margin-top: 24px; }
 .table-scroll { overflow-x: auto; }
+/* v4.8 版式修复：段落间距（此前 p 零间距导致核心结论四段粘合）/ 侧栏目录（固定右缘，宽屏显示） */
+.section-body p + p { margin-top: 10px; }
+.section-body p + ul, .section-body ul + p { margin-top: 8px; }
+.section { scroll-margin-top: 10px; }
+html { scroll-behavior: smooth; }
+.toc-side { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 50; }
+.toc-side a { font-size: 11px; color: #8a8375; text-decoration: none; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
+.toc-side a:hover { background: #f2eddd; color: #2b2620; opacity: 1; }
+@media (max-width: 1279px) { .toc-side { display: none; } }
 @media (max-width: 768px) {
   body { padding: 12px 8px; }
   .metric-row { flex-wrap: wrap; }
@@ -153,26 +154,12 @@ td.rev, th.rev { padding: 8px 12px; }
   body { background: #fff; padding: 12px; }
   .section, .hero, .metric-card { border: 1px solid #ccc; }
   th { background: #e8e8e8; }
+  .toc-side { display: none; }
 }
 </style>
 </head>
 <body>
 
-<!-- Topbar -->
-<div class="topbar">
-  <div class="topbar-left">
-    <div class="topbar-icon">{{TOP_ICON}}</div>
-    <div>
-      <div class="topbar-title">个股深度分析引擎</div>
-      <div class="topbar-sub">Three-Track Framework · Quality × Valuation × Timing</div>
-    </div>
-  </div>
-  <div class="topbar-right">
-    <span class="topbar-tag">深度分析</span>
-    <span class="topbar-tag">三轨制</span>
-    <span class="topbar-tag active">{{DATE}}</span>
-  </div>
-</div>
 
 <!-- Hero：三轨（质量分 + 估值分 双主分，时机分弱化） -->
 <div class="hero">
@@ -194,7 +181,7 @@ td.rev, th.rev { padding: 8px 12px; }
         <div class="hero-track valuation">
           <div class="s-label">估值分</div>
           <div class="s-value {{VALUATION_VALUE_CLASS}}">{{VALUATION_SCORE}}</div>
-          <div class="s-sub">安全边际 · 由三情景推导</div>
+          <div class="s-sub">中枢·赔率·倍数·股息 四件套加权</div>
         </div>
       </div>
       <div class="hero-timing-mini">时机分 <span class="tv">{{TIMING_SCORE}}</span> · 微调 ±1 档</div>
@@ -227,8 +214,11 @@ td.rev, th.rev { padding: 8px 12px; }
   <!--ENDIF-->
 </div>
 
+<!-- 锚点目录（脚本按条件章节实际存在性生成） -->
+{{TOC_HTML}}
+
 <!-- 1 核心结论 -->
-<div class="section">
+<div class="section" id="s1">
   <div class="section-header">
     <span class="section-num">1</span>
     <span class="section-title">核心结论</span>
@@ -241,18 +231,21 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 2 关键利润驱动 -->
-<div class="section">
+<div class="section" id="s2">
   <div class="section-header">
     <span class="section-num">2</span>
     <span class="section-title">关键利润驱动识别</span>
   </div>
   <div class="section-body">
     {{P0_HTML}}
+    <!--IF:SENSITIVITY_PLOT_HTML-->
+    {{SENSITIVITY_PLOT_HTML}}
+    <!--ENDIF-->
   </div>
 </div>
 
 <!-- 3 公司本质 -->
-<div class="section">
+<div class="section" id="s3">
   <div class="section-header">
     <span class="section-num">3</span>
     <span class="section-title">公司本质 — 什么成色</span>
@@ -264,7 +257,7 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 4 未来预期 -->
-<div class="section">
+<div class="section" id="s4">
   <div class="section-header">
     <span class="section-num">4</span>
     <span class="section-title">未来预期 — 利润往哪走</span>
@@ -276,7 +269,7 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 5 风险评估（质量轨门禁） -->
-<div class="section">
+<div class="section" id="s5">
   <div class="section-header">
     <span class="section-num">5</span>
     <span class="section-title">风险评估（红/黄灯）— 质量轨门禁</span>
@@ -288,19 +281,20 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 6 质量分汇总（脚本生成，模型不写） -->
-<div class="section">
+<div class="section" id="s6">
   <div class="section-header">
     <span class="section-num">6</span>
     <span class="section-title">质量分汇总</span>
     <span class="section-meta">质量分 {{QUALITY_SCORE}}</span>
   </div>
   <div class="section-body">
+    {{SCORE_BARS_HTML}}
     {{SCORE_SUMMARY_HTML}}
   </div>
 </div>
 
 <!-- 7 估值与安全边际（估值轨，原 05） -->
-<div class="section">
+<div class="section" id="s7">
   <div class="section-header">
     <span class="section-num">7</span>
     <span class="section-title">估值与安全边际（{{VALUATION_METHOD}}）</span>
@@ -309,6 +303,9 @@ td.rev, th.rev { padding: 8px 12px; }
   <div class="section-body">
     <!--IF:SCENARIO_SPECTRUM_HTML-->
     {{SCENARIO_SPECTRUM_HTML}}
+    <!--ENDIF-->
+    <!--IF:PE_BAND_HTML-->
+    {{PE_BAND_HTML}}
     <!--ENDIF-->
     <!--IF:SCENARIO_BLOCK_HTML-->
     {{SCENARIO_BLOCK_HTML}}
@@ -319,7 +316,7 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 8 市场预期差拆解 -->
-<div class="section">
+<div class="section" id="s8">
   <div class="section-header">
     <span class="section-num">8</span>
     <span class="section-title">市场预期差拆解</span>
@@ -331,7 +328,7 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 9 同业横向对比 -->
-<div class="section">
+<div class="section" id="s9">
   <div class="section-header">
     <span class="section-num">9</span>
     <span class="section-title">同业横向对比</span>
@@ -347,7 +344,7 @@ td.rev, th.rev { padding: 8px 12px; }
 
 <!--IF:CYCLE_HTML-->
 <!-- 10 周期规律（条件章节） -->
-<div class="section">
+<div class="section" id="s10">
   <div class="section-header">
     <span class="section-num">10</span>
     <span class="section-title">周期规律</span>
@@ -360,7 +357,7 @@ td.rev, th.rev { padding: 8px 12px; }
 <!--ENDIF-->
 
 <!-- 11 仓位与时机决策 -->
-<div class="section">
+<div class="section" id="s11">
   <div class="section-header">
     <span class="section-num">11</span>
     <span class="section-title">仓位与时机决策</span>
@@ -373,7 +370,7 @@ td.rev, th.rev { padding: 8px 12px; }
 </div>
 
 <!-- 12 跟踪仪表盘 -->
-<div class="section">
+<div class="section" id="s12">
   <div class="section-header">
     <span class="section-num">12</span>
     <span class="section-title">跟踪仪表盘</span>
@@ -386,13 +383,14 @@ td.rev, th.rev { padding: 8px 12px; }
 
 <!--IF:REVIEW_HTML-->
 <!-- 13 回测复盘（条件章节） -->
-<div class="section">
+<div class="section" id="s13">
   <div class="section-header">
     <span class="section-num">13</span>
     <span class="section-title">回测复盘</span>
     <span class="section-meta">基于 {{PREV_DATE}} 版报告</span>
   </div>
   <div class="section-body">
+    {{REVIEW_PLOT_HTML}}
     {{REVIEW_HTML}}
   </div>
 </div>

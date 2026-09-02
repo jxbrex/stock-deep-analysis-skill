@@ -80,7 +80,9 @@ def extract(path: str) -> dict:
         cm = re.match(r"(.+?)[（(]([\dA-Z.]+)[）)]", h1)
         if cm:
             out["company"], out["code"] = cm.group(1).strip(), cm.group(2).strip()
-    m = re.search(r'topbar-tag active">([^<]+)<', html)
+    m = re.search(r'topbar-tag active">([^<]+)<', html)  # v4.7 前模板顶栏
+    if not m:  # v4.7 起顶栏已删，日期在 Hero 副标题「｜报告日期：YYYY-MM-DD」
+        m = re.search(r"报告日期：\s*(\d{4}-\d{2}-\d{2})", html)
     if m:
         out["date"] = m.group(1).strip()
 

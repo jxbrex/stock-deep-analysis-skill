@@ -84,8 +84,24 @@ def test_extract_anchors():
     print("OK extract 锚点（公司/代码/日期/三轨分/目标价区间）")
 
 
+def test_extract_date_no_topbar():
+    """v4.7 起模板删顶栏：日期改从 Hero 副标题「报告日期：」提取，旧版顶栏路径仍兼容。"""
+    new_fmt = FAKE_REPORT.replace(
+        '<span class="topbar-tag active">2026-08-08</span>',
+        '<div class="subtitle">测试行业｜报告日期：2026-08-19</div>')
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "测试股份-600000-7.50-6.5-2026-08-19.html", new_fmt)
+        out = E.extract(p)
+        p2 = _write(d, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
+        out2 = E.extract(p2)
+    assert out["date"] == "2026-08-19", f"新版（无顶栏）日期提取失败: {out.get('date')}"
+    assert out2["date"] == "2026-08-08", f"旧版（顶栏）日期提取回退: {out2.get('date')}"
+    print("OK extract 日期双路径（新版副标题 / 旧版顶栏兼容）")
+
+
 if __name__ == "__main__":
     test_find_prev_report()
     test_find_include_unmarked()
     test_extract_anchors()
-    print("全部 3 项测试通过")
+    test_extract_date_no_topbar()
+    print("全部 4 项测试通过")

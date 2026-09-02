@@ -11,7 +11,9 @@ test_em_fetch.py — em_fetch.py 无网络单元测试（自包含、全 assert�
 
 运行: python test_em_fetch.py（scripts 目录下）
 """
+import os
 import sys
+import time
 from datetime import date
 
 import em_fetch as em
@@ -163,5 +165,97 @@ try:
 finally:
     em.get = _orig_get
 print("5. 陈旧档拦截 通过")
+
+# ---------------- 6. token 缺失硬告警（无网络，mock ts_call） ----------------
+# 神华事故教训：RuntimeError（token 未配置/接口报错）曾被裸 except 静默吞掉 → 白走降级链。
+# 收窄后：OSError 静默、RuntimeError 必须打印 ⚠️ 到 stderr。
+import io
+import contextlib
+
+_orig_ts = em.ts_call
+_orig_token = em._tushare_token
+try:
+    def _boom(*a, **k):
+        raise RuntimeError("tushare token 未配置（mock）")
+
+    em.ts_call = _boom
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        assert em.fetch_audit("600989") is None
+        assert em.fetch_debt("600989") is None
+        g = em.fetch_governance("600989")
+        assert g["pledge"] is None and g["trades"] == []
+        assert em.fetch_disclosure("600989") is None
+    err = buf.getvalue()
+    assert err.count("⚠️") >= 5, f"4 函数 6 个取数点的 RuntimeError 应逐条告警，实际 {err.count('⚠️')} 条"
+    assert "token 未配置" in err, "告警应含原因"
+
+    # OSError（网络层）仍静默
+    em.ts_call = lambda *a, **k: (_ for _ in ()).throw(ConnectionError("mock 断网"))
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        assert em.fetch_audit("600989") is None
+    assert "⚠️" not in buf.getvalue(), "网络层错误不应告警（静默走降级）"
+finally:
+    em.ts_call = _orig_ts
+    em._tushare_token = _orig_token
+print("6. token 缺失硬告警 通过")
+
+# ---------------- 7. 磁盘缓存（无网络，mock urlopen + 临时目录） ----------------
+import json as _json
+import tempfile as _tmp
+
+_orig_dir, _orig_no = em._CACHE_DIR, em._NO_CACHE
+em._CACHE_DIR = _tmp.mkdtemp()
+em._NO_CACHE = False
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._p = _json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return self._p
+
+
+_net = {"n": 0}
+_orig_open = em.urllib.request.urlopen
+em.urllib.request.urlopen = lambda *a, **k: (_net.__setitem__("n", _net["n"] + 1),
+                                             _Resp({"code": 0, "data": {"fields": ["a"],
+                                                                        "items": [[1]]}}))[1]
+try:
+    params = {"ts_code": "600989.SH", "start_date": "20200101"}
+    em._TS_CACHE.clear()
+    r1 = em.ts_call("daily_basic", params)
+    em._TS_CACHE.clear()  # 清进程缓存：第二发必须命中磁盘
+    r2 = em.ts_call("daily_basic", params)
+    assert r1 == r2 == [{"a": 1}]
+    assert _net["n"] == 1, f"磁盘缓存应省去第二次网络请求，实际 {_net['n']} 次"
+
+    # TTL 过期（行情档 2h）→ 重新请求
+    f = os.listdir(em._CACHE_DIR)[0]
+    stale = os.path.join(em._CACHE_DIR, f)
+    old = time.time() - 3 * 3600
+    os.utime(stale, (old, old))
+    em._TS_CACHE.clear()
+    em.ts_call("daily_basic", params)
+    assert _net["n"] == 2, "过期缓存应重新取数"
+
+    # EM_FETCH_NO_CACHE 旁路：新鲜缓存也不读
+    em._NO_CACHE = True
+    em._TS_CACHE.clear()
+    em.ts_call("daily_basic", params)
+    assert _net["n"] == 3, "NO_CACHE 旁路必须强制走网络"
+finally:
+    em.urllib.request.urlopen = _orig_open
+    em._CACHE_DIR, em._NO_CACHE = _orig_dir, _orig_no
+    em._TS_CACHE.clear()
+print("7. 磁盘缓存（命中 / TTL 过期重取 / NO_CACHE 旁路）通过")
 
 print("\n全部断言通过", file=sys.stderr)

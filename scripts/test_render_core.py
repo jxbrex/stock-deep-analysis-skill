@@ -159,6 +159,38 @@ def test_rejections():
     _expect_valueerror(f, "price 非数字")
 
 
+def test_fmt_thousands():
+    """Hero 金额卡千位符归一：裸数字补逗号，已有逗号幂等，<1000/非数字不动，price 类不走此路。"""
+    assert R._fmt_thousands("10330.7") == "10,330.7"
+    assert R._fmt_thousands("10,330.7") == "10,330.7"
+    assert R._fmt_thousands("999.9") == "999.9"
+    assert R._fmt_thousands("188153") == "188,153"
+    assert R._fmt_thousands("—") == "—"
+    assert R._fmt_thousands("23.34万") == "23.34万"  # 带单位不归一
+    print("OK 千位符归一（补逗号 / 幂等 / <1000 不动 / 非数字不动）")
+
+
+def test_quote_consistency():
+    """quote 防伪（神华事故修复）：一致过 / 偏差>1% 拒 / 源文件读不到拒 / 缺 quote 仅告警不拒。"""
+    with tempfile.TemporaryDirectory() as d:
+        ref = os.path.join(d, "_em_quote.json")
+        with open(ref, "w", encoding="utf-8") as fp:
+            json.dump({"price": 10.0, "pe_ttm": 11.0}, fp)
+        f = minimal_fill(quote={"source_file": ref, "date": "2026-08-27"})
+        R.validate_content(f, R.compute_valuation(f))  # 一致 → 过
+        f["price"] = "10.05"  # 0.5% 偏差 → 仍过
+        R.validate_content(f, R.compute_valuation(f))
+        f["price"] = "10.5"  # 5% 偏差 → 拒
+        _expect_valueerror(f, "price 与落盘值偏差>1%")
+        f = minimal_fill(quote={"source_file": os.path.join(d, "不存在.json"),
+                                "date": "2026-08-27"})
+        _expect_valueerror(f, "quote.source_file 读不到")
+        # 缺 quote → 不拒（告警走 stderr）
+        g = minimal_fill()
+        R.validate_content(g, R.compute_valuation(g))
+    print("OK quote 防伪（一致过 / 0.5%过 / 5%拒 / 文件缺失拒 / 缺字段不拒）")
+
+
 def test_bom_fill_loads():
     """带 BOM 的 UTF-8 fill JSON 必须可解析。"""
     with tempfile.TemporaryDirectory() as d:
@@ -180,6 +212,109 @@ def test_currency_hkd():
     assert "港元" in html, "输出应含「港元」"
     assert "10-12 港元" in html, "情景表目标价行应用港元"
     assert "{{CUR}}" not in html, "{{CUR}} 必须被替换"
+
+
+def test_nice_ticks():
+    """nice-number 刻度：步长取 1/2/2.5/5×10^k，刻度为步长整数倍且落在值域内。"""
+    assert R._ticks(19, 69) == [20, 40, 60]
+    assert R._ticks(0, 10, 6) == [0, 2, 4, 6, 8, 10]
+    t3 = R._ticks(8.7, 34.6)
+    assert t3 == [10, 20, 30], f"实际 {t3}"
+    t4 = R._ticks(0.22, 0.88)
+    diffs = {round(t4[i + 1] - t4[i], 9) for i in range(len(t4) - 1)}
+    assert len(diffs) == 1 and all(0.22 - 1e-9 <= v <= 0.88 + 1e-9 for v in t4), f"实际 {t4}"
+
+
+def test_optional_charts_render():
+    """v4.8 可选图：sensitivity/pe_history 填了才出图，缺省时条件块整块删除；
+    评分横条图（数据现成）与侧栏目录始终生成；走廊图横版含单位注；
+    明细表已并入横条图（不再出现）；龙卷风 delta/amount 子行承载金额影响。"""
+    extra = {
+        "sensitivity": [{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
+                        {"name": "产量", "impact": 13}],
+        "pe_history": {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年"},
+    }
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(**extra), fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    for label in ("敏感性龙卷风", "PE(TTM)历史带", "九维评分分布", "目标价走廊"):
+        assert f'aria-label="{label}"' in html, f"缺图：{label}"
+    assert "净利约±9-10亿元" in html, "龙卷风应展示 delta/amount 子行"
+    assert "单位：元" in html, "走廊图应标注币种单位"
+    assert "质量分明细" not in html, "明细表已并入评分横条图，不应再出现"
+    assert "良好" in html, "横条图条端应含判词（7.0 → 良好）"
+    # 缺省渲染：可选图条件块必须整块删除
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(), fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html2 = open(out, encoding="utf-8").read()
+    for label in ("敏感性龙卷风", "PE(TTM)历史带"):
+        assert f'aria-label="{label}"' not in html2, f"缺字段时图应整块删除：{label}"
+    assert 'aria-label="九维评分分布"' in html2, "评分横条图数据现成，应始终生成"
+    assert 'class="toc-side"' in html2 and 'href="#s11"' in html2, "侧栏目录应生成且指向章节锚点"
+
+
+def test_review_dumbbell():
+    """回测模式：prev 填了才出三轨哑铃图，13 章带锚点 id。"""
+    fill = minimal_fill(prev={"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
+                              "timing": 5.0, "target_range": "10-12"},
+                        review_html='<table><tr><td>假设变更对比</td></tr></table>'
+                                    '<span class="source">数据来源：测试</span>'
+                                    '<span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>')
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(fill, fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    assert 'aria-label="三轨分新旧对比"' in html, "回测模式应生成哑铃图"
+    assert 'id="s13"' in html, "回测章节应出现"
+
+
+def test_peers_caliber_warn():
+    """peers_plot 口径一致性：目标点 PE 与 valuation_inputs.pe_ttm 偏差 >30% → 告警（不拒渲染）。"""
+    import contextlib
+    import io
+    fill = minimal_fill(peers_plot={"points": [
+        {"name": "测试股份", "roe": 20, "pe": 20, "target": True},  # vs pe_ttm 11 → 偏差 82%
+        {"name": "同业甲", "roe": 15, "pe": 18}]})
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        R.validate_content(fill, R.compute_valuation(fill))
+    assert "偏差 >30%" in buf.getvalue(), "口径偏差 >30% 应告警"
+    fill2 = minimal_fill(peers_plot={"points": [
+        {"name": "测试股份", "roe": 20, "pe": 11, "target": True},
+        {"name": "同业甲", "roe": 15, "pe": 18}]})
+    buf2 = io.StringIO()
+    with contextlib.redirect_stderr(buf2):
+        R.validate_content(fill2, R.compute_valuation(fill2))
+    assert "偏差 >30%" not in buf2.getvalue(), "口径一致不应告警"
+
+
+def test_peers_label_within_bounds():
+    """右缘点位标签不得越出 SVG 宽度（v4.8 修复回归：右缘公司标签曾被画布裁切）。"""
+    import re as _re
+    html = R.build_peers_plot({"peers_plot": {"points": [
+        {"name": "目标公司", "roe": 20, "pe": 15, "target": True},
+        {"name": "右缘同业", "roe": 10, "pe": 31.06},
+        {"name": "左缘同业", "roe": 25, "pe": 13.3}]}})
+    assert html, "散点图应生成"
+    found = False
+    for m in _re.finditer(r'<text x="([\d.]+)"([^>]*)>([^<]*)</text>', html):
+        x, attrs, txt = float(m.group(1)), m.group(2), m.group(3)
+        if "右缘同业" not in txt:
+            continue
+        found = True
+        w = R._text_w(txt, 12)
+        anchor = "end" if 'text-anchor="end"' in attrs else ("middle" if 'text-anchor="middle"' in attrs else "start")
+        x0 = x - w if anchor == "end" else (x - w / 2 if anchor == "middle" else x)
+        assert x0 >= 0 and x0 + w <= 1000, f"标签越界: {txt} x0={x0:.0f} w={w:.0f}"
+    assert found, "右缘同业标签未渲染"
 
 
 if __name__ == "__main__":

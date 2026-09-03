@@ -274,7 +274,7 @@ def test_optional_charts_render():
 
 
 def test_review_dumbbell():
-    """回测模式：prev 填了才出三轨哑铃图，13 章带锚点 id。"""
+    """回测模式：prev 填了才出三轨哑铃图；回测章=第 12 章（v4.8.1 起提前，在跟踪仪表盘之前）。"""
     fill = minimal_fill(prev={"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
                               "timing": 5.0, "target_range": "10-12"},
                         review_html='<table><tr><td>假设变更对比</td></tr></table>'
@@ -287,7 +287,8 @@ def test_review_dumbbell():
         out = R.render(p, out_path=os.path.join(d, "out.html"))
         html = open(out, encoding="utf-8").read()
     assert 'aria-label="三轨分新旧对比"' in html, "回测模式应生成哑铃图"
-    assert 'id="s13"' in html, "回测章节应出现"
+    assert 'id="s12"' in html and "回测复盘" in html, "回测章节应出现（v4.8.1 起为第 12 章）"
+    assert html.find('id="s12"') < html.find('id="s13"'), "回测复盘应排在跟踪仪表盘（s13）之前"
 
 
 def test_peers_caliber_warn():
@@ -345,7 +346,7 @@ def test_writing_discipline_warns():
     # 四拍挤段：同一 <p> 含 ≥2 个拍名 → 告警
     l1 = ('<div class="dim-block"><p><strong>判词：</strong>矿山服务龙头，海外占比 72% 是核心阿尔法。'
           '<strong>论据：</strong>2025 年报海外毛利 31.2 亿（+24%），续约率 91%（年报 P17）。'
-          '<strong>收口：</strong>护城河在长期服务协议锁定，铜价下行期续约率是唯一先行指标。</p></div>')
+          '<strong>评分：</strong>8.0——护城河在长期服务协议锁定，铜价下行期续约率是唯一先行指标。</p></div>')
     fill4beat = minimal_fill(l1_html="".join(_dim("该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，"
                                                   "行业地位稳固，具备长期参考价值。") for _ in range(5)) + l1)
     assert "四拍挤段" in capture(fill4beat), "四拍挤段应告警"
@@ -403,7 +404,7 @@ def test_segments_chain_charts():
     assert 'aria-label="业务构成"' in html, "业务构成图应生成"
     assert 'aria-label="产业链位置"' in html, "产业链图应生成"
     assert "<!--SEGMENTS-->" not in html and "<!--CHAIN-->" not in html, "锚点必须被替换"
-    assert "毛利 56.8亿（占 62%）" in html, "右列应标注毛利与毛利占比（_fmt 为 %g，62.0→62）"
+    assert "毛利 56.8亿（占 62%）" in html, "柱下应标注毛利与毛利占比（_fmt 为 %g，62.0→62）"
     assert "利润口径为毛利" in html, "毛利口径注记必须在位（分部净利无公开披露）"
     assert "上游 · 供给端" in html and "煤制烯烃一体化" in html, "产业链三栏与公司定位注应渲染"
     # 锚点缺失但字段已填 → 追加第 3 章末尾 + stderr 告警

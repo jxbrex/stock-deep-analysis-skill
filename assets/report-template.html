@@ -369,23 +369,11 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 12 跟踪仪表盘 -->
+<!--IF:REVIEW_HTML-->
+<!-- 12 回测复盘（条件章节；v4.8.1 起提前：先复盘旧指标，后定新跟踪指标） -->
 <div class="section" id="s12">
   <div class="section-header">
     <span class="section-num">12</span>
-    <span class="section-title">跟踪仪表盘</span>
-    <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
-  </div>
-  <div class="section-body">
-    {{DASH_HTML}}
-  </div>
-</div>
-
-<!--IF:REVIEW_HTML-->
-<!-- 13 回测复盘（条件章节） -->
-<div class="section" id="s13">
-  <div class="section-header">
-    <span class="section-num">13</span>
     <span class="section-title">回测复盘</span>
     <span class="section-meta">基于 {{PREV_DATE}} 版报告</span>
   </div>
@@ -395,6 +383,18 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 <!--ENDIF-->
+
+<!-- 13 跟踪仪表盘 -->
+<div class="section" id="s13">
+  <div class="section-header">
+    <span class="section-num">13</span>
+    <span class="section-title">跟踪仪表盘</span>
+    <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
+  </div>
+  <div class="section-body">
+    {{DASH_HTML}}
+  </div>
+</div>
 
 <!-- Disclaimer -->
 <div class="disclaimer">

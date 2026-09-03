@@ -762,6 +762,19 @@ def fetch_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
             if f and latest_f:
                 c = c * f / latest_f   # 前复权
             out.append({"date": _fmt_date(r["trade_date"]), "close": round(c, 2)})
+        # v4.8.1：月度 PE(TTM) 回填（供 price_history 图，替代模型手工「月收×总股本÷TTM净利」）。
+        # 与 fetch_pe_pb_band 同参同字段，命中透明缓存不增发请求；失败静默跳过（仅 close，图降级单线）
+        try:
+            pe_map = {r["trade_date"]: float(r["pe_ttm"])
+                      for r in ts_call("daily_basic", {"ts_code": ts, "start_date": beg, "end_date": end},
+                                       fields="ts_code,trade_date,pe_ttm,pb")
+                      if r.get("trade_date") and r.get("pe_ttm") and float(r["pe_ttm"]) > 0}
+            for k, r in zip(out, sorted(rows, key=lambda x: x["trade_date"])):
+                pe = pe_map.get(r["trade_date"])
+                if pe:
+                    k["pe"] = round(pe, 1)
+        except Exception:
+            pass
         return out
     except Exception:
         return _em_kline_monthly(secid, years, is_hk)
@@ -1573,7 +1586,7 @@ def _sec_quality(pure: str, annual: list) -> list:
 
 
 def _sec_e2(secid: str, years: int, is_hk: bool) -> list:
-    """E2 月线段：区间、最低/最高/最新、近12月收盘序列。"""
+    """E2 月线段：区间、最低/最高/最新、近12月收盘/月末PE(TTM)序列。"""
     out = []
     try:
         kl = fetch_kline_monthly(secid, years, is_hk)
@@ -1582,7 +1595,10 @@ def _sec_e2(secid: str, years: int, is_hk: bool) -> list:
             out.append(f"## E2 月线（{len(kl)}期）\n"
                        f"区间 {kl[0]['date']}~{kl[-1]['date']} | "
                        f"最低{min(closes)} 最高{max(closes)} 最新{closes[-1]}\n"
-                       f"近12月: " + " ".join(str(k['close']) for k in kl[-12:]) + "\n")
+                       f"近12月: " + " ".join(f"{k['close']}/{k['pe']}" if k.get("pe") else str(k['close'])
+                                             for k in kl[-12:]) + "\n"
+                       f"（近12月格式=月收盘/月末PE(TTM)，无 PE 时仅收盘；price_history 的 pe 字段照抄本序列，"
+                       f"不再手工按「月收×总股本÷TTM净利」推算）\n")
     except Exception as e:
         out.append(f"## E2 月线\n[失败: {e}]\n")
     return out

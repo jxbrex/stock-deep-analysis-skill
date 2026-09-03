@@ -306,4 +306,37 @@ finally:
     em.ts_call = _orig_ts9
 print("9. PE 带 P25/P75 + 时机素材 通过")
 
+# ---------------- 10. E2 月线月末 PE(TTM) 回填（无网络，mock ts_call） ----------------
+# v4.8.1：fetch_kline_monthly A股 tushare 路径按月附 pe（月末交易日 pe_ttm，与 PE 带同参命中缓存）；
+# daily_basic 不可用 → 静默降级为仅 close（price_history 图自动只画股价线）
+_orig_ts10 = em.ts_call
+try:
+    rows_m = [{"trade_date": "20260131", "close": 10.0},
+              {"trade_date": "20260228", "close": 11.0},
+              {"trade_date": "20260331", "close": 12.0}]
+    rows_f = [{"trade_date": "20260131", "adj_factor": 1.0},
+              {"trade_date": "20260228", "adj_factor": 1.0},
+              {"trade_date": "20260331", "adj_factor": 1.0}]
+    rows_db = [{"trade_date": "20260131", "pe_ttm": 15.0, "pb": 1.2},
+               {"trade_date": "20260228", "pe_ttm": 16.0, "pb": 1.2},
+               {"trade_date": "20260331", "pe_ttm": 17.0, "pb": 1.2}]
+
+    def _ts10(api, params=None, fields=""):
+        return {"monthly": rows_m, "adj_factor": rows_f, "daily_basic": rows_db}.get(api, [])
+    em.ts_call = _ts10
+    kl = em.fetch_kline_monthly("1.600989", 1, False)
+    assert [k.get("pe") for k in kl] == [15.0, 16.0, 17.0], f"月末 PE 应回填，实际 {kl}"
+
+    def _ts10b(api, params=None, fields=""):
+        if api in ("monthly", "adj_factor"):
+            return {"monthly": rows_m, "adj_factor": rows_f}[api]
+        raise RuntimeError("daily_basic 不可用")
+    em.ts_call = _ts10b
+    kl2 = em.fetch_kline_monthly("1.600989", 1, False)
+    assert all("pe" not in k for k in kl2) and [k["close"] for k in kl2] == [10.0, 11.0, 12.0], \
+        f"daily_basic 失败应静默降级为仅 close，实际 {kl2}"
+finally:
+    em.ts_call = _orig_ts10
+print("10. E2 月线月末 PE(TTM) 回填 通过")
+
 print("\n全部断言通过", file=sys.stderr)

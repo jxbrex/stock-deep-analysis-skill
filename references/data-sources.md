@@ -30,7 +30,7 @@ HTTP 旧版曾因 ZCode 不携带自定义 headers 而 403 禁用，stdio 版绕
 
 **tushare 新增接口（2026-08-07 接入 em_fetch.py，实测有权限）**：`daily_basic` 历史序列（PE/PB 分位）、
 `forecast`（业绩预告）、`express`（业绩快报）、`pledge_stat`/`stk_holdertrade`/`repurchase`（治理包）、
-`disclosure_date`（财报披露计划日，给 12 跟踪仪表盘的精确日期）。
+`disclosure_date`（财报披露计划日，给 13 跟踪仪表盘的精确日期）。
 
 结构化数据占比约 80%，搜索仅用于定性信息。
 

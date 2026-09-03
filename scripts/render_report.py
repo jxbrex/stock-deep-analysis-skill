@@ -70,7 +70,7 @@ LAYER_NAMES = {"L1": "公司本质", "L3": "未来预期"}
 REQUIRED_SCALAR = ["company", "code", "date"]
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.8.1"
+RENDERER_VERSION = "v4.8.2"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -576,6 +576,18 @@ def _lin_map(a: float, b: float, A: float, B: float):
 def _text_w(s: str, font_size: float) -> float:
     """粗估 SVG 文本像素宽（中文/全角≈1em、ASCII≈0.56em），用于标签避让与碰撞检测。"""
     return sum(1.0 if ord(ch) > 0x2E7F else 0.56 for ch in str(s)) * font_size
+
+
+def _wrap_label(s: str, max_w: float, fs: float) -> list:
+    """文本超宽时按视觉宽度对半折两行（断点取两侧宽度最均衡处）；未超宽原样返回 [s]。"""
+    if _text_w(s, fs) <= max_w:
+        return [s]
+    best, best_diff = len(s) // 2, float("inf")
+    for i in range(2, len(s) - 1):
+        d = abs(_text_w(s[:i], fs) - _text_w(s[i:], fs))
+        if d < best_diff:
+            best, best_diff = i, d
+    return [s[:best], s[best:]]
 
 
 def _ticks(lo: float, hi: float, n: int = 5) -> list:
@@ -1118,8 +1130,25 @@ def build_sensitivity_tornado(fill: dict) -> str:
     items.sort(key=lambda r: -r["impact"])
     has_detail = any(it["delta"] or it["amount"] for it in items)
     W = 1000
-    NL, X0, HALF = 230, 600, 300    # 变量名列右缘 / 中轴 / 中轴到满幅端（v4.8.1：W 与全站图表统一 1000，消除容器放大）
-    T, ROW_H, BAR_H = 30, 44 if has_detail else 36, 17
+    # v4.8.2：变量名列宽度自适应——先组文本行并用 _text_w 量宽，超 388px 的长名折两行；
+    # NL/X0/HALF 随最长行宽动态取值，长变量名不再越出画布左缘被裁
+    rows = [[[it["name"] + ("（第一变量）" if i == 0 else "")],
+             " → ".join(x for x in (it["delta"], it["amount"]) if x)] for i, it in enumerate(items)]
+    max_w = max([_text_w(r[0][0], 13.0) for r in rows]
+                + [_text_w(r[1], 11.0) for r in rows if r[1]])
+    if max_w > 388:
+        rows = [[_wrap_label(nm, 388, 13.0), det] for [nm], det in rows]
+        max_w = max([_text_w(t, 13.0) for r in rows for t in r[0]]
+                    + [_text_w(r[1], 11.0) for r in rows if r[1]])
+    NL = min(max(max_w + 12, 230), 400)      # 变量名列右缘
+    if NL <= 230:
+        X0, HALF = 600, 300                  # 短名布局与 v4.8.1 一致（W 与全站图表统一 1000）
+    else:
+        X0 = min(NL + 370, 700)              # 中轴右移给名称让位
+        HALF = min(300, X0 - NL - 63, 950 - X0)  # 条幅收缩，两侧 ±xx% 标签不出界
+    any_wrap = any(len(r[0]) > 1 for r in rows)
+    T, BAR_H = 30, 17
+    ROW_H = (58 if any_wrap else 44) if has_detail else (48 if any_wrap else 36)
     H = T + len(items) * ROW_H + 38
     imax = items[0]["impact"]
     k = HALF / imax if imax else 1.0
@@ -1139,19 +1168,15 @@ def build_sensitivity_tornado(fill: dict) -> str:
         cy = T + i * ROW_H + (ROW_H - BAR_H) / 2
         w = it["impact"] * k
         first = (i == 0)
-        if has_detail:
-            # 双行：变量名 + 「变动幅度 → 金额影响」（替代旧敏感性表的信息）
-            detail = " → ".join(x for x in (it["delta"], it["amount"]) if x)
-            parts.append(f'<text x="{NL}" y="{cy + 3:.1f}" text-anchor="end" font-size="13" '
-                         f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
-                         f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
-            if detail:
-                parts.append(f'<text x="{NL}" y="{cy + 19:.1f}" text-anchor="end" font-size="11" '
-                             f'fill="#8a8375">{_esc(detail)}</text>')
-        else:
-            parts.append(f'<text x="{NL}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="13" '
-                         f'font-weight="{700 if first else 400}" fill="{"#2b2620" if first else "#3a362e"}">'
-                         f'{_esc(it["name"])}{"（第一变量）" if first else ""}</text>')
+        nm_lines, detail = rows[i]
+        # 名称/detail 行组：相对条心垂直居中堆叠（行距 15），长名折行后同样居中
+        lines = [(t, "13", 700 if first else 400, "#2b2620" if first else "#3a362e") for t in nm_lines]
+        if detail:
+            lines.append((detail, "11", 400, "#8a8375"))
+        y0 = cy + BAR_H / 2 + 4.5 - (len(lines) - 1) * 15 / 2
+        for li, (t, fs, fw, fc) in enumerate(lines):
+            parts.append(f'<text x="{NL:.1f}" y="{y0 + li * 15:.1f}" text-anchor="end" font-size="{fs}" '
+                         f'font-weight="{fw}" fill="{fc}">{_esc(t)}</text>')
         parts.append(f'<rect x="{X0 - w:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#c75b5b"/>')
         parts.append(f'<rect x="{X0:.1f}" y="{cy:.1f}" width="{w:.1f}" height="{BAR_H}" fill="#6ba86b"/>')
         parts.append(f'<text x="{X0 - w - 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" text-anchor="end" font-size="12" '
@@ -1230,7 +1255,7 @@ def build_pe_band(fill: dict) -> str:
                      f'stroke="#b3ab93" stroke-width="1.2" stroke-dasharray="3 3"/>')
         parts.append(f'<text x="{xh_hi - 8:.1f}" y="{cy + BH / 2 + 4:.1f}" text-anchor="end" '
                      f'font-size="11" font-weight="700" fill="#8a8375">峰值 {_fmt(hist_hi)}x →</text>')
-    iq_note = f'（P25–P75 {_fmt(p25)}–{_fmt(p75)}x）' if iq_ok else ''
+    iq_note = f'（一半时间落在 {_fmt(p25)}–{_fmt(p75)}x）' if iq_ok else ''
     parts.append(f'<text x="{xh_lo:.1f}" y="{cy - 40}" font-size="11" fill="#8a8375">'
                  f'{_esc(plabel)} {_esc(mlabel)} 区间 {_fmt(hist_lo)}–{_fmt(hist_hi)}x{iq_note}</text>')
     # 合理带（钢蓝实心段；标签放得下就带内白字，否则带下灰字）
@@ -1274,15 +1299,17 @@ def build_pe_band(fill: dict) -> str:
     parts.append('</svg></div>')
     parts.append(f'<span class="source">{_esc(mlabel)} 历史带（脚本按 pe_history + valuation_inputs 生成）：'
                  f'浅带={_esc(plabel)}区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点 PE；三者同一口径'
-                 + ('；深沙段=P25–P75 分位区（em_fetch E1 分位带回填）' if iq_ok else '')
+                 + ('；深沙段=P25–P75 分位区（历史上一半时间的 PE 落点，em_fetch E1 分位带回填）' if iq_ok else '')
                  + ('；右缘「峰值→」=区间上沿超出显示域的截断标注（全量见带上方文字）' if spike else '') + '</span>')
     return "".join(parts)
 
 
 def build_segments_plot(fill: dict) -> str:
-    """03 公司本质·业务构成柱线组合图（fill["segments"] 可选字段，锚点 <!--SEGMENTS--> 挂 3.1）：
-    v4.8.1 改版——竖柱=收入占比（0-100% 定域，首柱钢蓝=第一大业务、其余暖灰），
-    钢蓝折线=毛利率（与占比同一 % 轴，无需副轴）；柱下=分部名 + 收入/毛利额文字，柱端=占比。
+    """03 公司本质·业务构成横条图（fill["segments"] 可选字段，锚点 <!--SEGMENTS--> 挂 3.1）：
+    v4.8.2 改版——横条=收入占比（0-100% 定域，首行钢蓝=第一大业务、其余暖灰），
+    钢蓝圆点=毛利率（与占比同一 % 轴，无需副轴），右列=毛利率数值；
+    左列分部名（宽度自适应、超长折两行），条下=收入/毛利额小字，条端=占比；
+    画布高度随行数自适应（取代 v4.8.1 竖柱版固定 H=360 与柱下单行名称——长名挤压与空旷问题）。
     分部净利润无公开披露（tushare/东财/妙想均只到毛利）——利润口径一律为毛利，图注明示。
     segments: {"period":"2025年报","by":"按产品",
                "items":[{"name":"烯烃产品","revenue":156.2,"rev_pct":48.1,
@@ -1303,80 +1330,84 @@ def build_segments_plot(fill: dict) -> str:
                       "gp_pct": _num(it.get("gp_pct"))})
     if len(items) < 2:
         return ""
-    items.sort(key=lambda r: -r["rev_pct"])  # 第一大业务居左
+    items.sort(key=lambda r: -r["rev_pct"])  # 第一大业务居上
 
-    W, H, L, R, T, B = 1000, 360, 64, 24, 44, 78
-    n = len(items)
-    slot = (W - L - R) / n
-    bar_w = min(slot * 0.52, 96)
-    Y = _lin_map(0, 100, H - B, T)
+    W = 1000
+    name_lines = [_wrap_label(it["name"], 200, 12.0) for it in items]
+    NL = min(max(_text_w(t, 12.0) for ls in name_lines for t in ls) + 10, 220)   # 名称列宽
+    ML = 16                           # 名称列左缘
+    X0 = ML + NL + 12                 # 横条区左缘（% 轴零点）
+    XR = W - 16 - 56                  # % 轴右缘（100% 处）；右侧留 56px 毛利率数值列
+    X = _lin_map(0, 100, X0, XR)
     has_gm = any(it["gross_margin"] is not None for it in items)
     period = str(seg.get("period") or "").strip()
     by = str(seg.get("by") or "").strip()
     tag = "业务构成" + (f'（{_esc(period)}{"·" + _esc(by) if by else ""}）' if period or by else "")
+    BAR_H, T = 16, 58                 # 条高 / 首行顶（图例行 18 + 刻度行 40）
+    row_hs = [60 if len(ls) > 1 else 46 for ls in name_lines]
+    H = T + sum(row_hs) + 30
     parts = [f'<span class="section-tag">{tag}</span>',
              f'<div class="plot-wrap"><svg viewBox="0 0 {W} {H}" role="img" '
              f'aria-label="业务构成" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;">']
-    # 共用 % 轴网格（柱=收入占比、线=毛利率同轴）
-    for v in _ticks(0, 100, 5):
-        gy = Y(v)
-        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="#ece7db" stroke-width="1"/>')
-        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="#8a8375">{_fmt(v)}%</text>')
-    parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
     # 图例（左上）
-    parts.append(f'<rect x="{L}" y="{T - 34}" width="14" height="10" rx="3" fill="#b3ab93"/>')
-    parts.append(f'<text x="{L + 20}" y="{T - 25}" font-size="11" fill="#57524a">收入占比</text>')
+    parts.append(f'<rect x="{ML}" y="8" width="14" height="10" rx="3" fill="#b3ab93"/>')
+    parts.append(f'<text x="{ML + 20}" y="17" font-size="11" fill="#57524a">收入占比</text>')
     if has_gm:
-        lx2 = L + 20 + _text_w("收入占比", 11) + 22
-        parts.append(f'<line x1="{lx2:.0f}" y1="{T - 29}" x2="{lx2 + 22:.0f}" y2="{T - 29}" stroke="#4a6fa5" stroke-width="1.6"/>')
-        parts.append(f'<text x="{lx2 + 28:.0f}" y="{T - 25}" font-size="11" fill="#4a6fa5">毛利率（同一 % 轴）</text>')
-    # 竖柱 + 柱端占比 + 柱下名称/收入/毛利文字
-    cx = [L + i * slot + slot / 2 for i in range(n)]
+        lx2 = ML + 20 + _text_w("收入占比", 11) + 24
+        parts.append(f'<circle cx="{lx2 + 5:.0f}" cy="13" r="4.5" fill="#4a6fa5"/>')
+        parts.append(f'<text x="{lx2 + 14:.0f}" y="17" font-size="11" fill="#4a6fa5">毛利率（同一 % 轴）</text>')
+    # % 轴网格（0-100 定域）+ 顶部刻度 + 右列「毛利率」列头
+    for v in _ticks(0, 100, 5):
+        gx = X(v)
+        parts.append(f'<line x1="{gx:.1f}" y1="{T - 14}" x2="{gx:.1f}" y2="{H - 24}" stroke="#ece7db" stroke-width="1"/>')
+        parts.append(f'<text x="{gx:.1f}" y="{T - 22}" text-anchor="middle" font-size="11" fill="#8a8375">{_fmt(v)}%</text>')
+    if has_gm:
+        parts.append(f'<text x="{W - 16}" y="{T - 22}" text-anchor="end" font-size="11" '
+                     f'font-weight="600" fill="#4a6fa5">毛利率</text>')
+    parts.append(f'<line x1="{X0:.1f}" y1="{H - 24}" x2="{XR:.1f}" y2="{H - 24}" stroke="#e0d7c3" stroke-width="1.2"/>')
+    # 逐行：名称 / 占比条 / 条端或条内占比 / 条下收入·毛利小字 / 毛利率圆点 + 右列数值
+    ry = T
     for i, it in enumerate(items):
-        x, y = cx[i] - bar_w / 2, Y(it["rev_pct"])
+        rh = row_hs[i]
+        bc_y, bc_c = ry + 4, ry + 4 + BAR_H / 2    # 条顶 / 条心 y
+        nls = name_lines[i]
+        ny0 = bc_c + 4.5 - (len(nls) - 1) * 14 / 2
+        for li, t in enumerate(nls):
+            parts.append(f'<text x="{ML + NL:.1f}" y="{ny0 + li * 14:.1f}" text-anchor="end" font-size="12" '
+                         f'font-weight="{700 if i == 0 else 400}" fill="{"#2b2620" if i == 0 else "#3a362e"}">'
+                         f'{_esc(t)}</text>')
+        bw = max(X(it["rev_pct"]) - X0, 2)
         color = "#4a6fa5" if i == 0 else "#b3ab93"
-        parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{H - B - y:.1f}" rx="5" fill="{color}"/>')
-        parts.append(f'<text x="{cx[i]:.1f}" y="{y - 8:.1f}" text-anchor="middle" font-size="12" '
-                     f'font-weight="700" fill="{color}">{_fmt(it["rev_pct"])}%</text>')
-        parts.append(f'<text x="{cx[i]:.1f}" y="{H - B + 18}" text-anchor="middle" font-size="12" '
-                     f'fill="#3a362e">{_esc(it["name"])}</text>')
+        parts.append(f'<rect x="{X0:.1f}" y="{bc_y:.1f}" width="{bw:.1f}" height="{BAR_H}" rx="5" fill="{color}"/>')
+        pct_label = f'{_fmt(it["rev_pct"])}%'
+        if bw >= _text_w(pct_label, 12) + 16:    # 条够长 → 条内右端
+            parts.append(f'<text x="{X0 + bw - 8:.1f}" y="{bc_c + 4.5:.1f}" text-anchor="end" font-size="12" '
+                         f'font-weight="700" fill="{"#fffdf9" if i == 0 else "#3a362e"}">{pct_label}</text>')
+        else:
+            parts.append(f'<text x="{X0 + bw + 8:.1f}" y="{bc_c + 4.5:.1f}" font-size="12" '
+                         f'font-weight="700" fill="{color}">{pct_label}</text>')
+        subs = []
         if it["revenue"] is not None:
-            parts.append(f'<text x="{cx[i]:.1f}" y="{H - B + 34}" text-anchor="middle" font-size="10.5" '
-                         f'fill="#8a8375">收入 {_fmt_amt(it["revenue"])}亿</text>')
+            subs.append(f'收入 {_fmt_amt(it["revenue"])}亿')
         if it["gross_profit"] is not None:
-            gtxt = f'毛利 {_fmt_amt(it["gross_profit"])}亿'
+            g = f'毛利 {_fmt_amt(it["gross_profit"])}亿'
             if it["gp_pct"] is not None:
-                gtxt += f'（占 {_fmt(it["gp_pct"])}%）'
-            parts.append(f'<text x="{cx[i]:.1f}" y="{H - B + 50}" text-anchor="middle" font-size="10.5" '
-                         f'fill="#8a8375">{_esc(gtxt)}</text>')
-    # 毛利率折线（允许中间缺值：缺值处分段；负毛利率按 0 截底绘制、标签仍示真实值）
-    if has_gm:
-        run = []
-        for i in range(n + 1):
-            gm = items[i]["gross_margin"] if i < n else None
-            if gm is not None:
-                run.append(i)
-            elif run:
-                d = "M" + " L".join(f"{cx[j]:.1f},{Y(max(items[j]['gross_margin'], 0)):.1f}" for j in run)
-                parts.append(f'<path d="{d}" fill="none" stroke="#4a6fa5" stroke-width="1.6"/>')
-                run = []
-        for i, it in enumerate(items):
-            if it["gross_margin"] is None:
-                continue
-            gy = Y(max(it["gross_margin"], 0))
-            parts.append(f'<circle cx="{cx[i]:.1f}" cy="{gy:.1f}" r="4" fill="#4a6fa5" stroke="#fffdf9" stroke-width="1.5"/>')
-            if gy > Y(it["rev_pct"]) + 6:
-                # 点落在柱体内（y 向下为正，含 6px 近顶缓冲）：标签放柱内点下方，蓝柱白字/灰柱深字
-                lc = "#fffdf9" if i == 0 else "#3a362e"
-                parts.append(f'<text x="{cx[i]:.1f}" y="{gy + 16:.1f}" text-anchor="middle" font-size="11" '
-                             f'font-weight="700" fill="{lc}">{_fmt(it["gross_margin"])}%</text>')
-            else:
-                parts.append(f'<text x="{cx[i]:.1f}" y="{gy - 10:.1f}" text-anchor="middle" font-size="11" '
-                             f'font-weight="700" fill="#4a6fa5">{_fmt(it["gross_margin"])}%</text>')
+                g += f'（占 {_fmt(it["gp_pct"])}%）'
+            subs.append(g)
+        if subs:
+            parts.append(f'<text x="{X0:.1f}" y="{ry + rh - 10:.1f}" font-size="10.5" '
+                         f'fill="#8a8375">{_esc(" ｜ ".join(subs))}</text>')
+        # 毛利率圆点（同一 % 轴；负值按 0 截底绘制，右列数值仍示真实值）
+        if it["gross_margin"] is not None:
+            parts.append(f'<circle cx="{X(max(it["gross_margin"], 0)):.1f}" cy="{bc_c:.1f}" r="4.5" '
+                         f'fill="#4a6fa5" stroke="#fffdf9" stroke-width="1.5"/>')
+            parts.append(f'<text x="{W - 16}" y="{bc_c + 4.5:.1f}" text-anchor="end" font-size="12" '
+                         f'font-weight="700" fill="#4a6fa5">{_fmt(it["gross_margin"])}%</text>')
+        ry += rh
     parts.append('</svg></div>')
     parts.append('<span class="source">业务构成（脚本按 segments 字段生成，数据来自 em_fetch E6/年报）：'
-                 '竖柱=收入占比（0-100% 定域），首柱=第一大业务，钢蓝折线=毛利率（同一 % 轴）；'
-                 '柱下=分部名与收入/毛利额；<strong>利润口径为毛利——分部净利润无公开披露</strong></span>')
+                 '横条=收入占比（0-100% 定域），首行=第一大业务，钢蓝圆点=毛利率（同一 % 轴），右列=毛利率数值；'
+                 '条下=收入/毛利额；<strong>利润口径为毛利——分部净利润无公开披露</strong></span>')
     return "".join(parts)
 
 
@@ -1474,8 +1505,8 @@ def _inject_l1_charts(l1_html: str, fill: dict) -> str:
 
 def build_price_history(fill: dict) -> str:
     """10 周期规律·股价/PE 历史发丝图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
-    左轴=月收盘价（深灰发丝），右轴=PE(TTM)（钢蓝发丝，过半点缺 PE 则只画股价），
-    横轴按年 tick，末端标注最新值。概览→明细：垫在历史带之后、手写时段拆解之前。
+    左轴=月收盘价（深灰发丝 + 浅沙色面积填充），右轴=PE(TTM)（钢蓝发丝，过半点缺 PE 则只画股价），
+    横轴按年 tick（带竖向浅网格线），末端最新值标注带药丸底色。概览→明细：垫在历史带之后、手写时段拆解之前。
     price_history: {"label":"近5年", "series":[{"m":"2021-09","close":12.3,"pe":15.2}, ...]}
     （旧→新，月频；有效点 <12 → 返回空串，数据太短画不出形态，静默跳过）"""
     ph = fill.get("price_history") or {}
@@ -1524,18 +1555,20 @@ def build_price_history(fill: dict) -> str:
         for v in _ticks(lo_p, hi_p, 5):
             gy = Yp(v)
             parts.append(f'<text x="{W - R + 8}" y="{gy + 4:.1f}" font-size="11" fill="#4a6fa5">{_fmt(v)}</text>')
-    # 横轴：按年 tick（每年首个点）
+    # 横轴：按年 tick（每年首个点；v4.8.2 加竖向浅网格线）
     seen_years = set()
     for i, p in enumerate(pts):
         y = p["m"][:4]
         if y.isdigit() and y not in seen_years:
             seen_years.add(y)
+            parts.append(f'<line x1="{X(i):.1f}" y1="{T}" x2="{X(i):.1f}" y2="{H - B}" stroke="#f0ebdf" stroke-width="1"/>')
             parts.append(f'<text x="{X(i):.1f}" y="{H - 10}" text-anchor="middle" font-size="11" '
                          f'fill="#8a8375">{y}</text>')
     parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="#e0d7c3" stroke-width="1.2"/>')
-    # 股价发丝线
+    # 股价发丝线（v4.8.2：线下浅沙色面积填充，发丝 1.3→1.8）
     path = "M" + " L".join(f"{X(i):.1f},{Yc(p['close']):.1f}" for i, p in enumerate(pts))
-    parts.append(f'<path d="{path}" fill="none" stroke="#3a362e" stroke-width="1.3"/>')
+    parts.append(f'<path d="{path} L{X(n - 1):.1f},{H - B} L{L},{H - B} Z" fill="#efe9db" stroke="none"/>')
+    parts.append(f'<path d="{path}" fill="none" stroke="#3a362e" stroke-width="1.8"/>')
     # PE 发丝线（允许中间缺值：缺值处分段）
     if has_pe:
         run = []
@@ -1544,17 +1577,21 @@ def build_price_history(fill: dict) -> str:
                 run.append(i)
             elif run:
                 d = "M" + " L".join(f"{X(j):.1f},{Yp(pts[j]['pe']):.1f}" for j in run)
-                parts.append(f'<path d="{d}" fill="none" stroke="#4a6fa5" stroke-width="1.3"/>')
+                parts.append(f'<path d="{d}" fill="none" stroke="#4a6fa5" stroke-width="1.8"/>')
                 run = []
-    # 末端点与最新值标注
+    # 末端点与最新值标注（v4.8.2：药丸底色，避免压线难读）
+    def _pill(tx, ty, txt, fc):
+        tw = _text_w(txt, 11)
+        parts.append(f'<rect x="{tx - tw - 10:.1f}" y="{ty - 12:.1f}" width="{tw + 14:.1f}" height="16" '
+                     f'rx="8" fill="#fffdf9" stroke="#e0d7c3"/>')
+        parts.append(f'<text x="{tx:.1f}" y="{ty:.1f}" text-anchor="end" font-size="11" '
+                     f'font-weight="700" fill="{fc}">{txt}</text>')
     parts.append(f'<circle cx="{X(n - 1):.1f}" cy="{Yc(closes[-1]):.1f}" r="3" fill="#3a362e"/>')
-    parts.append(f'<text x="{X(n - 1) - 6:.1f}" y="{Yc(closes[-1]) - 8:.1f}" text-anchor="end" '
-                 f'font-size="11" font-weight="700" fill="#3a362e">{_fmt(closes[-1])}</text>')
+    _pill(X(n - 1) - 6, Yc(closes[-1]) - 8, _fmt(closes[-1]), "#3a362e")
     if has_pe:
         last_pe = next((p["pe"] for p in reversed(pts) if p["pe"] is not None), None)
         if last_pe is not None:
-            parts.append(f'<text x="{X(n - 1) - 6:.1f}" y="{Yp(last_pe) + 16:.1f}" text-anchor="end" '
-                         f'font-size="11" font-weight="700" fill="#4a6fa5">{_fmt(last_pe)}x</text>')
+            _pill(X(n - 1) - 6, Yp(last_pe) + 16, f'{_fmt(last_pe)}x', "#4a6fa5")
     parts.append('</svg></div>')
     parts.append('<span class="source">股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
                  '深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）；双轴各自定标，读交叉不读绝对高度；'

@@ -12,6 +12,7 @@
 """
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -273,6 +274,32 @@ def test_optional_charts_render():
     assert 'class="toc-side"' in html2 and 'href="#s11"' in html2, "侧栏目录应生成且指向章节锚点"
 
 
+def test_tornado_long_names():
+    """v4.8.2：龙卷风变量名列自适应——超长名折两行、NL/X0/HALF 随最长行宽动态取值，
+    文本不越出画布左缘；未超宽名称单行完整渲染。"""
+    import re as _re
+    long_name = "产业互联网创新业务与新兴信息通信业务资本开支强度边际变化"  # 28 字 ≈ 364px + 后缀 → 超 388 折行
+    fill = minimal_fill(sensitivity=[
+        {"name": long_name, "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
+        {"name": "移动 ARPU 值", "impact": 13},
+        {"name": "金价", "impact": 8}])
+    html = R.build_sensitivity_tornado(fill)
+    assert 'aria-label="敏感性龙卷风"' in html
+    assert long_name not in html, "超长名应折行（不应单行完整出现）"
+    plain = _re.sub(r"<[^>]+>", "", html)
+    for piece in ("产业互联网", "边际变化", "（第一变量）"):
+        assert piece in plain, f"折行后名称缺段：{piece}"
+    xs = [float(m) for m in _re.findall(r'\bx="(-?[\d.]+)"', html)]
+    assert xs and min(xs) >= 0, f"文本越出画布左缘：min x = {min(xs)}"
+    # 中等长度名（name+后缀 ≈ 260px > 218）：名称列扩宽但不折行，单行完整出现
+    mid = "传统固网宽带业务资本开支变化"
+    html2 = R.build_sensitivity_tornado(minimal_fill(sensitivity=[
+        {"name": mid, "impact": 20}, {"name": "金价", "impact": 8}]))
+    assert mid + "（第一变量）" in html2, "未超宽名称应单行完整渲染"
+    xs2 = [float(m) for m in _re.findall(r'\bx="(-?[\d.]+)"', html2)]
+    assert min(xs2) >= 0, f"名称列扩宽后文本越界：min x = {min(xs2)}"
+
+
 def test_review_dumbbell():
     """回测模式：prev 填了才出三轨哑铃图；回测章=第 12 章（v4.8.1 起提前，在跟踪仪表盘之前）。"""
     fill = minimal_fill(prev={"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
@@ -438,6 +465,18 @@ def test_segments_chain_charts():
     with contextlib.redirect_stderr(buf2):
         R.validate_content(bad, R.compute_valuation(bad))
     assert "偏离 100%" in buf2.getvalue(), "占比和偏离 100% 应告警"
+    # v4.8.2：横条图——长名折两行不挤压、高度随行数自适应（不再固定 360）、毛利率圆点在位
+    fill4 = minimal_fill(segments={"items": [
+        {"name": "固网宽带及数据服务与产业互联网创新业务", "rev_pct": 45.0, "gross_margin": 30.0},
+        {"name": "移动业务", "rev_pct": 35.0, "gross_margin": 40.0},
+        {"name": "其他", "rev_pct": 20.0}]})
+    html4 = R.build_segments_plot(fill4)
+    assert 'aria-label="业务构成"' in html4
+    assert "固网宽带及数据服务与产业互联网创新业务" not in html4, "超长分部名应折行"
+    assert "产业互联网创新业务" in html4, "折行后名称缺段"
+    assert '毛利率（同一 % 轴）' in html4 and 'r="4.5"' in html4, "毛利率圆点与图例应在位"
+    vb = re.search(r'viewBox="0 0 1000 (\d+)"', html4)
+    assert vb and int(vb.group(1)) < 300, f"3 行条图高度应自适应收紧（实际 {vb and vb.group(1)}）"
 
 
 def test_price_history_and_holders():
@@ -472,6 +511,12 @@ def test_price_history_and_holders():
     card_pos = html.find("三轨判定与仓位结论")
     assert s11_pos < holders_pos < card_pos, "户数图应在第 11 章内、三轨判定卡之前"
     assert "188,153" in html, "户数应带千位符"
+    # v4.8.2 原位美化：面积填充 / 发丝加粗 / 年末竖网格 / 末端药丸标签
+    ph_seg = html.split('aria-label="股价与PE历史走势"', 1)[1].split('</svg>', 1)[0]
+    assert 'fill="#efe9db"' in ph_seg, "股价线下应有浅沙色面积填充"
+    assert 'stroke-width="1.8"' in ph_seg, "发丝线应加粗至 1.8"
+    assert 'stroke="#f0ebdf"' in ph_seg, "年份 tick 应有竖向浅网格线"
+    assert 'rx="8"' in ph_seg, "末端最新值标签应有药丸底色"
     # 缺字段：两图整块消失
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "_fill_t.json")
@@ -494,6 +539,7 @@ def test_consensus_band_and_pe_iqr():
     fill2 = minimal_fill(pe_history=ph)
     html2 = R.build_pe_band(fill2)
     assert "P25" in html2 and "18.5–45.6" in html2, "PE 带应渲染 P25-P75 分位段"
+    assert "一半时间落在 18.5–45.6x" in html2, "v4.8.2：分位区行内标签应改人话"
     ph2 = {"hist_lo": 13.7, "hist_hi": 83.2}
     html3 = R.build_pe_band(minimal_fill(pe_history=ph2))
     assert "P25" not in html3, "缺 p25/p75 分位段不应出现"

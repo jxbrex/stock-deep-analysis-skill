@@ -339,4 +339,25 @@ finally:
     em.ts_call = _orig_ts10
 print("10. E2 月线月末 PE(TTM) 回填 通过")
 
+# ---------------- 11. fetch_pe_pb_band 的 fields 必须走第三参（v4.8.3 回归） ----------------
+# 实证背景：fetch_pe_pb_band 曾把 fields 塞进 params——ts_call 键归一化会剔除 params 里的
+# fields（键尾为空串），与 E2 月末 PE 回填（第三参、键尾为字段串）永远不同键，透明缓存
+# 失效→重复请求，且请求不带 fields→全字段拉 5 年 daily_basic。
+_calls11 = []
+_orig_ts11 = em.ts_call
+def _ts11(api, params=None, fields=""):
+    _calls11.append((api, dict(params or {}), fields))
+    return [{"trade_date": "20260102", "pe_ttm": 15.0, "pb": 1.2}] * 30
+em.ts_call = _ts11
+try:
+    em.fetch_pe_pb_band("600989")
+    db = [(p, f) for (a, p, f) in _calls11 if a == "daily_basic"]
+    assert db, "fetch_pe_pb_band 应调用 daily_basic"
+    (params11, fields11), = db
+    assert "fields" not in params11, "fields 不得塞进 params（被键归一化剔除→缓存永不命中）"
+    assert fields11 == "ts_code,trade_date,pe_ttm,pb", f"fields 应走第三参，实际 {fields11!r}"
+finally:
+    em.ts_call = _orig_ts11
+print("11. fetch_pe_pb_band fields 归一化 通过")
+
 print("\n全部断言通过", file=sys.stderr)

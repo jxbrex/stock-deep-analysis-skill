@@ -164,7 +164,8 @@ def _dc_write(path: str, val) -> None:
         return
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
-        tmp = path + ".tmp"
+        # tmp 名带 PID：并发进程写同一缓存键时互不覆盖（固定 .tmp 会互踩）
+        tmp = f"{path}.{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(val, f, ensure_ascii=False)
         os.replace(tmp, path)
@@ -396,9 +397,11 @@ def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
     try:
         end = date.today().strftime("%Y%m%d")
         beg = f"{date.today().year - years}0101"
+        # fields 必须走第三参（塞 params 会被键归一化剔除→缓存键与 E2 月末PE回填不一致、
+        # 且请求全字段拉 5 年，v4.8.3 修复实证）
         rows = ts_call("daily_basic", {"ts_code": to_ts_code(code),
-                                       "start_date": beg, "end_date": end,
-                                       "fields": "ts_code,trade_date,pe_ttm,pb"})
+                                       "start_date": beg, "end_date": end},
+                       fields="ts_code,trade_date,pe_ttm,pb")
         if not rows:
             raise RuntimeError("daily_basic 空返回")
         pes = sorted(float(r["pe_ttm"]) for r in rows
@@ -763,7 +766,8 @@ def fetch_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
                 c = c * f / latest_f   # 前复权
             out.append({"date": _fmt_date(r["trade_date"]), "close": round(c, 2)})
         # v4.8.1：月度 PE(TTM) 回填（供 price_history 图，替代模型手工「月收×总股本÷TTM净利」）。
-        # 与 fetch_pe_pb_band 同参同字段，命中透明缓存不增发请求；失败静默跳过（仅 close，图降级单线）
+        # 与 fetch_pe_pb_band 同参同字段（kline-years=5 时窗口亦同），命中透明缓存不增发请求；
+        # 失败静默跳过（仅 close，图降级单线）
         try:
             pe_map = {r["trade_date"]: float(r["pe_ttm"])
                       for r in ts_call("daily_basic", {"ts_code": ts, "start_date": beg, "end_date": end},

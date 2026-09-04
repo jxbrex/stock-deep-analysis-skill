@@ -36,6 +36,7 @@ from scoring import (  # noqa: F401（再导出，供 R.xxx 按名访问）
     _dim_verdict, badge_class, valuation_badge_class,
     _quality_verdict, _valuation_verdict, _timing_verdict,
     _num, _fmt, _esc, compute_scores,
+    _scenario_numbers, _position_steps,
     _valuation_four_rows, build_score_summary, build_valuation_process_card,
     _POS_LADDER, _POS_LABEL, _matrix_slot, build_position_card,
 )
@@ -48,8 +49,10 @@ from charts import (  # noqa: F401（再导出）
     _SVG_STYLE, _svg_open, _svg_close, _vgrid_ticks, _anchor_fit, _anchor_clamp,
     build_scenario_spectrum, build_scenario_block, build_peers_plot,
     build_score_bars, build_sensitivity_tornado, build_pe_band,
-    build_segments_plot, build_chain_plot, _inject_l1_charts,
+    build_segments_plot, build_chain_plot, build_fin_trend, build_growth_plot,
+    _inject_l1_charts, _inject_l3_charts,
     build_price_history, build_holders_plot, build_review_dumbbell,
+    build_triggers_strip,
 )
 from validate import (  # noqa: F401（再导出）
     _plain_text, _check_price_date, _check_quote_consistency,
@@ -66,7 +69,7 @@ from validate import (  # noqa: F401（再导出）
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.8.3"
+RENDERER_VERSION = "v4.9"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -181,7 +184,9 @@ def _content_vote(inner: str):
 def fix_table_alignment(html: str) -> str:
     """表格对齐自动修正：逐单元格解析（th/td 都按列计数，处理行头 th），按列统计 td 对齐类
     （num/center 多数决），给同列 th 配同类；第一列强制左对齐。matrix-table 跳过。
-    作用：模型手写 fragment 表头类不齐时（裸 th 配 td class=num/center），渲染层兜底对齐。"""
+    作用：模型手写 fragment 表头类不齐时（裸 th 配 td class=num/center），渲染层兜底对齐。
+    限制：以非贪婪 `<table>…</table>` 正则切表，不支持表内嵌表（嵌套 <table> 会在内层
+    起始处提前收表，行/列对齐只对外层可视段生效）——fragment 写作时禁止嵌套表。"""
     out = []
     pos = 0
     for tm in re.finditer(r'<table\b[^>]*>.*?</table>', html, flags=re.I | re.S):
@@ -356,10 +361,7 @@ def compute_valuation(fill: dict):
     order = {"pess": 0, "base": 1, "opt": 2}
     rows = []
     for s in v.get("scenarios") or []:
-        profit, pe = _num(s.get("profit")), s.get("pe") or []
-        pe_lo, pe_hi = (_num(pe[0]), _num(pe[1])) if len(pe) >= 2 else (None, None)
-        mc = s.get("mcap") or []
-        mc_lo, mc_hi = (_num(mc[0]), _num(mc[1])) if len(mc) >= 2 else (None, None)
+        profit, pe_lo, pe_hi, mc_lo, mc_hi = _scenario_numbers(s)
         key = str(s.get("key") or "").lower()
         if mc_lo is not None and mc_hi is not None:
             lo, hi = mc_lo / shares, mc_hi / shares
@@ -625,8 +627,9 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "CONCLUSION_HTML": fill.get("conclusion_html", ""),
         "P0_HTML": fill.get("p0_html", ""),
         # v4.8：3.1 业务构成图 / 3.2 产业链图由锚点 <!--SEGMENTS--> / <!--CHAIN--> 注入 l1_html
+        # v4.9：3.4 财务趋势图墙 <!--FIN_TREND--> 同注入；4.1 利润增长图 <!--GROWTH--> 注入 l3_html
         "L1_HTML": _inject_l1_charts(fill.get("l1_html", ""), fill),
-        "L3_HTML": fill.get("l3_html", ""),
+        "L3_HTML": _inject_l3_charts(fill.get("l3_html", ""), fill),
         "L4_HTML": fill.get("l4_html", ""),
         "VALUATION_METHOD": fill.get("valuation_method", ""),
         "STOCK_TYPE": fill.get("stock_type", ""),
@@ -641,6 +644,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "CYCLE_META": fill.get("cycle_meta", ""),
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
+        # v4.10：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
+        "TRIGGERS_HTML": build_triggers_strip(fill),
         "DASH_HTML": fill.get("dash_html", ""),
         "POSITION_HTML": _tag_timing_table(fill.get("position_html", "")),
         # 脚本生成区块：6 质量分汇总 / 7 估值过程卡 / 11 三轨判定与仓位结论卡
@@ -687,6 +692,12 @@ def _fill_template(repl: dict) -> str:
     """读模板 → 条件块（<!--IF:-->）/占位符（{{...}}）替换 → 表格对齐自动修正。"""
     tmpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "report-template.html")
     html = open(tmpl_path, encoding="utf-8").read()
+
+    # repl 值（fill 的 HTML fragment 文本）注入前把字面 {{ 实体化：fill 若自带「{{KEY}}」
+    # 形态的示例/说明文本，会被下方占位符替换轮误吞（KEY 命中 repl 键 → 替换成别的值，
+    # 静默错内容），或落入 _check_leftover 残留报错——实体化后按原样显示为 {{KEY}}
+    repl = {k: (v.replace("{{", "&#123;&#123;") if isinstance(v, str) else v)
+            for k, v in repl.items()}
 
     # 条件章节：<!--IF:KEY--> ... <!--ENDIF-->
     def handle_conditional(m):

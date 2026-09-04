@@ -11,7 +11,7 @@ import json
 import re
 import sys
 
-from scoring import DIMS, _esc
+from scoring import DIMS, _esc, _scenario_numbers
 from charts import _num, _fmt, _SCENARIO_NAMES
 
 
@@ -87,7 +87,6 @@ def _check_quote_consistency(fill: dict) -> None:
 
 def _check_score_ranges(fill: dict) -> None:
     """分数范围（0-10）越界是硬错误。"""
-    # 分数范围（0-10）越界是硬错误
     for field in ("scores", "timing_scores"):
         for k, v in (fill.get(field) or {}).items():
             try:
@@ -100,7 +99,6 @@ def _check_score_ranges(fill: dict) -> None:
 
 def _check_valuation_inputs(fill: dict) -> None:
     """valuation_inputs 必填（估值分强制脚本化，四键缺一不可）。"""
-    # valuation_inputs 必填（估值分强制脚本化，四键缺一不可）
     vi = fill.get("valuation_inputs")
     if not isinstance(vi, dict):
         raise ValueError('valuation_inputs 为必填字段：{"pe_ttm":…, "pe_band":[低,高], '
@@ -112,7 +110,6 @@ def _check_valuation_inputs(fill: dict) -> None:
 
 def _check_valuation_scenarios(fill: dict) -> None:
     """valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）。"""
-    # valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）
     v = fill.get("valuation")
     if not isinstance(v, dict) or not v.get("scenarios"):
         raise ValueError("valuation 为必填字段：结构化三情景假设（shares / horizon / scenarios），"
@@ -125,25 +122,25 @@ def _check_valuation_scenarios(fill: dict) -> None:
     for s in v.get("scenarios") or []:
         skeys.add(str(s.get("key") or "").lower())
         slab = s.get("label") or s.get("key") or "?"
-        mc = s.get("mcap") or []
-        has_mc = len(mc) >= 2 and _num(mc[0]) is not None and _num(mc[1]) is not None
-        has_profit = _num(s.get("profit")) is not None
+        # 三组数值机械解析与 compute_valuation 共用（_scenario_numbers），口径唯一
+        profit, pe_lo, pe_hi, mc_lo, mc_hi = _scenario_numbers(s)
+        has_mc = mc_lo is not None and mc_hi is not None
+        has_profit = profit is not None
         if has_mc and has_profit:
             raise ValueError(f"valuation.scenarios[{slab}] 口径冲突：profit+pe 与 mcap 同情景只能二选一")
         if has_mc:
             # 市值口径（NAV/rNPV/SOTP 行业附录）：mcap = [低, 高] 目标总市值（亿元）
-            if _num(mc[0]) <= 0 or _num(mc[1]) < _num(mc[0]):
+            if mc_lo <= 0 or mc_hi < mc_lo:
                 raise ValueError(f"valuation.scenarios[{slab}] mcap 区间非法（mcap: [低, 高]，亿元，需 0<低≤高）")
             modes.add("mcap")
         else:
             if not has_profit:
                 raise ValueError(f"valuation.scenarios[{slab}] 缺净利假设（profit，归母净利亿元）"
                                  f"或目标市值区间（mcap: [低, 高]，亿元）")
-            pe = s.get("pe") or []
-            if len(pe) < 2 or _num(pe[0]) is None or _num(pe[1]) is None:
+            if pe_lo is None or pe_hi is None:
                 raise ValueError(f"valuation.scenarios[{slab}] 缺 PE 区间（pe: [低, 高]）")
             # 与 mcap 侧对称的区间校验：倒挂（高<低）或非正值一律拒渲染
-            if _num(pe[0]) <= 0 or _num(pe[1]) < _num(pe[0]):
+            if pe_lo <= 0 or pe_hi < pe_lo:
                 raise ValueError(f"valuation.scenarios[{slab}] PE 区间非法（pe: [低, 高]，需 0<低≤高）")
             modes.add("pe")
         if not str(s.get("horizon") or v.get("horizon") or "").strip():
@@ -154,9 +151,56 @@ def _check_valuation_scenarios(fill: dict) -> None:
         raise ValueError(f"valuation.scenarios 必须含 pess/base/opt 三情景，当前只有: {sorted(skeys)}")
 
 
+def _check_chart_fields(fill: dict) -> None:
+    """v4.9 必填图字段硬校验：fin_trend（3.4 小图墙，替手写年表）/ growth_plot（4.1 增长图）。
+    两字段数据均来自标准采集（E3 年表 / E5 一致预期），缺失=空心趋势章节 → 拒渲染。
+    growth_plot 豁免：stock_type 含「未盈利/管线」（净利无意义）。"""
+    ft = fill.get("fin_trend")
+    if not isinstance(ft, dict):
+        raise ValueError('fin_trend 为必填字段（v4.9 起 3.4 财务健康年表由脚本图墙替代）：'
+                         '{"years":["2021",...,"2025"], "panels":[{"title":"营收 × 毛利率",'
+                         '"bars":[{"name":"营收","unit":"亿","values":[...]}], '
+                         '"lines":[{"name":"毛利率","pct":true,"values":[...]}]}, ...]}'
+                         '——数据照抄 em_fetch E3 年表，禁手估')
+    years = ft.get("years") or []
+    if len(years) < 3:
+        raise ValueError(f"fin_trend.years 仅 {len(years)} 年 < 3：趋势图墙至少 3 个年度点（建议 5 年）")
+    ok = []
+    for p in ft.get("panels") or []:
+        if not isinstance(p, dict):
+            continue
+        bars_ok = [b for b in p.get("bars") or []
+                   if b.get("name") and len(b.get("values") or []) == len(years)
+                   and all(_num(v) is not None for v in b.get("values") or [])]
+        lines_ok = [ln for ln in p.get("lines") or []
+                    if ln.get("name") and len(ln.get("values") or []) == len(years)
+                    and all(_num(v) is not None for v in ln.get("values") or [])]
+        if bars_ok and lines_ok:
+            ok.append(p)
+    if len(ok) < 3:
+        raise ValueError(f"fin_trend.panels 有效面板 {len(ok)} < 3（标准 4 面板：营收×毛利率 / "
+                         f"归母净利×净利率×ROE / 经营现金流+自由现金流×现金含量（阈值0.7) / "
+                         f"货币资金×短债覆盖率；每面板需 bars(1-2) + ≥1 条线，values 与 years 等长且全为数字）")
+    st = str(fill.get("stock_type") or "")
+    if "未盈利" not in st and "管线" not in st:
+        gp = fill.get("growth_plot")
+        if not isinstance(gp, dict):
+            raise ValueError('growth_plot 为必填字段（v4.9 起 4.1 利润增长配历史+预测图）：'
+                             '{"hist":[{"y":"2023","rev":…,"np":…}, ...≥3年], '
+                             '"fcst":[{"y":"2026E","np_lo":…,"np_hi":…,"np_consensus":…}, ...]}'
+                             '——历史取 E3 同比，一致预期取 E5；未盈利/管线分型豁免')
+        hist_ok = [h for h in gp.get("hist") or [] if h.get("y") and _num(h.get("np")) is not None]
+        fcst_ok = [f for f in gp.get("fcst") or []
+                   if f.get("y") and _num(f.get("np_lo")) is not None and _num(f.get("np_hi")) is not None
+                   and _num(f.get("np_hi")) >= _num(f.get("np_lo")) and _num(f.get("np_consensus")) is not None]
+        if len(hist_ok) < 3:
+            raise ValueError(f"growth_plot.hist 有效年 {len(hist_ok)} < 3（需 y + np 增速；rev 可省）")
+        if not fcst_ok:
+            raise ValueError("growth_plot.fcst 无有效年（需 y + np_lo ≤ np_hi + np_consensus）")
+
+
 def _check_red_flag_breaker(fill: dict) -> None:
     """红灯熔断：red_flag 非空 → position_html 必须包含「不建议参与」。"""
-    # 红灯熔断：red_flag 非空 → position_html 必须包含"不建议参与"
     red_flag = (fill.get("red_flag") or "").strip()
     pos_html = fill.get("position_html") or ""
     if red_flag and "不建议参与" not in _plain_text(pos_html):
@@ -165,7 +209,6 @@ def _check_red_flag_breaker(fill: dict) -> None:
 
 def _check_thesis_consistency(fill: dict, calc: dict) -> None:
     """thesis 三情景价一致性：手写 span 价 vs 脚本按 valuation 算出的中枢价。"""
-    # thesis 三情景价一致性：手写 span 价 vs 脚本按 valuation 算出的中枢价
     th = fill.get("thesis_html", "")
     span_prices = {}
     for cls, key in (("scenario-pess", "pess"), ("scenario-base", "base"), ("scenario-opt", "opt")):
@@ -195,7 +238,6 @@ def _check_thesis_consistency(fill: dict, calc: dict) -> None:
 
 def _check_content_floor(fill: dict) -> None:
     """内容地板（空心章节一律拒渲染）+ 表格来源标注数必须 ≥ 表格数。"""
-    # 内容地板（空心章节一律拒渲染）
     concl_len = len(_plain_text(fill.get("conclusion_html")))
     if concl_len < 200:
         raise ValueError(f"conclusion_html 纯文本仅 {concl_len} 字 < 200：核心结论四段不能为空洞")
@@ -224,7 +266,6 @@ def _check_content_floor(fill: dict) -> None:
 
 def _check_missing_required_warns(fill: dict, warns: list) -> None:
     """必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）。"""
-    # 必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）
     if not fill.get("timing_scores"):
         warns.append("timing_scores 缺失或为空：时机分将显示 —，请补筹码面/技术面得分")
     if "yellow_deductions" not in fill:
@@ -236,7 +277,6 @@ def _check_missing_required_warns(fill: dict, warns: list) -> None:
 
 def _check_stock_type_weights(fill: dict, warns: list) -> None:
     """分型权重交叉校验：非默认分型必须显式填 weights/layer_share，否则静默用默认值算错分。"""
-    # 分型权重交叉校验：非默认分型必须显式填 weights/layer_share，否则静默用默认值算错分
     st = str(fill.get("stock_type") or "")
     if any(t in st for t in ("稳定价值", "金融", "银行", "保险", "券商", "快速成长", "未盈利", "困境反转")):
         if not fill.get("layer_share"):
@@ -247,7 +287,6 @@ def _check_stock_type_weights(fill: dict, warns: list) -> None:
 
 def _check_thesis_price_tags(fill: dict, warns: list) -> None:
     """thesis 三情景价格标注完整性。"""
-    # thesis 三情景价格标注完整性
     th = fill.get("thesis_html", "")
     if th and not all(c in th for c in ("scenario-pess", "scenario-base", "scenario-opt")):
         warns.append("thesis_html 缺三情景价格标注（scenario-pess/base/opt span 未齐）")
@@ -269,8 +308,7 @@ def _check_thesis_info_floor(fill: dict, warns: list) -> None:
 
 
 def _check_peers_plot_target(fill: dict, warns: list) -> None:
-    """peers_plot 目标公司标记 + 目标点 PE 与估值四件套口径一致性。"""
-    # peers_plot 目标公司标记
+    """peers_plot 目标公司标记 + 目标点 PE/ROE 与数据口径一致性告警（不拒渲染）。"""
     pp = fill.get("peers_plot")
     pts = (pp.get("points") if isinstance(pp, dict) else pp) or []
     if pts:
@@ -286,11 +324,21 @@ def _check_peers_plot_target(fill: dict, warns: list) -> None:
             if tpe and vpe and abs(tpe - vpe) / abs(vpe) > 0.3:
                 warns.append(f"peers_plot 目标公司 PE（{tpe:g}）与 valuation_inputs.pe_ttm（{vpe:g}）偏差 >30%："
                              f"请确认口径一致（A/H 股、IFRS/经调整、TTM/预测），确需混排在 peers_meta 注明")
+            # ROE 量级倒挂（v4.10）：fill 无独立 ROE 参照源可比对（E1 落盘无 roe、正文为文字），
+            # 只对「目标点 ROE 明显脱离同业量级」这类机械异常告警——目标比最弱同业还低一半、
+            # 或比最强同业高一倍，几乎必是口径不一（年报 vs TTM/加权、不同年份）或取数错误
+            troe = _num(tg[0].get("roe"))
+            peers_roe = [_num(p.get("roe")) for p in pts
+                         if not p.get("target") and _num(p.get("roe")) is not None and _num(p.get("roe")) > 0]
+            if troe is not None and troe > 0 and len(peers_roe) >= 2:
+                p_lo, p_hi = min(peers_roe), max(peers_roe)
+                if troe < p_lo / 2 or troe > p_hi * 2:
+                    warns.append(f"peers_plot 目标公司 ROE（{troe:g}%）脱离同业量级（同业 {p_lo:g}-{p_hi:g}%）"
+                                 f"——ROE 口径疑似不一（年报/加权/TTM、不同年份）或取数错误，请核对")
 
 
 def _check_timing_table_cells(fill: dict, warns: list) -> None:
     """时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）。"""
-    # 时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）
     pos_html = fill.get("position_html") or ""
     for tm in re.finditer(r"<table\b[^>]*>.*?</table>", pos_html, re.I | re.S):
         tbl = tm.group(0)
@@ -334,8 +382,7 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
 
 def _check_internal_codes(fill: dict, warns: list) -> None:
     """框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文）。"""
-    # 框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文；
-    # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查）
+    # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查
     for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
                  "valuation_html", "gap_html", "peers_html", "dash_html", "position_html", "review_html"):
         txt = _plain_text(fill.get(name) or "").replace("L1:L3", "")
@@ -376,7 +423,6 @@ def _check_writing_discipline(fill: dict, warns: list) -> None:
 
 def _check_prev_fields(fill: dict, warns: list) -> None:
     """prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）。"""
-    # prev 内部字段校验（回测模式锚点缺项会静默显示 "?"/"—"）
     if fill.get("prev"):
         pv = fill["prev"]
         for k in ("date", "quality", "valuation", "timing", "target_range"):
@@ -399,7 +445,6 @@ def _check_prev_fields(fill: dict, warns: list) -> None:
 
 def _check_misc_required(fill: dict, warns: list) -> None:
     """其余 fill-schema 标 ✓ 但渲染器零校验的必填字段。"""
-    # 其余 fill-schema 标 ✓ 但渲染器零校验的必填字段
     for name in ("valuation_method", "stock_type", "gap_tier", "peers_meta", "next_review"):
         if not str(fill.get(name) or "").strip() or fill.get(name) == "—":
             warns.append(f"{name} 缺失或为占位符：对应章节标题/meta 将为空白")
@@ -425,6 +470,13 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
         if abs(s - 100) > 5:
             warns.append(f"segments 收入占比合计 {s:.1f}% 偏离 100%：请核对是否漏列分部"
                          f"（E6 各分部占比之和应≈100%，若有「其他」项请补列）")
+    # v4.9：period 只放短时段标签（青啤实证把整段口径清洗说明塞进 period，图标题变 70 字怪物）
+    period = str(seg.get("period") or "")
+    if len(period) > 8:
+        warns.append(f"segments.period「{period[:12]}…」共 {len(period)} 字 > 8：period 只放时段标签"
+                     f"（如 2026中报），口径/清洗说明请挪到 segments.note（渲染为图注小字）")
+    if any(k in period for k in ("口径", "源为", "合计行", "剔除", "重算")):
+        warns.append("segments.period 含口径/来源字样：请挪到 segments.note 字段，period 只放时段标签")
     ch = fill.get("industry_chain") or {}
     if ch and (not ch.get("upstream") or not ch.get("downstream")):
         warns.append("industry_chain 上游/下游缺一：链条图需两端各至少 1 个行业，缺端图不生成")
@@ -434,11 +486,83 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
     holders = fill.get("holders") or []
     if holders and len(holders) < 3:
         warns.append("holders 有效点 <3：户数趋势图不生成（E4 默认返回近 8 期，请回填 ≥3 期）")
+    # v4.10：触发条件状态条字段纪律
+    trg = fill.get("triggers") or []
+    if trg:
+        bad = [t for t in trg
+               if str((t or {}).get("status") or "pending").strip().lower() not in ("hit", "miss", "pending")]
+        if bad:
+            warns.append(f"triggers 含非法 status（{len(bad)} 条）：只接受 hit/miss/pending，非法值按 pending 渲染")
+        if len(trg) > 8:
+            warns.append(f"triggers 共 {len(trg)} 条 > 8：状态条宜 3-6 条，过多稀释跟踪焦点")
+
+
+def _check_hero_band_claims(fill: dict, warns: list) -> None:
+    """Hero 文案引用「分位/历史带」概念时的数据支撑核对（v4.10）：
+    概念必须在 pe_history（第 10 章同源数据，与 E1 落盘 pe_p25/pe_p75、历史带同口径）有对应字段
+    可佐证——「分位」→ p25/p75，「历史带/历史区间」→ hist_lo/hist_hi；有分位字段时再做
+    现价 PE 相对位置的极性核对（称「低分位」而现价高于 P75、称「高分位」而现价低于 P25 即矛盾）。
+    缺支撑字段 → 告警提示补数据或改文案（数据侧不存在该口径即不可信）。"""
+    ph = fill.get("pe_history") or {}
+    p25, p75 = _num(ph.get("p25")), _num(ph.get("p75"))
+    has_iq = p25 is not None and p75 is not None
+    has_extreme = _num(ph.get("hist_lo")) is not None and _num(ph.get("hist_hi")) is not None
+    pe_ttm = _num((fill.get("valuation_inputs") or {}).get("pe_ttm"))
+    for name in ("pe_sub", "price_sub_html", "target_sub_html"):
+        txt = _plain_text(fill.get(name) or "")
+        if not txt:
+            continue
+        # 只盯明确引用概念的字样；无概念字面的 sub（「PE」「现价」）不打扰
+        if "分位" not in txt and not re.search(r"历史带|历史区间", txt):
+            continue
+        if "分位" in txt:
+            if not has_iq:
+                warns.append(f"{name} 引用「分位」但 pe_history 未填 p25/p75（E1 落盘 pe_p25/pe_p75 "
+                             f"回填该字段）：Hero 分位说法在报告内无数据佐证，请补数据或改文案")
+            elif pe_ttm is not None and (("低分位" in txt or "低位" in txt) and pe_ttm > p75):
+                warns.append(f"{name} 称「低分位/低位」但现价 PE(TTM) {pe_ttm:g}x > P75 {p75:g}x——"
+                             f"分位说法与 pe_history 数据矛盾，请核对口径")
+            elif pe_ttm is not None and (("高分位" in txt or "高位" in txt) and pe_ttm < p25):
+                warns.append(f"{name} 称「高分位/高位」但现价 PE(TTM) {pe_ttm:g}x < P25 {p25:g}x——"
+                             f"分位说法与 pe_history 数据矛盾，请核对口径")
+        if re.search(r"历史带|历史区间", txt) and not has_extreme:
+            warns.append(f"{name} 引用「历史带/历史区间」但 pe_history 未填 hist_lo/hist_hi"
+                         f"（E1 落盘历史带回填该字段）：该说法在报告内无数据佐证，请补数据或改文案")
+
+
+def _check_conclusion_structure(fill: dict, warns: list) -> None:
+    """conclusion_html 四段判词结构（fill-schema 1 核心结论，顺序固定）：
+    ①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑。缺段或乱序 → 告警不拒
+    （连续 <p>、<strong> 小标题开头；打分数字在 Hero/section-meta 已呈现，正文不重复）。"""
+    txt = _plain_text(fill.get("conclusion_html") or "")
+    if len(txt) < 20:
+        return  # 内容地板已在 _check_content_floor 拒渲染，这里防空
+    keys = ("关键优势", "关键弱点", "当前市场认知", "核心投资逻辑")
+    pos = [txt.find(k) for k in keys]
+    missing = [k for k, p in zip(keys, pos) if p < 0]
+    if missing:
+        warns.append(f"conclusion_html 缺段：{'/'.join(missing)}——四段固定（连续 <p>、"
+                     f"<strong> 小标题开头）：①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑"
+                     f"（见 fill-schema「核心结论四段骨架」）")
+    elif pos != sorted(pos):
+        warns.append("conclusion_html 四段判词顺序错误：应为 ①关键优势→②关键弱点→"
+                     "③当前市场认知→④核心投资逻辑")
+
+
+def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
+    """复盘「未命中」判定缺诊断方向告警（v4.10，backtest.md 6.6 复盘纪律）：
+    review_html 含「未命中」但未提「规律/反例」——未命中的旧假设必须写明是规律失效还是
+    新反例（区分假设本身错 vs 触发条件变化），否则教训无法沉淀。"""
+    rv = fill.get("review_html") or ""
+    if "未命中" in rv and "规律" not in rv and "反例" not in rv:
+        warns.append("review_html 含「未命中」判定但未提「规律/反例」：判定未命中的旧假设应写明"
+                     "是规律失效还是本次反例（区分假设本身错 vs 触发条件变化），见 backtest.md 6.6 复盘纪律")
 
 
 def validate_content(fill: dict, calc: dict = None) -> None:
     """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
     硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
+    fin_trend/growth_plot 必填图字段缺失或结构非法（v4.9）、
     红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
     表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
     calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
@@ -448,6 +572,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
 
     _check_valuation_inputs(fill)
     _check_valuation_scenarios(fill)
+    _check_chart_fields(fill)
 
     _check_red_flag_breaker(fill)
     _check_thesis_consistency(fill, calc)
@@ -458,12 +583,15 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_stock_type_weights(fill, warns)
     _check_thesis_price_tags(fill, warns)
     _check_thesis_info_floor(fill, warns)
+    _check_hero_band_claims(fill, warns)
     _check_peers_plot_target(fill, warns)
     _check_timing_table_cells(fill, warns)
     _check_dim_blocks(fill, warns)
     _check_internal_codes(fill, warns)
     _check_writing_discipline(fill, warns)
+    _check_conclusion_structure(fill, warns)
     _check_prev_fields(fill, warns)
+    _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
     _check_quote_present(fill, warns)
     _check_optional_charts(fill, warns)
@@ -521,7 +649,8 @@ def build_prev_strip(prev: dict, quality: float, valuation: float, timing, targe
                             ("时机分", _num(prev.get("timing")), timing)):
         if old is not None and new is not None:
             d = new - old
-            cls = "up" if d >= 0 else "down"
+            # v4.9：分数差是评价语义（升=好），用 good/bad 而非 up/down（后者 v4.9 起为股价方向色）
+            cls = "good" if d >= 0 else "bad"
             items.append(f'{label} {old:.2f}→{new:.2f} <span class="{cls}">({d:+.2f})</span>')
     if prev.get("target_range"):
         items.append(f'目标价 {_esc(str(prev["target_range"]))} → {_esc(str(target_range))}')

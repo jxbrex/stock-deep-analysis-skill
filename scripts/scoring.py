@@ -119,6 +119,21 @@ def _esc(s) -> str:
             .replace('"', "&quot;"))
 
 
+def _scenario_numbers(s: dict):
+    """单情景 profit/pe/mcap 三组数值的机械解析（compute_valuation 与内容校验共用同一口径）：
+    返回 (profit, pe_lo, pe_hi, mc_lo, mc_hi)，缺失/不可解析/列表不足时为 None。
+    只做「能取出多少数」，不做口径冲突与区间合法性判断（倒挂/非正/双填由调用方
+    按各自语义处理——校验层拒渲染、计算层按现行优先级取数）。"""
+    profit = _num(s.get("profit"))
+    pe = s.get("pe") or []
+    pe_lo = _num(pe[0]) if len(pe) >= 1 else None
+    pe_hi = _num(pe[1]) if len(pe) >= 2 else None
+    mc = s.get("mcap") or []
+    mc_lo = _num(mc[0]) if len(mc) >= 1 else None
+    mc_hi = _num(mc[1]) if len(mc) >= 2 else None
+    return profit, pe_lo, pe_hi, mc_lo, mc_hi
+
+
 
 def compute_scores(fill: dict):
     """v4.0 三轨：质量分（L1 六维 + L3 三维，不含估值）+ 估值分（独立）+ 时机分（微调）。
@@ -353,32 +368,14 @@ def _matrix_slot(q: float, v: float):
     return ("质量<4", 0, 8)
 
 
-def build_position_card(fill: dict, quality: float, valuation: float, timing,
-                        calc: dict, red_flag: str) -> str:
-    """11 仓位与时机决策章末尾三轨判定卡（脚本生成，置于 position_html 之后）：
-    ① 三轨判定行（质量/估值/时机各带落档判词）→ ② 调节轨迹（只列实际触发条目）
-    → ③ 最终仓位结论徽章行。完整决策矩阵规则见 references/scoring.md，报告不展开。"""
-    parts = ['<span class="section-tag">三轨判定与仓位结论</span>']
-
-    # ① 三轨判定行
-    t_txt = f"{timing:.2f}" if timing is not None else "—"
-    t_verdict = _timing_verdict(timing) if timing is not None else "—"
-    parts.append(
-        '<div class="metric-row">'
-        f'<div class="metric-card"><div class="label">质量分</div>'
-        f'<div class="value">{quality:.2f}</div><div class="sub">{_quality_verdict(quality)}'
-        f'（≥7 好公司 / 5.5-6.9 中上 / 4-5.4 一般 / &lt;4 回避）</div></div>'
-        f'<div class="metric-card"><div class="label">估值分</div>'
-        f'<div class="value">{valuation:.1f}</div><div class="sub">{_valuation_verdict(valuation)}'
-        f'（≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理 / &lt;4 贵）</div></div>'
-        f'<div class="metric-card"><div class="label">时机分</div>'
-        f'<div class="value">{t_txt}</div><div class="sub">{t_verdict}'
-        f'（≥6 好时机 / 4-5.9 中性 / &lt;4 差时机）</div></div>'
-        '</div>')
-
-    # ② 调节轨迹（固定优先级：红灯熔断 > 中枢为负拦截器 > 矩阵落位
-    #    > 时机分调节 > 离散度调节 > 赔率 ∞ 上浮；只列实际触发条目，未触发不列。
-    #    上浮类合计净效应 ≤ +1 档且不进 20 档，被拦项以「上浮封顶」条目说明）
+def _position_steps(quality: float, valuation: float, timing, calc: dict, red_flag: str):
+    """仓位决策链纯函数（11 卡逻辑体，v4.10 从 build_position_card 抽出便于直接单测；
+    HTML 渲染留在卡片函数）。输入 质量/估值/时机分、估值 calc、红灯 → 返回
+    (final_label, steps, slot_txt)：steps 为轨迹文案列表（只列实际触发条目），
+    slot_txt 为矩阵落位说明（非矩阵路径为 None）。
+    决策优先级固定：红灯熔断 > 中枢为负拦截器 > 矩阵落位 > 时机分调节 > 离散度调节
+    > 赔率 ∞ 上浮。上浮类合计净效应 ≤ +1 档且不进 20 档（重仓唯一入口是矩阵直落）。
+    规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步。"""
     steps = []
     slot_txt = None
     if red_flag:
@@ -461,7 +458,35 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
                 final_label = "观察池"
         if not steps:
             steps.append("矩阵落位直接生效，无调节项触发")
+    return final_label, steps, slot_txt
 
+
+def build_position_card(fill: dict, quality: float, valuation: float, timing,
+                        calc: dict, red_flag: str) -> str:
+    """11 仓位与时机决策章末尾三轨判定卡（脚本生成，置于 position_html 之后）：
+    ① 三轨判定行（质量/估值/时机各带落档判词）→ ② 调节轨迹（只列实际触发条目）
+    → ③ 最终仓位结论徽章行。决策链逻辑在 _position_steps（纯函数），本函数只做
+    HTML 渲染。完整决策矩阵规则见 references/scoring.md，报告不展开。"""
+    parts = ['<span class="section-tag">三轨判定与仓位结论</span>']
+
+    # ① 三轨判定行
+    t_txt = f"{timing:.2f}" if timing is not None else "—"
+    t_verdict = _timing_verdict(timing) if timing is not None else "—"
+    parts.append(
+        '<div class="metric-row">'
+        f'<div class="metric-card"><div class="label">质量分</div>'
+        f'<div class="value">{quality:.2f}</div><div class="sub">{_quality_verdict(quality)}'
+        f'（≥7 好公司 / 5.5-6.9 中上 / 4-5.4 一般 / &lt;4 回避）</div></div>'
+        f'<div class="metric-card"><div class="label">估值分</div>'
+        f'<div class="value">{valuation:.1f}</div><div class="sub">{_valuation_verdict(valuation)}'
+        f'（≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理 / &lt;4 贵）</div></div>'
+        f'<div class="metric-card"><div class="label">时机分</div>'
+        f'<div class="value">{t_txt}</div><div class="sub">{t_verdict}'
+        f'（≥6 好时机 / 4-5.9 中性 / &lt;4 差时机）</div></div>'
+        '</div>')
+
+    # ② 调节轨迹与最终落位：决策链在 _position_steps（纯函数，规则注释见其 docstring）
+    final_label, steps, slot_txt = _position_steps(quality, valuation, timing, calc, red_flag)
     parts.append('<div class="track-summary">' + "".join(
         f'<div class="ts-row"><span class="ts-formula">{s}</span></div>' for s in steps) + '</div>')
 

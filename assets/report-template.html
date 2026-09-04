@@ -18,9 +18,14 @@ body {
   background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
-.up { color: #6ba86b; }
-.down { color: #c75b5b; }
-.mid { color: #c08a2e; }
+/* 方向色：红涨绿跌（A 股惯例；v4.9 自国际惯例绿涨红跌翻转）。
+   文字/徽章统一用加深系（pastel 仅留给 SVG 大面积填充）：白字/小字对比度达 WCAG AA */
+.up { color: #b84a4a; }
+.down { color: #4d804d; }
+.mid { color: #96691a; }
+/* 评价色：绿好红坏——评分/赔率/有利不利等好坏语义用这对，与方向色解耦 */
+.good { color: #4d804d; }
+.bad { color: #b84a4a; }
 .plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; overflow-x: auto; }
 .plot-wrap svg { max-width: 1000px; margin: 0 auto; }
 .hero { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
@@ -28,60 +33,62 @@ body {
 .hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; justify-content: center; }
 .hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
 .hero h1 { font-size: 26px; font-weight: 700; color: #2b2620; margin: 0 0 4px; }
-.hero .subtitle { font-size: 12.5px; color: #8a8375; }
+.hero .subtitle { font-size: 12.5px; color: #6f695e; }
 .hero .thesis { font-size: 14px; line-height: 1.8; color: #57524a; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
 /* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
 .hero-tracks { display: flex; gap: 16px; align-items: stretch; flex-shrink: 0; }
 .hero-track { text-align: center; border: 1px solid #e0d7c3; border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
 .hero-track.quality { background: #f2eddd; }
 .hero-track.valuation { background: #fffdf9; }
-.hero-track .s-label { font-size: 12px; color: #8a8375; letter-spacing: 1.2px; margin-bottom: 4px; }
+.hero-track .s-label { font-size: 12px; color: #6f695e; letter-spacing: 1.2px; margin-bottom: 4px; }
 .hero-track .s-value { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .hero-track.quality .s-value { color: #4a6fa5; }
-.hero-track.valuation .s-value.score-good { color: #6ba86b; }
-.hero-track.valuation .s-value.score-mid { color: #c08a2e; }
-.hero-track.valuation .s-value.score-bad { color: #c75b5b; }
-.hero-track .s-sub { font-size: 12px; color: #8a8375; margin-top: 3px; }
+.hero-track.valuation .s-value.score-good { color: #4d804d; }
+.hero-track.valuation .s-value.score-mid { color: #96691a; }
+.hero-track.valuation .s-value.score-bad { color: #b84a4a; }
+.hero-track .s-sub { font-size: 12px; color: #6f695e; margin-top: 3px; }
 /* 时机分：一行灰字，弱化但可读（不偷感） */
-.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #9a917f; letter-spacing: 0.3px; text-align: center; }
+.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #6f695e; letter-spacing: 0.3px; text-align: center; }
 .hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
 .hero-data-strip { display: flex; border-top: 1px solid #ece7db; padding-top: 10px; }
 .hero-data-strip .d-item { flex: 1; min-width: 0; text-align: center; }
 .hero-data-strip .d-item + .d-item { border-left: 1px solid #ece7db; padding-left: 18px; margin-left: 18px; }
-.hero-data-strip .d-label { font-size: 11px; color: #8a8375; margin-bottom: 3px; }
+.hero-data-strip .d-label { font-size: 11px; color: #6f695e; margin-bottom: 3px; }
 .hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
-.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #8a8375; }
-.hero-data-strip .d-sub { font-size: 11px; color: #8a8375; margin-top: 3px; }
+.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #6f695e; }
+.hero-data-strip .d-sub { font-size: 11px; color: #6f695e; margin-top: 3px; }
 .metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
 .metric-card { flex: 1; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 16px 18px; text-align: center; }
-.metric-card .label { font-size: 11px; color: #8a8375; margin-bottom: 4px; }
+.metric-card .label { font-size: 11px; color: #6f695e; margin-bottom: 4px; }
 .metric-card .value { font-size: 24px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
-.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #8a8375; }
-.metric-card .sub { font-size: 11px; color: #8a8375; margin-top: 4px; }
+.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #6f695e; }
+.metric-card .sub { font-size: 11px; color: #6f695e; margin-top: 4px; }
 /* 三指标卡 value 着色（优先级高于 .metric-card .value 的默认色） */
-.metric-card .value.up { color: #6ba86b; }
-.metric-card .value.down { color: #c75b5b; }
-.metric-card .value.mid { color: #c08a2e; }
+.metric-card .value.up { color: #b84a4a; }
+.metric-card .value.down { color: #4d804d; }
+.metric-card .value.mid { color: #96691a; }
+.metric-card .value.good { color: #4d804d; }
+.metric-card .value.bad { color: #b84a4a; }
 .section { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
 .section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #ece7db; background: #f7f2e7; }
 .section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #efe9db; border-radius: 4px; padding: 2px 8px; }
 .section-title { font-size: 15px; font-weight: 600; color: #2b2620; }
-.section-meta { margin-left: auto; font-size: 11px; color: #8a8375; }
+.section-meta { margin-left: auto; font-size: 11px; color: #6f695e; }
 .section-body { padding: 20px 24px; }
 .badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
-.badge-green { background: #6ba86b; }
-.badge-orange { background: #c08a2e; }
-.badge-red { background: #c75b5b; }
+.badge-green { background: #4d804d; }
+.badge-orange { background: #96691a; }
+.badge-red { background: #b84a4a; }
 .badge-blue { background: #4a6fa5; }
-.badge-gray { background: #b3ab93; }
+.badge-gray { background: #7a715e; }
 .badge-lg { font-size: 15px; padding: 3px 10px; }
 /* block + fit-content：标签独占一行，防手写正文直接跟在 span 后粘连（v4.7.1） */
 .section-tag { display: block; width: fit-content; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
-.muted { color: #8a8375; }
+.muted { color: #6f695e; }
 .verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
-th { background: #f1ebdd; color: #8a8375; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
 td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
 tbody tr:nth-child(even) td { background: #f7f2e7; }
 tr:hover td { background: #f2eddd; }
@@ -91,12 +98,33 @@ td.center, th.center { text-align: center; }
 .freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
 .freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
 .freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
-.source { display: block; font-size: 11px; color: #8a8375; margin: 4px 0 12px; }
+.source { display: block; font-size: 11px; color: #6f695e; margin: 4px 0 12px; }
+/* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 3.4 维度块）：两列网格双轴组合图 */
+.mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 8px; }
+.mini-cell { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 8px 8px 2px; }
+.mini-cell .m-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; margin-bottom: 2px; }
+.mini-cell .m-name { color: #57524a; font-weight: 600; }
+.mini-cell .m-val { font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.mini-cell .m-yoy { font-size: 10px; font-weight: 400; color: #6f695e; }
+/* v4.10 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
+.trig-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 16px; margin: 4px 0 10px; }
+.trig { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; padding: 5px 10px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; }
+.trig-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; }
+.trig-dot.hit { background: #4d804d; }
+.trig-dot.miss { background: #b84a4a; }
+.trig-dot.pending { background: #7a715e; }
+.trig-cond { font-weight: 600; color: #2b2620; }
+.trig-mt { color: #6f695e; font-size: 11.5px; flex: 1; }
+.trig-status { font-size: 11px; font-weight: 700; }
+.trig-status.hit { color: #4d804d; }
+.trig-status.miss { color: #b84a4a; }
+.trig-status.pending { color: #7a715e; }
+.mini-cell svg { width: 100%; height: auto; display: block; font-family: inherit; }
 .conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
 .warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
-.danger-card { background: #fdf0f0; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.danger-card { background: #f9eeea; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
-.deduction { color: #c75b5b; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
+.deduction { color: #b84a4a; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
 .deduction + br { display: none; }
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
@@ -106,27 +134,27 @@ td.center, th.center { text-align: center; }
 .prev-tag { display: inline-block; background: #efe9db; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
 .rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
 td.rev, th.rev { padding: 8px 12px; }
-.scenario-pess { color: #c75b5b; }
-.scenario-base { color: #c08a2e; }
-.scenario-opt { color: #6ba86b; }
-.flag-ok { color: #6ba86b; font-weight: 600; }
-.flag-bad { color: #c75b5b; font-weight: 600; }
-.flag-na { color: #b8955a; font-weight: 600; }
+.scenario-pess { color: #b84a4a; }
+.scenario-base { color: #96691a; }
+.scenario-opt { color: #4d804d; }
+.flag-ok { color: #4d804d; font-weight: 600; }
+.flag-bad { color: #b84a4a; font-weight: 600; }
+.flag-na { color: #96691a; font-weight: 600; }
 .matrix-table th, .matrix-table td { text-align: center; font-size: 12px; padding: 14px 10px; }
 .matrix-table .target { background: #efe9db; font-weight: 700; color: #4a6fa5; }
 .layer-summary { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
 .dim-block { margin-bottom: 20px; }
 .dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #ece7db; }
 .dim-name { font-size: 14px; font-weight: 600; color: #3a362e; }
-.dim-weight { font-size: 11px; color: #8a8375; }
+.dim-weight { font-size: 11px; color: #6f695e; }
 /* 10 三轨评分三行公式（精简汇总） */
 .track-summary { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
 .ts-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
 .ts-row + .ts-row { border-top: 1px solid #ece7db; }
-.ts-label { min-width: 48px; color: #8a8375; font-size: 12px; }
+.ts-label { min-width: 48px; color: #6f695e; font-size: 12px; }
 .ts-formula { color: #66604f; font-variant-numeric: tabular-nums; }
 .decision-bar { background: #f2eddd; border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
-.disclaimer { color: #8a8375; font-size: 11px; padding-top: 16px; margin-top: 24px; }
+.disclaimer { color: #6f695e; font-size: 11px; padding-top: 16px; margin-top: 24px; }
 .table-scroll { overflow-x: auto; }
 /* v4.8 版式修复：段落间距（此前 p 零间距导致核心结论四段粘合）/ 侧栏目录（固定右缘，宽屏显示） */
 .section-body p + p { margin-top: 10px; }
@@ -134,12 +162,13 @@ td.rev, th.rev { padding: 8px 12px; }
 .section { scroll-margin-top: 10px; }
 html { scroll-behavior: smooth; }
 .toc-side { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 50; }
-.toc-side a { font-size: 11px; color: #8a8375; text-decoration: none; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
+.toc-side a { font-size: 11px; color: #6f695e; text-decoration: none; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
 .toc-side a:hover { background: #f2eddd; color: #2b2620; opacity: 1; }
 @media (max-width: 1279px) { .toc-side { display: none; } }
 @media (max-width: 768px) {
   body { padding: 12px 8px; }
   .metric-row { flex-wrap: wrap; }
+  .mini-grid { grid-template-columns: 1fr; }
   .metric-card { min-width: calc(50% - 6px); }
   .hero { padding: 20px; }
   .hero-top { flex-direction: column; gap: 14px; }
@@ -392,6 +421,7 @@ html { scroll-behavior: smooth; }
     <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
   </div>
   <div class="section-body">
+    {{TRIGGERS_HTML}}
     {{DASH_HTML}}
   </div>
 </div>

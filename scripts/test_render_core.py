@@ -60,6 +60,30 @@ def minimal_fill(**over):
                    "3A": 7, "3B": 7, "3C": 7},
         "timing_scores": {"筹码面": 5, "技术面": 5},
         "yellow_deductions": [],
+        # v4.9 必填图字段：3.4 财务趋势图墙（组合面板）+ 4.1 利润增长图
+        "fin_trend": {"years": ["2021", "2022", "2023", "2024", "2025"], "panels": [
+            {"title": "营收 × 毛利率",
+             "bars": [{"name": "营收", "unit": "亿", "values": [100, 110, 120, 125, 130]}],
+             "lines": [{"name": "毛利率", "pct": True, "values": [30, 31, 32, 33, 34]}]},
+            {"title": "归母净利 × 净利率 × ROE",
+             "bars": [{"name": "归母净利", "unit": "亿", "values": [8, 9, 10, 10.5, 11]}],
+             "lines": [{"name": "净利率", "pct": True, "values": [8, 8.5, 9, 9.5, 10]},
+                       {"name": "ROE", "pct": True, "values": [12, 13, 14, 14, 14]}]},
+            {"title": "经营现金流+自由现金流 × 现金含量",
+             "bars": [{"name": "经营现金流", "unit": "亿", "values": [10, 11, 12, 12, 13]},
+                      {"name": "自由现金流", "unit": "亿", "values": [7, 8, 9, 9, 10]}],
+             "lines": [{"name": "现金含量", "values": [1.2, 1.1, 1.0, 1.05, 1.1],
+                        "threshold": 0.7}]},
+            {"title": "货币资金 × 短债覆盖率",
+             "bars": [{"name": "货币资金", "unit": "亿", "values": [50, 55, 60, 65, 70]}],
+             "lines": [{"name": "短债覆盖率", "values": [2.2, 2.5, 2.4, 2.6, 2.8]}]},
+        ]},
+        "growth_plot": {"hist": [
+            {"y": "2022", "rev": 10.0, "np": 12.5},
+            {"y": "2023", "rev": 9.1, "np": 11.1},
+            {"y": "2024", "rev": 4.2, "np": 5.0},
+            {"y": "2025", "rev": 4.0, "np": 4.8}],
+            "fcst": [{"y": "2026E", "np_lo": 4, "np_hi": 8, "np_consensus": 6.0}]},
     }
     fill.update(over)
     return fill
@@ -587,6 +611,266 @@ def test_quote_four_piece():
         with contextlib.redirect_stderr(buf2):
             R.validate_content(f, R.compute_valuation(f))
         assert "div_yield" not in buf2.getvalue(), "港股 div_yield 不应机械比对"
+
+
+def test_chain_columns_balanced():
+    """v4.9：产业链图两栏各自在总高内均分——4 上游 vs 5 下游，首尾盒顶/底 y 两栏一致。"""
+    fill = minimal_fill(company="测试股份",
+                        industry_chain={"upstream": ["A1", "A2", "A3", "A4"],
+                                        "downstream": ["B1", "B2", "B3", "B4", "B5"]})
+    html = R.build_chain_plot(fill)
+    ups = [float(y) for y in re.findall(r'<rect x="30" y="([\d.]+)" width="250" height="34"', html)]
+    downs = [float(y) for y in re.findall(r'<rect x="720" y="([\d.]+)" width="250" height="34"', html)]
+    assert len(ups) == 4 and len(downs) == 5
+    assert ups[0] == downs[0], "首盒顶应两栏对齐"
+    assert ups[-1] == downs[-1], "末盒顶应两栏对齐（短栏间距已拉开）"
+    assert ups[1] - ups[0] > downs[1] - downs[0], "短栏间距应大于长栏"
+
+
+def test_fin_trend_wall():
+    """v4.9：fin_trend 组合图墙——4 面板、双轴（左亿右%）、阈值红虚线、柱图同比、
+    第二条线灰虚线；缺字段/面板不足拒渲染。"""
+    html = R.build_fin_trend(minimal_fill())
+    assert html.count("mini-cell") == 4, "标准 4 面板"
+    assert 'stroke-dasharray="3 3"' in html, "现金含量应画 0.7 阈值红虚线"
+    assert 'stroke-dasharray="4 3"' in html, "ROE 第二条线应为灰虚线"
+    assert "m-yoy" in html, "柱图应带同比标注"
+    assert "左轴" in html and "右轴" in html, "图例应标明双轴"
+    assert not R.build_fin_trend(minimal_fill(fin_trend={"years": ["2024", "2025"], "panels": []}))
+    _expect_valueerror(minimal_fill(fin_trend=None), "fin_trend 缺失应拒渲染")
+    f = minimal_fill()
+    f["fin_trend"]["panels"] = f["fin_trend"]["panels"][:2]
+    _expect_valueerror(f, "fin_trend 有效面板 <3 应拒渲染")
+
+
+def test_growth_plot():
+    """v4.9：growth_plot——历史柱+预测区间条+一致预期◆+预期差；未盈利分型豁免必填。"""
+    html = R.build_growth_plot(minimal_fill())
+    assert "polygon" in html, "应有一致预期菱形"
+    assert "fill-opacity=\"0.3\"" in html, "预测段应为区间竖条"
+    assert "差 +0.0pct" in html, "预期差=本文中枢 6 − 一致 6 = 0"
+    _expect_valueerror(minimal_fill(growth_plot=None), "growth_plot 缺失应拒渲染")
+    f = minimal_fill(stock_type="未盈利股", growth_plot=None)
+    R.validate_content(f, R.compute_valuation(f))   # 未盈利豁免，不拒
+
+
+def test_scenario_cards_eval_colors():
+    """v4.9 颜色语义拆分：三指标卡赔率/离散度用 good/bad（评价色），中枢期望收益仍 up/down。"""
+    calc = R.compute_valuation(minimal_fill())
+    html = R.build_scenario_block(calc)
+    assert 'value up' in html, "中枢期望收益为正应走方向色 up"
+    assert 'value bad' in html, "赔率 <1.5 应走评价色 bad"
+    f = minimal_fill()
+    # 收窄悲观下限（98×10=9.8 贴近现价 10）→ 赔率 (11−10)/(10−9.8)=5 ≥1.5
+    f["valuation"]["scenarios"][0]["profit"] = 98
+    f["valuation"]["scenarios"][0]["pe"] = [10, 11]
+    html2 = R.build_scenario_block(R.compute_valuation(f))
+    assert 'value good' in html2, "赔率 ≥1.5 应走评价色 good"
+
+
+def test_position_steps_direct():
+    """v4.10：仓位决策链已抽成纯函数 _position_steps——直接测决策分支
+    （红灯熔断 / 中枢为负 / 直落重仓 / 上浮封顶 / 0 兜底 / 观察池下调）。"""
+    import contextlib
+    import io
+
+    def capture(fn):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            fn()
+        return buf.getvalue()
+
+    # 红灯熔断：后续调节不再适用
+    label, steps, slot = R._position_steps(7.2, 8.5, 7.0, _calc(odds=None), "财务造假嫌疑")
+    assert label == "不建议参与" and slot is None and "红灯熔断" in steps[0]
+    # 中枢为负拦截器（不落矩阵）
+    label, steps, slot = R._position_steps(7.2, 8.5, 7.0, _calc(), "")
+    assert label == "重仓 ≤20%" and "矩阵落位" in slot, "无红灯无负中枢应走矩阵直落"
+    label, steps, slot = R._position_steps(7.2, 8.5, 7.0, {"central_raw": -0.1, "central": -0.1}, "")
+    assert label == "回避（中枢为负，等价格）" and slot is None and "中枢为负" in steps[0]
+    # 上浮封顶：质地一般轻仓 + 时机/离散/赔率三连浮仍止步标准仓
+    label, steps, slot = R._position_steps(4.27, 4.3, 7.0, _calc(dispersion=0.30, odds=None), "")
+    assert label == "标准仓 ≤10%" and "上浮封顶" in "".join(steps)
+    # 下调 0 兜底：两次下调不得回卷
+    label, steps, slot = R._position_steps(4.27, 4.3, 3.5, _calc(dispersion=0.95), "")
+    assert label == "不建议参与" and "重仓" not in "".join(steps)
+    # 观察池：中上质地 + 差价格；时机差 → 下调不建议参与
+    label, steps, slot = R._position_steps(5.8, 5.0, 5.0, None, "")
+    assert label == "观察池" and "观察池" in slot
+    label, steps, slot = R._position_steps(5.8, 5.0, 3.0, None, "")
+    assert label == "不建议参与" and "观察池下调" in "".join(steps)
+    # 与卡片渲染同源：build_position_card 输出含同一结论（行为零变更冒烟）
+    html = R.build_position_card(minimal_fill(), 4.27, 4.3, 7.0,
+                                 _calc(dispersion=0.30, odds=None), "")
+    assert "标准仓 ≤10%" in html
+    print("OK _position_steps 直接单测（红灯/负中枢/直落/封顶/兜底/观察池）")
+
+
+def test_hero_band_claims_warns():
+    """v4.10 Hero 文案引用分位/历史带概念时的数据支撑告警：
+    无 p25/p75 支撑 / 极性矛盾 → 告警；概念齐备且无矛盾 → 不告警。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    # 引「分位」但 pe_history 无 p25/p75 → 告警（数据支撑缺失）
+    out = capture(minimal_fill(pe_sub="PE 处近 5 年低分位"))
+    assert "分位" in out and "未填 p25/p75" in out, "引用分位而缺 p25/p75 应告警"
+    # 有 p25/p75 但极性矛盾：现价 PE 高于 P75 却说低分位
+    ph = {"hist_lo": 5, "hist_hi": 30, "p25": 8, "p75": 10, "label": "近5年"}
+    out = capture(minimal_fill(pe_sub="现价 PE 处于低分位", pe_history=ph))
+    assert "低分位" in out and "矛盾" in out, "低分位说法与高于 P75 的现价应告警"
+    # 极性正确（现价 < P25 说低分位）→ 不告警
+    out = capture(minimal_fill(pe_sub="现价 PE 处于低分位", pe_history={"p25": 20, "p75": 30}))
+    assert "分位" not in out, "低分位说法与低于 P25 的现价不应告警"
+    # 引用历史带但 pe_history 无 hist_lo/hist_hi → 告警
+    out = capture(minimal_fill(pe_sub="PE 高于历史带上沿", pe_history={"p25": 8, "p75": 10}))
+    assert "历史带" in out and "hist_lo" in out, "引用历史带而缺极值字段应告警"
+    # 无概念字面 → 不告警
+    out = capture(minimal_fill())
+    assert "分位" not in out and "历史带" not in out
+    print("OK Hero 分位/历史带文案支撑告警（缺支撑/极性矛盾告警，概念齐备放行）")
+
+
+def test_conclusion_structure_warns():
+    """v4.10 conclusion_html 四段判词结构：缺段 / 乱序 → 告警；四段顺序正确 → 不告警。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    body = "（数据证据支撑充分，论据详实可靠，具备参考价值。）" * 6
+    four = (f"<p><strong>关键优势：</strong>{body}</p>"
+            f"<p><strong>关键弱点：</strong>{body}</p>"
+            f"<p><strong>当前市场认知：</strong>{body}</p>"
+            f"<p><strong>核心投资逻辑：</strong>{body}</p>")
+    assert "缺段" not in capture(minimal_fill(conclusion_html=four)), "四段齐全不应告警"
+    three = four.replace("<p><strong>当前市场认知：</strong>", "")
+    out = capture(minimal_fill(conclusion_html=three))
+    assert "缺段" in out and "当前市场认知" in out, "缺段应告警并点名缺失判词"
+    mixed = (f"<p><strong>核心投资逻辑：</strong>{body}</p>"
+             f"<p><strong>关键优势：</strong>{body}</p>"
+             f"<p><strong>关键弱点：</strong>{body}</p>"
+             f"<p><strong>当前市场认知：</strong>{body}</p>")
+    out = capture(minimal_fill(conclusion_html=mixed))
+    assert "顺序错误" in out, "四段乱序应告警"
+    print("OK conclusion 四段结构（齐全放行 / 缺段点名 / 乱序告警）")
+
+
+def test_review_miss_diagnostics_warns():
+    """v4.10 复盘「未命中」缺诊断方向：含未命中而无规律/反例字样 → 告警。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    prev = {"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
+            "timing": 5.0, "target_range": "10-12"}
+    tbl = '<table><tr><td>假设</td></tr></table><span class="source">数据来源：测试</span>'
+    miss_key = "未提「规律/反例」"  # 告警文案关键字（与用户正文的「规律/反例」区分）
+    out = capture(minimal_fill(prev=prev, review_html=tbl + "判定：未命中"))
+    assert miss_key in out, "含未命中而无规律/反例字样应告警"
+    out2 = capture(minimal_fill(prev=prev,
+                                review_html=tbl + "判定：未命中——本次属原规律失效的现场反例"))
+    assert miss_key not in out2, "已写明规律失效/反例方向不应告警"
+    print("OK 复盘未命中诊断告警（无规律/反例措辞告警，已写失效方向放行）")
+
+
+def test_peers_roe_outlier_warns():
+    """v4.10 peers_plot ROE 量级倒挂：目标点 ROE 脱离同业量级 → 告警；同量级 → 不告警。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    # 目标 ROE 2% vs 同业 12-15% → 倒挂告警
+    fill = minimal_fill(peers_plot={"points": [
+        {"name": "测试股份", "roe": 2, "pe": 11, "target": True},
+        {"name": "同业甲", "roe": 12, "pe": 18},
+        {"name": "同业乙", "roe": 15, "pe": 20}]})
+    out = capture(fill)
+    assert "ROE" in out and "脱离同业量级" in out, "目标 ROE 明显低于同业应告警"
+    # 目标 ROE 34 vs 同业 12-15 → 倒挂告警
+    fill = minimal_fill(peers_plot={"points": [
+        {"name": "测试股份", "roe": 34, "pe": 11, "target": True},
+        {"name": "同业甲", "roe": 12, "pe": 18},
+        {"name": "同业乙", "roe": 15, "pe": 20}]})
+    assert "脱离同业量级" in capture(fill)
+    # 目标 14 vs 同业 12-15 → 不告警
+    fill = minimal_fill(peers_plot={"points": [
+        {"name": "测试股份", "roe": 14, "pe": 11, "target": True},
+        {"name": "同业甲", "roe": 12, "pe": 18},
+        {"name": "同业乙", "roe": 15, "pe": 20}]})
+    assert "脱离同业量级" not in capture(fill)
+    print("OK peers ROE 量级倒挂告警（<同业一半 / >同业两倍告警，同量级放行）")
+
+
+def test_fill_literal_mustache_survives():
+    """v4.10 fill 片段含字面 {{KEY}} 不被模板占位符替换误吞（实体化原样显示，渲染通过）。"""
+    with tempfile.TemporaryDirectory() as d:
+        f = minimal_fill()
+        # position_html 里带一段「模板占位符示例」文本
+        f["position_html"] = ("<p>模板占位符示例 {{DATE}} 与 {{COMPANY}} 是字面量，时机判定与决策逻辑如下。"
+                              + "时机判定与决策逻辑。" * 6 + "</p>")
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(f, fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    assert "{{DATE}}" not in html, "字面 {{DATE}} 不应被替换为实际日期（误吞）"
+    assert "&#123;&#123;DATE}}" in html and "&#123;&#123;COMPANY}}" in html, "字面 {{}} 应实体化原样显示"
+    print("OK fill 字面 {{KEY}} 实体化（不误吞、不残留报错）")
+
+
+def test_validate_warns_reach_stderr():
+    """v4.10 validate 告警路径：触发告警的 fill → stderr 有「内容校验」前缀输出。"""
+    import contextlib
+    import io
+    fill = minimal_fill(subtitle="测试行业 · 报告日期：2026-01-01")
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        R.validate_content(fill, R.compute_valuation(fill))
+    out = buf.getvalue()
+    assert "⚠️ 内容校验" in out, "告警路径必须打印到 stderr"
+    assert "subtitle 含「报告日期」" in out, "具体告警文案应到达 stderr"
+    print("OK validate 告警抵达 stderr（subtitle 含报告日期）")
+
+
+def test_triggers_strip():
+    """v4.10 触发条件状态条：三态类名/非法 status 归 pending/空字段空串/非法与超量告警。"""
+    import contextlib
+    import io
+    html = R.build_triggers_strip(minimal_fill(triggers=[
+        {"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%", "status": "hit"},
+        {"cond": "销量转正", "status": "pending"},
+        {"cond": "成本回落", "status": "miss"},
+        {"cond": "非法态", "status": "bogus"}]))
+    assert 'trig-dot hit' in html and 'trig-dot pending' in html and 'trig-dot miss' in html
+    assert "已兑现" in html and "未兑现" in html
+    assert html.count('<span class="trig-status pending">待验证</span>') == 2, "非法 status 应归 pending"
+    assert not R.build_triggers_strip(minimal_fill()), "无字段应为空串"
+    f = minimal_fill(triggers=[{"cond": f"c{i}", "status": "bogus"} for i in range(9)])
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        R.validate_content(f, R.compute_valuation(f))
+    assert "非法 status" in buf.getvalue() and "> 8" in buf.getvalue(), "非法值与超量应告警"
 
 
 if __name__ == "__main__":

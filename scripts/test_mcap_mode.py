@@ -53,6 +53,22 @@ def _fixture(valuation, valuation_inputs, thesis_prices):
                                   {"name": "同业A", "roe": 12, "pe": 15}]},
         "next_review": "2026-11-19", "dash_html": "<p>仪表盘测试。</p>",
         "position_html": "<p>时机判定小表与决策逻辑与触发条件。</p>" * 8,
+        # v4.9 必填图字段（夹具最小值）
+        "fin_trend": {"years": ["2023", "2024", "2025"], "panels": [
+            {"title": "营收 × 毛利率",
+             "bars": [{"name": "营收", "unit": "亿", "values": [90, 95, 100]}],
+             "lines": [{"name": "毛利率", "pct": True, "values": [30, 31, 32]}]},
+            {"title": "归母净利 × 净利率",
+             "bars": [{"name": "归母净利", "unit": "亿", "values": [8, 9, 10]}],
+             "lines": [{"name": "净利率", "pct": True, "values": [8.9, 9.5, 10]}]},
+            {"title": "经营现金流 × 现金含量",
+             "bars": [{"name": "经营现金流", "unit": "亿", "values": [9, 10, 11]}],
+             "lines": [{"name": "现金含量", "values": [1.0, 1.1, 1.1], "threshold": 0.7}]},
+        ]},
+        "growth_plot": {"hist": [{"y": "2023", "rev": 5.0, "np": 12.5},
+                                 {"y": "2024", "rev": 5.6, "np": 12.5},
+                                 {"y": "2025", "rev": 5.3, "np": 11.1}],
+                        "fcst": [{"y": "2026E", "np_lo": 5, "np_hi": 9, "np_consensus": 7.0}]},
     }
 
 
@@ -101,7 +117,10 @@ def main():
         html = _render(_fixture(nav_val, nav_inputs, (7, 11, 16)), tmp)
         assert "目标市值" in html and "1,000-1,200 亿" in html
         assert "P/NAV 0.5x vs 合理带 0.4-0.6x" in html
-        assert "归母净利" not in html
+        # v4.9：增长图/图墙caption 自带「归母净利」字样，断言收窄到情景表本体
+        import re as _re
+        tbl = _re.search(r'<table class="scenario-table">.*?</table>', html, _re.S).group(0)
+        assert "归母净利" not in tbl and "EPS" not in tbl
         print("OK mcap 模式：情景表显示目标市值行，过程卡显示 P/NAV 标签")
 
         # 3. 口径混用（三情景不统一）→ 拒渲染

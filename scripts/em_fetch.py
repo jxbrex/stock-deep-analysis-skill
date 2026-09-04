@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-em_fetch.py — 批量取数脚本（stock-deep-analysis skill 专用）
+em_fetch.py — 批量取数脚本（stock-deep-analysis skill 专用，v4.8.3 起拆分为三模块）
+
+模块分工：
+    em_fetch.py  宿主：传输/缓存层（tushare ts_call / 东财 get + 磁盘缓存状态与统计）、
+                 市场映射、格式化工具、E7 搜索与输出组装（_sec_*/summarize/main/CLI）。
+                 从 em_data.py re-export 取数函数族供测试与输出组装按名访问。
+    em_data.py   东财/tushare 取数函数族（fetch_*/_em_*/_ts_*）+ _em_dc + 序列缓存容器。
+                 经转发 stub 动态解析宿主 ts_call/get（test_em_fetch 按 em_fetch 命名空间
+                 rebind 传输函数须传导；边界理由见该文件 docstring）。
+    em_cache.py  磁盘缓存参数化原语（原子写/TTL/键路径）与 TTL/tier 常量。
 
 数据源优先级：tushare（官方API，口径规范，会员限流保护）优先，东方财富公开接口兜底。
 tushare token 自动发现：环境变量 TUSHARE_TOKEN > ZCode config.json 的 mcp.servers.tushare.url。
@@ -20,18 +29,23 @@ tushare 不可用时自动回落东财野生端点（curl 传输，防 TLS 指�
       / 有息负债（tushare balancesheet）
 """
 import json
-import hashlib
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 import urllib.parse
-from bisect import bisect_right
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from functools import lru_cache
+
+# 兼容两种加载：`python em_fetch.py`（主脚本，模块名 __main__）与 `import em_fetch`（测试/被调用）。
+# 主脚本模式下把自身注册为 sys.modules["em_fetch"]，否则模块中部 `from em_data import ...` 触发
+# em_data 顶层 `import em_fetch` 时会二次从磁盘加载本文件 → 循环 ImportError。
+if __name__ == "__main__":
+    sys.modules.setdefault("em_fetch", sys.modules[__name__])
 
 # Windows 控制台默认 GBK 编码，打印中文/货币符号会 UnicodeEncodeError —— 强制 UTF-8
 for _s in (sys.stdout, sys.stderr):
@@ -122,95 +136,80 @@ def _tushare_token():
 
 # tushare 透明缓存：同一进程内相同 (api, 归一化参数) 只发一次网络请求（会员限流保护）
 _TS_CACHE: dict = {}
+_TS_LOCKS: dict = {}  # per-key 锁：线程池并发下同冷键只发一次（不同键仍并行）
 _TS_DEBUG = os.environ.get("EM_FETCH_DEBUG") == "1"
+
+# 运行统计（EM_FETCH_DEBUG=1 时 main 末尾打一行汇总）：请求数/缓存命中/重试等待。
+# 线程池并发自增用锁保护（值只增不减，开销可忽略）。
+_STATS = {"ts_net": 0, "ts_mem": 0, "ts_disk": 0, "em_net": 0, "em_disk": 0, "wait": 0}
+_STATS_LOCK = threading.Lock()
+
+
+def _stat(name: str) -> None:
+    with _STATS_LOCK:
+        _STATS[name] += 1
 
 # ---------------- 磁盘缓存（跨进程，P0-B） ----------------
 # 每份报告是一个新进程、每股 15-20 请求，同日重跑/check 修复循环/peers 批量全量重发，
 # 痛点是 tushare 限流额度消耗（report_rc 等接口 1次/分钟）与东财野生端点封禁风险。
-# TTL 分档：行情 2h / 财务 12h / 治理 24h（均远小于数据自身更新周期，陈旧风险可控）；
-# EM_FETCH_NO_CACHE=1 全旁路。缓存读写任何失败都静默忽略，绝不阻断取数。
+# TTL 分档与 IO 原语（原子写/TTL 判定/键路径）在 em_cache.py（参数化纯函数）；本模块持有
+# 两个可 rebind 的配置状态（test_em_fetch 按 em_fetch 命名空间直接赋值），经参数传入原语。
 _CACHE_DIR = os.path.join(tempfile.gettempdir(), "em_fetch_cache")
 _NO_CACHE = os.environ.get("EM_FETCH_NO_CACHE") == "1"
-_TTL_QUOTE = 2 * 3600    # 行情（日线收盘级，2h 内唯一风险是盘中跑+收盘后 1h 内重跑，可识别）
-_TTL_FIN = 12 * 3600     # 财务（季度更新）
-_TTL_GOV = 24 * 3600     # 治理（公告/事件级更新）
-_TS_TIER_QUOTE = {"daily", "daily_basic", "adj_factor", "hk_daily", "weekly", "monthly",
-                  "index_daily", "stk_factor"}
-_TS_TIER_GOV = {"pledge_stat", "stk_holdertrade", "repurchase", "fina_audit", "stock_basic",
-                "disclosure_date", "namechange", "stk_holdernumber",
-                "top10_holders", "top10_floatholders"}
-
-
-def _dc_path(tag: str, key: str) -> str:
-    return os.path.join(_CACHE_DIR, f"{tag}_{hashlib.md5(key.encode('utf-8')).hexdigest()[:16]}.json")
-
-
-def _dc_read(path: str, ttl: int):
-    """命中且未过期返回解析值，否则 None。"""
-    if _NO_CACHE:
-        return None
-    try:
-        if time.time() - os.path.getmtime(path) > ttl:
-            return None
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _dc_write(path: str, val) -> None:
-    """先写临时文件再 replace，避免并发读到写了一半的文件。"""
-    if _NO_CACHE:
-        return
-    try:
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        # tmp 名带 PID：并发进程写同一缓存键时互不覆盖（固定 .tmp 会互踩）
-        tmp = f"{path}.{os.getpid()}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(val, f, ensure_ascii=False)
-        os.replace(tmp, path)
-    except OSError:
-        pass
+from em_cache import (dc_path, dc_read, dc_write,
+                      _TTL_QUOTE, _TTL_FIN, _TTL_GOV, _TS_TIER_QUOTE, _TS_TIER_GOV)
 
 
 def ts_call(api_name: str, params: dict = None, fields: str = "") -> list:
     """tushare HTTP API。返回 list[dict]（fields↔items 对齐）。失败抛异常由调用方兜底。
-    缓存键归一化：params 里的 "fields" 是 no-op（tushare 只认 payload 顶层 fields），剔除后参与键。"""
+    缓存键归一化：params 里的 "fields" 是 no-op（tushare 只认 payload 顶层 fields），剔除后参与键。
+    线程安全：per-key 锁保证同冷键（内存 miss + 磁盘 miss）只发一次网络；锁只覆盖单键，
+    不同键在 4 worker 线程池下仍并行；第二线程等锁后命中先行者写入的内存缓存直接返回。"""
     norm = dict(params or {})
     norm.pop("fields", None)
     key = (api_name, tuple(sorted(norm.items())), fields)
     if key in _TS_CACHE:
+        _stat("ts_mem")
         if _TS_DEBUG:
             print(f"[cache-hit] {api_name} {dict(norm)}", file=sys.stderr)
         return _TS_CACHE[key]
-    # 磁盘缓存（跨进程）：行情 2h / 财务 12h / 治理 24h
-    tier = _TTL_QUOTE if api_name in _TS_TIER_QUOTE else _TTL_GOV if api_name in _TS_TIER_GOV else _TTL_FIN
-    dp = _dc_path("ts", repr(key))
-    cached = _dc_read(dp, tier)
-    if cached is not None:
-        _TS_CACHE[key] = cached
+    with _TS_LOCKS.setdefault(key, threading.Lock()):
+        if key in _TS_CACHE:  # 等锁期间同键已被其他线程拉取
+            _stat("ts_mem")
+            if _TS_DEBUG:
+                print(f"[cache-hit] {api_name} {dict(norm)}", file=sys.stderr)
+            return _TS_CACHE[key]
+        # 磁盘缓存（跨进程）：行情 2h / 财务 12h / 治理 24h
+        tier = (_TTL_QUOTE if api_name in _TS_TIER_QUOTE
+                else _TTL_GOV if api_name in _TS_TIER_GOV else _TTL_FIN)
+        dp = dc_path(_CACHE_DIR, "ts", repr(key))
+        cached = dc_read(dp, tier, _NO_CACHE)
+        if cached is not None:
+            _TS_CACHE[key] = cached
+            _stat("ts_disk")
+            if _TS_DEBUG:
+                print(f"[disk-hit] {api_name} {dict(norm)}", file=sys.stderr)
+            return cached
+        tok = _tushare_token()
+        if not tok:
+            raise RuntimeError("tushare token 未配置（TUSHARE_TOKEN 环境变量或 ZCode mcp 配置）")
+        payload = {"api_name": api_name, "token": tok, "params": params or {}, "fields": fields}
+        req = urllib.request.Request(
+            TS_API, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", **UA}, method="POST")
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        if d.get("code") != 0:
+            raise RuntimeError(f"tushare {api_name}: {d.get('msg')}")
+        data = d.get("data") or {}
+        flds = data.get("fields") or []
+        rows = [dict(zip(flds, row)) for row in (data.get("items") or [])]
+        _TS_CACHE[key] = rows
+        dc_write(dp, rows, _NO_CACHE, _CACHE_DIR)
+        _stat("ts_net")
         if _TS_DEBUG:
-            print(f"[disk-hit] {api_name} {dict(norm)}", file=sys.stderr)
-        return cached
-    tok = _tushare_token()
-    if not tok:
-        raise RuntimeError("tushare token 未配置（TUSHARE_TOKEN 环境变量或 ZCode mcp 配置）")
-    payload = {"api_name": api_name, "token": tok, "params": params or {}, "fields": fields}
-    req = urllib.request.Request(
-        TS_API, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", **UA}, method="POST")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-        d = json.loads(r.read().decode("utf-8"))
-    if d.get("code") != 0:
-        raise RuntimeError(f"tushare {api_name}: {d.get('msg')}")
-    data = d.get("data") or {}
-    flds = data.get("fields") or []
-    rows = [dict(zip(flds, row)) for row in (data.get("items") or [])]
-    _TS_CACHE[key] = rows
-    _dc_write(dp, rows)
-    if _TS_DEBUG:
-        print(f"[net] {api_name} {dict(norm)} -> {len(rows)} rows", file=sys.stderr)
-    return rows
+            print(f"[net] {api_name} {dict(norm)} -> {len(rows)} rows", file=sys.stderr)
+        return rows
 
 
 def _fin_rng() -> dict:
@@ -258,10 +257,11 @@ def get(url: str, retries: int = 1) -> dict:
     不换传输层重打，429/5xx 抛 RateLimitError 由 main 限流硬停。
     磁盘缓存：push2/push2his 行情 2h、datacenter 数据 12h（跨进程去重），其余 URL 不缓存。"""
     tier = _TTL_QUOTE if "push2" in url else _TTL_FIN if "datacenter" in url else 0
-    dp = _dc_path("em", url) if tier else None
+    dp = dc_path(_CACHE_DIR, "em", url) if tier else None
     if dp:
-        cached = _dc_read(dp, tier)
+        cached = dc_read(dp, tier, _NO_CACHE)
         if cached is not None:
+            _stat("em_disk")
             return cached
     last_err = None
     for attempt in range(retries + 1):
@@ -270,15 +270,19 @@ def get(url: str, retries: int = 1) -> dict:
                 raw = transport(url)
                 d = json.loads(raw.decode("utf-8"))
                 if dp:
-                    _dc_write(dp, d)
+                    dc_write(dp, d, _NO_CACHE, _CACHE_DIR)
+                _stat("em_net")
                 return d
             except (RateLimitError, HttpStatusError):
                 raise  # HTTP 错误响应：原样抛出，不重试
             except Exception as e:
                 last_err = e
         if attempt < retries:
+            _stat("wait")
             time.sleep(1.5)
     raise last_err
+
+
 
 
 def yi(x, digits=1):
@@ -330,987 +334,34 @@ def _fmt_date(yyyymmdd: str) -> str:
     return f"{s[:4]}-{s[4:6]}-{s[6:]}" if len(s) == 8 else s
 
 
-# ---------------- E1 行情估值 ----------------
-
-_HK_DAILY_CACHE = {}
-
-
-def _hk_daily_series(ts_code: str, years: int = 6) -> list:
-    """港股日线序列。hk_daily 限流实测 1次/分钟（会员级），单次拉全量缓存复用：
-    E1 取最新价、E2 聚合月线共用同一次调用，避免同脚本内二次调用被限流。"""
-    if ts_code not in _HK_DAILY_CACHE:
-        end = date.today().strftime("%Y%m%d")
-        beg = f"{date.today().year - years}0101"
-        rows = ts_call("hk_daily", {"ts_code": ts_code, "start_date": beg, "end_date": end})
-        if not rows:
-            raise RuntimeError("hk_daily 空返回")
-        _HK_DAILY_CACHE[ts_code] = rows
-    return _HK_DAILY_CACHE[ts_code]
-
-
-def _em_quote(secid: str, is_hk: bool = False) -> dict:
-    fields = "f43,f57,f58,f116,f162,f167,f168,f170"
-    url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields={fields}"
-    d = get(url).get("data") or {}
-    # 实测缩放差异：A股 价格÷100 比率÷100；港股 价格÷1000 比率÷100（f162=0 表示PE缺失非真0）
-    price_div = 1000 if is_hk else 100
-    ratio_div = 100
-    div_p = lambda v: None if v in (None, "-") else v / price_div
-    div_r = lambda v: None if v in (None, "-") else v / ratio_div
-    pe = div_r(d.get("f162"))
-    name = d.get("f58") or ""
-    # 陈旧档拦截：已切换/退市标的东财返回零值（价格 0 + 市值 0），直接报错给可操作建议，
-    # 避免零值静默流入报告（北交所旧代码 832982 实测返回「锦波生物(已切换)」全零，2026-08-30）
-    if "已切换" in name or (not div_p(d.get("f43")) and not d.get("f116")):
-        raise ValueError(
-            f"东财行情显示 {name or secid} 已切换代码或已退市（无有效报价）："
-            f"北交所旧代码（43/83/87/88 段）2025-10 起已切换 920 段新代码，请改用新代码重试；"
-            f"其他情形请人工核查证券状态")
-    return {
-        "名称": d.get("f58"), "代码": d.get("f57"),
-        "最新价": div_p(d.get("f43")), "涨跌幅%": div_r(d.get("f170")),
-        "总市值亿": f"{(d.get('f116') or 0) / 1e8:,.1f}" if d.get("f116") else None,
-        "PE_TTM": None if pe == 0 else pe,   # 港股 f162=0 = 缺失
-        "PB": div_r(d.get("f167")),
-        "换手率%": div_r(d.get("f168")),
-    }
-
-
-# ---------------- A 级增强：PE/PB 分位 / 业绩预告快报 / 治理包 / 披露日期 ----------------
-
-def _daily_basic_latest(code: str) -> dict:
-    """daily_basic 最近一行（15 日窗口 + 最小字段）。fetch_quote / _ts_latest_quarter 共用，
-    替代两处无窗口全量拉取（拉十年全量只为 max 最新行的浪费）；空日期行过滤后再 max（None 陷阱）。"""
-    end = date.today().strftime("%Y%m%d")
-    beg = (date.today() - timedelta(days=15)).strftime("%Y%m%d")
-    rows = ts_call("daily_basic",
-                   {"ts_code": to_ts_code(code), "start_date": beg, "end_date": end},
-                   fields="ts_code,trade_date,close,pe_ttm,pb,total_mv,turnover_rate,total_share")
-    rows = [r for r in rows if r.get("trade_date")]
-    if not rows:
-        raise RuntimeError("daily_basic 空返回")
-    return max(rows, key=lambda x: x["trade_date"])
-
-
-def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
-    """A股 PE(TTM)/PB 历史分位（tushare daily_basic）。失败返回 None。"""
-    try:
-        end = date.today().strftime("%Y%m%d")
-        beg = f"{date.today().year - years}0101"
-        # fields 必须走第三参（塞 params 会被键归一化剔除→缓存键与 E2 月末PE回填不一致、
-        # 且请求全字段拉 5 年，v4.8.3 修复实证）
-        rows = ts_call("daily_basic", {"ts_code": to_ts_code(code),
-                                       "start_date": beg, "end_date": end},
-                       fields="ts_code,trade_date,pe_ttm,pb")
-        if not rows:
-            raise RuntimeError("daily_basic 空返回")
-        pes = sorted(float(r["pe_ttm"]) for r in rows
-                     if r.get("pe_ttm") is not None and float(r["pe_ttm"]) > 0)
-        pbs = sorted(float(r["pb"]) for r in rows
-                     if r.get("pb") is not None and float(r["pb"]) > 0)
-        if len(pes) < 20:
-            raise RuntimeError(f"daily_basic 有效样本不足({len(pes)})")
-        latest_pe, latest_pb = None, None
-        for r in sorted(rows, key=lambda x: x.get("trade_date") or "", reverse=True):
-            if latest_pe is None and r.get("pe_ttm") and float(r["pe_ttm"]) > 0:
-                latest_pe = float(r["pe_ttm"])
-            if latest_pb is None and r.get("pb") and float(r["pb"]) > 0:
-                latest_pb = float(r["pb"])
-            if latest_pe and latest_pb:
-                break
-        def pctile(vals, cur):
-            if cur is None:
-                return None
-            return round(bisect_right(vals, cur) / len(vals) * 100)
-        # 分位点（v4.8：供 pe_history 图 P25-P75 分位区；索引取 (n-1)*q 整部位）
-        n = len(pes)
-        pe_p25, pe_p75 = pes[int((n - 1) * 0.25)], pes[int((n - 1) * 0.75)]
-        return {"n": n, "years": years,
-                "pe_min": pes[0], "pe_max": pes[-1], "pe_cur": latest_pe, "pe_pct": pctile(pes, latest_pe),
-                "pe_p25": pe_p25, "pe_p75": pe_p75,
-                "pb_min": pbs[0], "pb_max": pbs[-1], "pb_cur": latest_pb, "pb_pct": pctile(pbs, latest_pb)}
-    except Exception:
-        return None
-
-
-def fetch_forecast_express(code: str) -> list:
-    """业绩预告 + 业绩快报（tushare forecast/express，按报告期合并去重，新→旧最多4条）。"""
-    try:
-        out = []
-        for r in ts_call("forecast", {"ts_code": to_ts_code(code)}):
-            lo, hi = r.get("net_profit_min"), r.get("net_profit_max")
-            rng = (f"{float(lo)/1e4:,.1f}~{float(hi)/1e4:,.1f}亿"  # forecast 净利单位：万元→亿
-                   if lo is not None and hi is not None else None)
-            chg_raw = (r.get("p_change_min"), r.get("p_change_max"))
-            chg = (f"{chg_raw[0]:.0f}%~{chg_raw[1]:.0f}%"
-                   if all(v is not None and abs(v) < 10000 for v in chg_raw) else None)  # 源数据异常值（如 1e9%）直接丢弃
-            # 摘要只留原因短语（change_reason）；净利区间已单独列示，不再重复原文长句
-            reason = (r.get("change_reason") or "").strip()
-            if reason:
-                summ = reason[:50]
-            else:
-                summ = ""  # 净利区间已列示，不再重复原文长句
-            out.append({"类型": "预告", "报告期": r.get("end_date"), "披露": r.get("ann_date"),
-                        "预告类型": r.get("type"), "净利区间": rng, "变动幅度": chg,
-                        "摘要": summ})
-        for r in ts_call("express", {"ts_code": to_ts_code(code)}):
-            yoyv = r.get("yoy_net_profit")
-            out.append({"类型": "快报", "报告期": r.get("end_date"), "披露": r.get("ann_date"),
-                        "净利": yi(r.get("n_income")),
-                        "同比": pct(yoyv) if isinstance(yoyv, (int, float)) and abs(yoyv) < 10000 else "—（源数据异常）",
-                        "营收": yi(r.get("revenue"))})
-        # 按报告期新→旧，同报告期快报优先（快报晚于预告、数据更实）
-        out.sort(key=lambda x: (x.get("报告期") or "", 1 if x["类型"] == "快报" else 0), reverse=True)
-        dedup = {}
-        for r in out:
-            dedup.setdefault(r.get("报告期"), r)
-        return [dedup[k] for k in sorted(dedup, reverse=True)][:4]
-    except Exception:
-        return []
-
-
-def fetch_forensic(code: str) -> list:
-    """财报可信度初判（A股，tushare）：应计比率 + Beneish M-Score + 审计意见 → A/B/C/D。
-    金融股（comp_type 2/3/4）不适用 M-Score，输出说明。单项计算失败跳过不报错。
-    方法细节见 references/forensic-accounting.md。"""
-    try:
-        ts = to_ts_code(code)
-        rng = _fin_rng()
-        inc = _pick_latest_per_period(
-            [r for r in ts_call("income", {"ts_code": ts, **rng})
-             if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"])[:2]
-        if len(inc) < 2:
-            return []
-        bs = _pick_latest_per_period(
-            [r for r in ts_call("balancesheet", {"ts_code": ts, **rng})
-             if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"])
-        bs_map = {r["end_date"]: r for r in bs}
-        cf_map = {r["end_date"]: r for r in ts_call("cashflow", {"ts_code": ts, **rng})
-                  if (r.get("end_date") or "").endswith("1231")}
-        t, t1 = inc[0], inc[1]
-        b, b1 = bs_map.get(t["end_date"]) or {}, bs_map.get(t1["end_date"]) or {}
-        c, c1 = cf_map.get(t["end_date"]) or {}, cf_map.get(t1["end_date"]) or {}
-        if not b or not b1:
-            return []
-
-        def g(src, k):
-            v = src.get(k)
-            return float(v) if v is not None else None
-
-        rev, rev1 = g(t, "total_revenue"), g(t1, "total_revenue")
-        ni, ni1 = g(t, "n_income"), g(t1, "n_income")
-        ocf, ocf1 = g(c, "n_cashflow_act"), g(c1, "n_cashflow_act")
-        ta, ta1 = g(b, "total_assets"), g(b1, "total_assets")
-        lines = []
-        # 应计比率（Sloan）：(净利润−经营现金流) ÷ 平均总资产
-        if None not in (ni, ocf, ta, ta1) and (ta + ta1):
-            acc = (ni - ocf) / ((ta + ta1) / 2)
-            acc_note = "<0 优 / 0-5% 正常 / >10% 红旗"
-            lines.append(f"应计比率: {acc * 100:.1f}%（{acc_note}）")
-        else:
-            acc = None
-        # 现金含量连续两年 <0.7（与红旗第1项同口径，供评级用；
-        # 净利润为负时 ocf/ni 无意义，ni≤0 的年份跳过判定，不计入连续 2 年计数）
-        nco_bad = False
-        if None not in (ni, ni1, ocf, ocf1) and ni > 0 and ni1 > 0:
-            nco_bad = (ocf / ni < 0.7) and (ocf1 / ni1 < 0.7)
-        # M-Score（金融股不适用）
-        m = None
-        comp = str(t.get("comp_type") or "1")
-        if comp != "1":
-            lines.append(f"M-Score: 不适用（金融/保险/证券类公司，改查拨备/准备金/Level3 占比，"
-                         f"替代项见 references/industry-financials.md 财报可信度替代项章节）")
-        else:
-            try:
-                ar, ar1 = g(b, "accounts_receiv"), g(b1, "accounts_receiv")
-                ca, ca1 = g(b, "total_cur_assets"), g(b1, "total_cur_assets")
-                ppe, ppe1 = g(b, "fix_assets"), g(b1, "fix_assets")
-                dep, dep1 = g(c, "depr_fa_coga_dpba"), g(c1, "depr_fa_coga_dpba")
-                sga = (g(t, "sell_exp") or 0) + (g(t, "admin_exp") or 0)
-                sga1 = (g(t1, "sell_exp") or 0) + (g(t1, "admin_exp") or 0)
-                tl, tl1 = g(b, "total_liab"), g(b1, "total_liab")
-                gm = g(t, "grossprofit_margin")  # income 无毛利率，从 fina_indicator 补
-                gm1 = g(t1, "grossprofit_margin")
-                if gm is None or gm1 is None:
-                    ind = {r["end_date"]: r for r in ts_call(
-                        "fina_indicator", {"ts_code": ts, **rng,
-                                           "fields": "ts_code,end_date,grossprofit_margin"})}
-                    gm = gm if gm is not None else g(ind.get(t["end_date"]) or {}, "grossprofit_margin")
-                    gm1 = gm1 if gm1 is not None else g(ind.get(t1["end_date"]) or {}, "grossprofit_margin")
-                vals = [rev, rev1, ar, ar1, ca, ca1, ppe, ppe1, dep, dep1, tl, tl1, ta, ta1,
-                        ni, ocf, gm, gm1]
-                if any(v is None for v in vals) or 0 in (rev, rev1, ta, ta1):
-                    raise ValueError("字段不全")
-                if gm <= 0 or gm1 <= 0:
-                    raise ValueError("毛利率≤0，GMI 失真")
-                dsri = (ar / rev) / (ar1 / rev1)
-                gmi = gm1 / gm
-                aq = lambda bb: 1 - (bb[0] + bb[1]) / bb[2]
-                aqi = aq((ca, ppe, ta)) / aq((ca1, ppe1, ta1))
-                sgi = rev / rev1
-                depi = (dep1 / (ppe1 + dep1)) / (dep / (ppe + dep))
-                sgai = (sga / rev) / (sga1 / rev1)
-                tata = (ni - ocf) / ta
-                lvgi = (tl / ta) / (tl1 / ta1)
-                m = (-4.84 + 0.92 * dsri + 0.528 * gmi + 0.404 * aqi + 0.892 * sgi
-                     + 0.115 * depi - 0.172 * sgai + 4.679 * tata - 0.327 * lvgi)
-                lines.append(f"M-Score: {m:.2f}（阈值 -1.78，低于它安全；越高越可疑）")
-            except ValueError as e:
-                lines.append(f"M-Score: 无法计算（{e}）")
-            except Exception:
-                lines.append("M-Score: 数据不足无法计算（字段缺失）")
-        # 审计意见
-        audit_bad = False
-        try:
-            aud = fetch_audit(code)
-            audit_bad = bool(aud) and "标准无保留" not in str(aud.get("audit_result") or "")
-        except Exception:
-            pass
-        # 初评
-        serious = []
-        if m is not None and m > -1.78:
-            serious.append("M-Score 越限")
-        if acc is not None and acc > 0.10:
-            serious.append(f"应计比率 {acc * 100:.0f}%>10%")
-        if nco_bad:
-            serious.append("现金含量连续2年<0.7")
-        if audit_bad:
-            rating = "D"
-        elif len(serious) >= 2:
-            rating = "D"
-        elif serious:
-            rating = "C"
-        elif (acc is not None and acc > 0.05) or (m is not None and m > -2.0):
-            rating = "B"
-        else:
-            rating = "A"
-        basis = ("审计意见非标" if audit_bad else ("；".join(serious) if serious else "无红旗项"))
-        lines.append(f"初评: {rating}（{basis}）——C → 黄灯 d 类至少扣 0.5 且 00 章警示；"
-                     f"D → 红灯回避，估值仅供参考")
-        return lines
-    except Exception:
-        return []
-
-
-def fetch_governance(code: str) -> dict:
-    """1E 治理包（tushare）：质押统计 / 增减持 / 回购。各项独立失败返回空，不影响其他项。"""
-    ts = to_ts_code(code)
-    g = {"pledge": None, "trades": [], "buyback": []}
-    try:
-        rows = ts_call("pledge_stat", {"ts_code": ts})
-        if rows:
-            r = max(rows, key=lambda x: x.get("end_date") or "")
-            g["pledge"] = {"日期": r.get("end_date"), "质押比例%": r.get("pledge_ratio")}
-    except OSError:
-        pass  # 网络层错误静默走降级
-    except RuntimeError as e:  # token 未配置/接口报错必须可见，不再静默吞掉（神华事故教训）
-        print(f"⚠️ fetch_governance pledge_stat: {e}", file=sys.stderr)
-    try:
-        rows = ts_call("stk_holdertrade", {"ts_code": ts})
-        rows = [r for r in rows if r.get("ann_date")]
-        rows.sort(key=lambda x: x.get("ann_date") or "", reverse=True)
-        for r in rows[:6]:
-            g["trades"].append({"披露": r.get("ann_date"), "股东": (r.get("holder_name") or "")[:12],
-                                "方向": "增持" if r.get("in_de") == "IN" else "减持",
-                                "数量万股": r.get("change_vol")})
-    except OSError:
-        pass  # 网络层错误静默走降级
-    except RuntimeError as e:
-        print(f"⚠️ fetch_governance stk_holdertrade: {e}", file=sys.stderr)
-    try:
-        rows = ts_call("repurchase", {"ts_code": ts})
-        rows = [r for r in rows if r.get("ann_date")]
-        rows.sort(key=lambda x: x.get("ann_date") or "", reverse=True)
-        for r in rows[:3]:
-            g["buyback"].append({"披露": r.get("ann_date"), "金额": yi(r.get("amount")) + "亿"
-                                 if r.get("amount") else None, "进度": r.get("proc")})
-    except OSError:
-        pass  # 网络层错误静默走降级
-    except RuntimeError as e:
-        print(f"⚠️ fetch_governance repurchase: {e}", file=sys.stderr)
-    return g
-
-
-def fetch_disclosure(code: str) -> dict:
-    """下一次财报披露计划（tushare disclosure_date）。失败返回 None。"""
-    try:
-        rows = ts_call("disclosure_date", {"ts_code": to_ts_code(code)})
-        rows = [r for r in rows if r.get("end_date")]
-        rows.sort(key=lambda x: x.get("end_date") or "", reverse=True)
-        for r in rows:
-            # 找尚未实际披露、且有计划日期的最近报告期
-            if not r.get("actual_date") and r.get("pre_date"):
-                return {"报告期": r.get("end_date"), "计划披露": r.get("pre_date")}
-        # 全部已披露 → 返回最近一条实际披露供参考
-        if rows:
-            r = rows[0]
-            return {"报告期": r.get("end_date"), "计划披露": r.get("pre_date"),
-                    "实际披露": r.get("actual_date")}
-    except OSError:
-        pass  # 网络层错误静默走降级
-    except RuntimeError as e:
-        print(f"⚠️ fetch_disclosure: {e}", file=sys.stderr)
-    return None
-
-
-def fetch_quote(secid: str, is_hk: bool = False) -> dict:
-    """E1 行情。tushare 优先（PE 为标准 TTM 口径，东财 f162 动态口径失真问题规避），东财兜底。"""
-    code = secid.split(".")[-1]
-    if is_hk:
-        # tushare 港股只有价格（hk_daily 无估值字段）：价格取缓存序列最新值，市值/PB/换手取东财
-        price, chg, td = None, None, None
-        try:
-            rows = _hk_daily_series(f"{code}.HK")
-            r = max(rows, key=lambda x: x.get("trade_date") or "")
-            price, chg = r.get("close"), r.get("pct_chg")
-            td = r.get("trade_date")
-        except Exception:
-            pass
-        try:
-            base = _em_quote(secid, True)
-        except Exception:
-            base = {"名称": code, "代码": code, "最新价": None, "涨跌幅%": None,
-                    "总市值亿": None, "PE_TTM": None, "PB": None, "换手率%": None}
-        return {"名称": base.get("名称") or code, "代码": code,
-                "最新价": price if price is not None else base.get("最新价"),
-                "涨跌幅%": chg if chg is not None else base.get("涨跌幅%"),
-                "总市值亿": base.get("总市值亿"), "PE_TTM": base.get("PE_TTM"),
-                "PB": base.get("PB"), "换手率%": base.get("换手率%"),
-                "数据日期": td or "东财实时"}
-    try:
-        ts = to_ts_code(code)
-        r = _daily_basic_latest(code)
-        name = code
-        try:
-            sb = ts_call("stock_basic", {"ts_code": ts, "fields": "ts_code,name"})
-            if sb:
-                name = sb[0].get("name") or code
-        except Exception:
-            pass
-        chg = None
-        try:
-            dy = ts_call("daily", {"ts_code": ts, "start_date": r["trade_date"],
-                                   "end_date": r["trade_date"]})
-            if dy:
-                chg = dy[0].get("pct_chg")
-        except Exception:
-            pass
-        return {"名称": name, "代码": code, "最新价": r.get("close"), "涨跌幅%": _r2(chg),
-                "总市值亿": (f"{(r.get('total_mv') or 0) / 1e4:,.1f}" if r.get("total_mv") else None),  # 万元→亿
-                "PE_TTM": _r2(r.get("pe_ttm")), "PB": _r2(r.get("pb")),
-                "换手率%": _r2(r.get("turnover_rate")), "数据日期": r.get("trade_date")}
-    except Exception:
-        return _em_quote(secid, False)
-
-
-# ---------------- E2 月线 ----------------
-
-def _em_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
-    end = "20991231"
-    beg = f"{date.today().year - years}0101"
-    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
-           f"&fields1=f1,f2,f3&fields2=f51,f53&klt=103&fqt=1&beg={beg}&end={end}")
-    d = get(url).get("data") or {}
-    out = []
-    # 换算差异（实测）：A股K线 ×100（2331=23.31）；港股K线为真实价（53.600），无需换算
-    div = 1 if is_hk else 100
-    for k in (d.get("klines") or []):
-        p = k.split(",")
-        out.append({"date": p[0], "close": float(p[1]) / div})
-    # 缩放校准：push2his 返回缩放行为不稳定（两次实测：×100 与原始价都出现过），
-    # 用 E1 最新价反推——偏差>50% 且 ×100 后吻合则补救
-    try:
-        ref = fetch_quote(secid, is_hk).get("最新价")
-        if ref and out:
-            latest = out[-1]["close"]
-            if latest and abs(latest - ref) / ref > 0.5 and abs(latest * 100 - ref) / ref < 0.2:
-                out = [{**k, "close": round(k["close"] * 100, 2)} for k in out]
-    except Exception:
-        pass
-    return out
-
-
-def fetch_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
-    """E2 月线（前复权）。tushare 优先（monthly+adj_factor 复权；港股 hk_daily 聚合），东财兜底。"""
-    code = secid.split(".")[-1]
-    try:
-        ts = to_ts_code(code)
-        end = date.today().strftime("%Y%m%d")
-        beg = f"{date.today().year - years}0101"
-        if is_hk:
-            # 港股无月线接口：缓存日线按 YYYYMM 聚合（取每月最后交易日收盘），港股不做复权
-            rows = _hk_daily_series(ts)
-            cutoff = f"{date.today().year - years}01"
-            last_of_month = {}
-            for r in rows:
-                if r["trade_date"][:6] >= cutoff:
-                    last_of_month[r["trade_date"][:6]] = r  # 同月后写覆盖先写
-            if not last_of_month:
-                raise RuntimeError("hk_daily 聚合为空")
-            out = [{"date": _fmt_date(r["trade_date"]), "close": round(float(r["close"]), 3)}
-                   for _, r in sorted(last_of_month.items())]
-            return out
-        rows = ts_call("monthly", {"ts_code": ts, "start_date": beg, "end_date": end})
-        if not rows:
-            raise RuntimeError("monthly 空返回")
-        fac = ts_call("adj_factor", {"ts_code": ts, "start_date": beg, "end_date": end})
-        if not fac:
-            raise RuntimeError("adj_factor 空返回，无法前复权，兜底东财")
-        fmap = {f["trade_date"]: float(f["adj_factor"]) for f in fac if f.get("adj_factor")}
-        latest_f = fmap[max(fmap)]
-        out = []
-        for r in sorted(rows, key=lambda x: x["trade_date"]):
-            c = float(r["close"])
-            f = fmap.get(r["trade_date"])
-            if f and latest_f:
-                c = c * f / latest_f   # 前复权
-            out.append({"date": _fmt_date(r["trade_date"]), "close": round(c, 2)})
-        # v4.8.1：月度 PE(TTM) 回填（供 price_history 图，替代模型手工「月收×总股本÷TTM净利」）。
-        # 与 fetch_pe_pb_band 同参同字段（kline-years=5 时窗口亦同），命中透明缓存不增发请求；
-        # 失败静默跳过（仅 close，图降级单线）
-        try:
-            pe_map = {r["trade_date"]: float(r["pe_ttm"])
-                      for r in ts_call("daily_basic", {"ts_code": ts, "start_date": beg, "end_date": end},
-                                       fields="ts_code,trade_date,pe_ttm,pb")
-                      if r.get("trade_date") and r.get("pe_ttm") and float(r["pe_ttm"]) > 0}
-            for k, r in zip(out, sorted(rows, key=lambda x: x["trade_date"])):
-                pe = pe_map.get(r["trade_date"])
-                if pe:
-                    k["pe"] = round(pe, 1)
-        except Exception:
-            pass
-        return out
-    except Exception:
-        return _em_kline_monthly(secid, years, is_hk)
-
-
-# ---------------- E3 财务（年报序列） ----------------
-
-def _em_f10(secucode: str, size: int = 12, annual_only: bool = False) -> list:
-    if annual_only:
-        flt = urllib.parse.quote(f'(SECUCODE="{secucode}")(REPORT_TYPE="年报")', safe="()")
-    else:
-        flt = urllib.parse.quote(f'(SECUCODE="{secucode}")', safe="()")
-    url = (f"https://datacenter.eastmoney.com/securities/api/data/v1/get"
-           f"?reportName=RPT_F10_FINANCE_MAINFINADATA&columns=ALL&filter={flt}"
-           f"&pageNumber=1&pageSize={size}&sortTypes=-1&sortColumns=REPORT_DATE")
-    return (get(url).get("result") or {}).get("data") or []
-
-
-def _pick_latest_per_period(rows: list) -> list:
-    """同一报告期多次公告时取第一条（tushare 按公告日倒序返回），按报告期倒序。"""
-    seen = {}
-    for r in sorted(rows, key=lambda x: (x.get("end_date") or "", x.get("ann_date") or ""), reverse=True):
-        seen.setdefault(r.get("end_date"), r)
-    return [seen[k] for k in sorted(seen, reverse=True)]
-
-
-def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
-    """A股年报主要指标（新→旧），映射为东财 F10 同构键名，供年表与红旗共用。
-    周转天数优先 tushare fina_indicator 换算；缺失期次用东财 F10 直接字段
-    YSZKZZTS/CHZZTS 补齐（tushare 对部分个股该字段覆盖不全，中芯国际实证）。"""
-    ts = to_ts_code(code)
-    rng = _fin_rng()  # 统一窗口：与 forensic/最新季度共享缓存（本地过滤，n_years 由切片控制）
-    inc = []
-    ind = []
-    cf = []
-    try:
-        inc = [r for r in ts_call("income", {"ts_code": ts, **rng})
-               if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"]
-    except Exception:
-        pass
-    try:
-        ind = [r for r in ts_call("fina_indicator", {"ts_code": ts, **rng})
-               if (r.get("end_date") or "").endswith("1231")]
-    except Exception:
-        pass
-    try:
-        cf = [r for r in ts_call("cashflow", {"ts_code": ts, **rng})
-              if (r.get("end_date") or "").endswith("1231")]
-    except Exception:
-        pass
-    if not inc:
-        raise RuntimeError("tushare income 无年报数据")
-    ind_map = {r["end_date"]: r for r in ind}
-    cf_map = {r["end_date"]: r for r in cf}
-    # 东财 F10 直接字段映射（按报告期年份索引），补齐 tushare 缺失的周转天数
-    em_map = {}
-    if secucode:
-        try:
-            for r in _em_f10(secucode, size=n_years, annual_only=True) or []:
-                key = (r.get("REPORT_DATE_NAME") or r.get("REPORT_DATE") or "")[:4]
-                if key.isdigit():
-                    em_map[key] = r
-        except Exception:
-            pass
-    rows = []
-    for r in _pick_latest_per_period(inc)[:n_years]:
-        ed = r["end_date"]
-        f = ind_map.get(ed) or {}
-        c = cf_map.get(ed) or {}
-        em = em_map.get(ed[:4]) or {}
-        ocf = c.get("n_cashflow_act")
-        if ocf is None:
-            ocf = em.get("NETCASH_OPERATE_PK")
-        ni = r.get("n_income")  # 净利润（含少数股东），与东财现金含量口径一致
-        # 周转天数换算：fina_indicator 只给周转率——应收天数=360/ar_turn；
-        # 存货天数=turn_days(营业周期)−应收天数（营业周期=存货+应收周转天数）
-        ar_days = (360 / f["ar_turn"]) if f.get("ar_turn") else None
-        inv_days = (f["turn_days"] - ar_days) if (f.get("turn_days") is not None
-                                                  and ar_days is not None) else None
-        if ar_days is None:
-            ar_days = em.get("YSZKZZTS")
-        if inv_days is None:
-            inv_days = em.get("CHZZTS")
-        rows.append({
-            "REPORT_DATE_NAME": f"{ed[:4]}年报",
-            "TOTALOPERATEREVE": r.get("total_revenue"),
-            "PARENTNETPROFIT": r.get("n_income_attr_p"),
-            "PARENTNETPROFITTZ": None,  # 同比在 summarize 外另算（需相邻期，见下）
-            # 财务指标同样按字段级 fallback：tushare fina_indicator 缺期次时用东财 F10 补齐
-            "ROEJQ": f.get("roe") if f.get("roe") is not None else em.get("ROEJQ"),
-            "XSMLL": f.get("grossprofit_margin") if f.get("grossprofit_margin") is not None
-            else em.get("XSMLL"),
-            "XSJLL": f.get("netprofit_margin") if f.get("netprofit_margin") is not None
-            else em.get("XSJLL"),
-            "ZCFZL": f.get("debt_to_assets") if f.get("debt_to_assets") is not None
-            else em.get("ZCFZL"),
-            "NETCASH_OPERATE_PK": ocf,
-            # 净利润为负时 ocf/ni 无意义：ni≤0 的年份置 None，不计入红旗连续 2 年 <0.7 计数
-            "NCO_NETPROFIT": (ocf / ni if (ocf is not None and ni is not None and ni > 0) else None),
-            "CAPEX": c.get("c_pay_acq_const_fiolta"),  # 购建固定资产/无形资产等支付现金（DCF capex 输入）
-            "YSZKZZTS": ar_days,
-            "CHZZTS": inv_days,
-        })
-    # 归母净利同比：与上一年比（分母≤0 时走 _yoy 文字化，不出失真百分比）
-    by_ed = {r["REPORT_DATE_NAME"][:4]: r for r in rows}
-    for r in rows:
-        prev = by_ed.get(str(int(r["REPORT_DATE_NAME"][:4]) - 1))
-        cur, pre = r.get("PARENTNETPROFIT"), (prev or {}).get("PARENTNETPROFIT")
-        r["PARENTNETPROFITTZ"] = _yoy(cur, pre)
-    return rows
-
-
-def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
-    """A股最新报告期摘要（东财键名同构）：净利/同比/总股本/ROIC。
-    ROIC/总股本缺失时用东财 F10 字段级补齐（tushare fina_indicator/daily_basic 覆盖不全）。"""
-    ts = to_ts_code(code)
-    rng = _fin_rng()  # 统一窗口：与 forensic/年表共享缓存（本地取最新报告期）
-    inc = [r for r in ts_call("income", {"ts_code": ts, **rng})
-           if str(r.get("report_type")) == "1"]
-    if not inc:
-        return {}
-    inc = _pick_latest_per_period(inc)
-    cur = inc[0]
-    yoy = None
-    for r in inc[1:]:
-        # 找去年同期（end_date 月日相同、年份-1）
-        if (r.get("end_date") or "")[4:] == (cur.get("end_date") or "")[4:]:
-            yoy = _yoy(cur.get("n_income_attr_p"), r.get("n_income_attr_p"))
-            break
-    em = {}
-    if secucode:
-        try:
-            f10 = _em_f10(secucode, size=1)
-            if f10:
-                em = f10[0]
-        except Exception:
-            pass
-    roic = None
-    try:
-        ind = [r for r in ts_call("fina_indicator", {"ts_code": ts, **rng})
-               if r.get("end_date") == cur["end_date"]]
-        if ind:
-            roic = ind[0].get("roic")
-    except Exception:
-        pass
-    if roic is None:
-        roic = em.get("ROIC")
-    total_share = None
-    try:
-        total_share = _daily_basic_latest(code).get("total_share")
-        total_share = total_share * 1e4 if total_share else None  # 万股→股
-    except Exception:
-        pass
-    if total_share is None:
-        total_share = em.get("TOTAL_SHARE")
-    ed = cur.get("end_date") or ""
-    qname = {"0331": "一季", "0630": "中报", "0930": "三季", "1231": "年报"}.get(ed[4:], ed)
-    return {"REPORT_DATE_NAME": f"{ed[:4]}{qname}",
-            "PARENTNETPROFIT": cur.get("n_income_attr_p"),
-            "PARENTNETPROFITTZ": yoy,
-            "TOTAL_SHARE": total_share,
-            "ROIC": roic}
-
-
-def _ts_hk_annual_rows(code: str, n_years: int = 4) -> list:
-    """港股年报主要指标（新→旧）。tushare hk_income/hk_fina_indicator 优先（权限开放时）；
-    失败或为空时走东财 RPT_HKF10_FN_MAININDICATOR 兜底（字段映射见 data-sources.md §港股支持矩阵）。"""
-    ts = to_ts_code(code)
-    y0 = date.today().year - n_years - 1
-    rng = {"start_date": f"{y0}0101", "end_date": date.today().strftime("%Y%m%d")}
-    try:
-        inc = [r for r in ts_call("hk_income", {"ts_code": ts, **rng})
-               if (r.get("end_date") or "").endswith("1231")]
-        if not inc:
-            raise RuntimeError("tushare hk_income 无年报数据")
-        try:
-            ind = {r["end_date"]: r for r in ts_call("hk_fina_indicator", {"ts_code": ts, **rng})
-                   if (r.get("end_date") or "").endswith("1231")}
-        except Exception:
-            ind = {}
-        rows = []
-        for r in _pick_latest_per_period(inc)[:n_years]:
-            ed = r["end_date"]
-            f = ind.get(ed) or {}
-            rows.append({
-                "期": f"{ed[:4]}年报",
-                "营收亿": yi(r.get("total_revenue") or r.get("revenue")),
-                "归母净利亿": yi(r.get("n_income_attr_p") or r.get("parent_netprofit")),
-                "ROE%": pct(f.get("roe")),
-                "毛利率%": pct(f.get("grossprofit_margin") or f.get("gross_margin")),
-                "净利率%": pct(f.get("netprofit_margin")),
-            })
-        return rows
-    except Exception:
-        pass
-    return _em_hkf10_annual_rows(code, n_years)
-
-
-def _em_hkf10_annual_rows(code: str, n_years: int = 4) -> list:
-    """东财港股 HKF10 主要指标兜底（RPT_HKF10_FN_MAININDICATOR，columns=ALL）。
-    只取年报；营收/归母净利为元，yi() 转亿；比率字段已是百分比数值。"""
-    flt = urllib.parse.quote(f'(SECUCODE="{code}.HK")', safe="()")
-    url = (f"https://datacenter.eastmoney.com/securities/api/data/v1/get"
-           f"?reportName=RPT_HKF10_FN_MAININDICATOR&columns=ALL&filter={flt}"
-           f"&pageNumber=1&pageSize={max(20, n_years * 6)}&sortTypes=-1&sortColumns=REPORT_DATE")
-    try:
-        data = get(url).get("result") or {}
-    except Exception:
-        return []
-    items = data.get("data") or []
-    rows = []
-    seen = set()
-    for r in items:
-        rt = str(r.get("REPORT_TYPE") or "")
-        if "年报" not in rt:
-            continue
-        year = rt[:4]
-        if not year.isdigit() or year in seen:
-            continue
-        seen.add(year)
-        rows.append({
-            "期": f"{year}年报",
-            "营收亿": yi(r.get("OPERATE_INCOME")),
-            "归母净利亿": yi(r.get("HOLDER_PROFIT")),
-            "ROE%": pct(r.get("ROE_AVG")),
-            "毛利率%": pct(r.get("GROSS_PROFIT_RATIO")),
-            "净利率%": pct(r.get("NET_PROFIT_RATIO")),
-        })
-        if len(rows) >= n_years:
-            break
-    return rows
-
-
-# ---------------- E4 股东户数 ----------------
-
-def _em_holders(code: str) -> list:
-    flt = urllib.parse.quote(f'(SECURITY_CODE="{code}")', safe="()")
-    url = (f"https://datacenter.eastmoney.com/securities/api/data/v1/get"
-           f"?reportName=RPT_HOLDERNUMLATEST&columns=ALL&filter={flt}&pageNumber=1&pageSize=8")
-    return (get(url).get("result") or {}).get("data") or []
-
-
-def fetch_holders(code: str) -> list:
-    """E4 股东户数（东财键名同构）。tushare stk_holdernumber 优先（变动比自算），东财兜底。"""
-    try:
-        rows = ts_call("stk_holdernumber", {"ts_code": to_ts_code(code)})
-        rows = [r for r in rows if r.get("holder_num")]
-        if not rows:
-            raise RuntimeError("stk_holdernumber 空返回")
-        rows.sort(key=lambda x: x.get("end_date") or "")  # 旧→新算变动比
-        out = []
-        prev = None
-        for r in rows:
-            num = r.get("holder_num")
-            ratio = round((num / prev - 1) * 100, 1) if (prev and num) else None
-            out.append({"END_DATE": r.get("end_date"), "HOLDER_NUM": num,
-                        "HOLDER_NUM_RATIO": ratio})
-            prev = num
-        return list(reversed(out))[:8]
-    except Exception:
-        return _em_holders(code)
-
-
-# ---------------- E5 一致预期 ----------------
-
-def _em_consensus(code: str) -> dict:
-    flt = urllib.parse.quote(f'(SECURITY_CODE="{code}")', safe="()")
-    url = (f"https://datacenter.eastmoney.com/securities/api/data/v1/get"
-           f"?reportName=RPT_WEB_RESPREDICT&columns=ALL&filter={flt}&pageNumber=1&pageSize=1")
-    data = (get(url).get("result") or {}).get("data") or []
-    return data[0] if data else {}
-
-
-def fetch_consensus(code: str) -> dict:
-    """E5 一致预期。tushare report_rc（券商盈利预测明细）优先；东财 RPT_WEB_RESPREDICT 兜底。
-    返回带 _src 标记的 dict。tushare 返回近180天研报聚合：家数/分年度净利与EPS均值/目标价区间。"""
-    try:
-        rows = ts_call("report_rc", {"ts_code": to_ts_code(code)})
-        if not rows:
-            raise RuntimeError("report_rc 空返回")
-        cutoff = date.today().toordinal() - 180
-        recent = []
-        for r in rows:
-            try:
-                rd = date(int(r["report_date"][:4]), int(r["report_date"][4:6]), int(r["report_date"][6:8]))
-                if rd.toordinal() >= cutoff:
-                    recent.append(r)
-            except Exception:
-                continue
-        if not recent:
-            raise RuntimeError("report_rc 近180天无研报")
-        orgs = {r.get("org_name") for r in recent if r.get("org_name")}
-        # 单次循环聚合：按预测年度的净利/EPS（quarter 形如 2026Q4 → 2026）、目标价区间、评级分布
-        years, prices, ratings = {}, [], {}
-        for r in recent:
-            q = str(r.get("quarter") or "")
-            yr = q[:4] if len(q) >= 4 else ""
-            if yr.isdigit():
-                slot = years.setdefault(yr, {"np": [], "eps": []})
-                if r.get("np") is not None:
-                    slot["np"].append(float(r["np"]) / 1e4)  # report_rc np 单位万元 → 亿
-                if r.get("eps") is not None:
-                    slot["eps"].append(float(r["eps"]))
-            if r.get("min_price") and r.get("max_price"):
-                prices.append((float(r["min_price"]), float(r["max_price"])))
-            rt = (r.get("rating") or "").strip()
-            if rt:
-                ratings[rt] = ratings.get(rt, 0) + 1
-        return {"_src": "tushare", "orgs": len(orgs), "n_reports": len(recent),
-                "years": years,
-                "aim": (min(p[0] for p in prices), max(p[1] for p in prices)) if prices else None,
-                "ratings": ratings}
-    except Exception:
-        d = _em_consensus(code)
-        if d:
-            d["_src"] = "em"
-        return d
-
-
-# ---------------- E6 主营构成 ----------------
-
-def _em_mainop(secucode: str) -> list:
-    flt = urllib.parse.quote(f'(SECUCODE="{secucode}")', safe="()")
-    url = (f"https://datacenter.eastmoney.com/securities/api/data/v1/get"
-           f"?reportName=RPT_F10_FN_MAINOP&columns=ALL&filter={flt}"
-           f"&pageNumber=1&pageSize=20&sortTypes=-1&sortColumns=REPORT_DATE")
-    try:
-        return (get(url).get("result") or {}).get("data") or []
-    except Exception:
-        return []
-
-
-def _mainop_norm_em(rows: list) -> list:
-    """东财 E6 原始行补 GROSS_PROFIT（毛利额，元）：优先原始字段 MAIN_BUSINESS_RPOFIT，
-    缺失用 收入×毛利率 折算（GROSS_RPOFIT_RATIO 为小数口径，见 data-sources.md E6 节）。
-    同收入同毛利率的重复条目（同源改名残留）一并去重，留先发行。"""
-    seen = set()
-    deduped = []
-    for r in rows:
-        sig = (r.get("MAIN_BUSINESS_INCOME"), r.get("GROSS_RPOFIT_RATIO"))
-        if sig in seen:
-            continue
-        seen.add(sig)
-        deduped.append(r)
-    rows = deduped
-    for r in rows:
-        gp = r.get("MAIN_BUSINESS_RPOFIT")
-        if gp is None:
-            inc, gpr = r.get("MAIN_BUSINESS_INCOME"), r.get("GROSS_RPOFIT_RATIO")
-            if inc is not None and gpr is not None:
-                try:
-                    r["GROSS_PROFIT"] = float(inc) * float(gpr)
-                except (TypeError, ValueError):
-                    pass
-            continue
-        try:
-            r["GROSS_PROFIT"] = float(gp)
-        except (TypeError, ValueError):
-            pass
-    return rows
-
-
-def fetch_mainop(secucode: str) -> list:
-    """E6 主营构成（东财键名同构）。tushare fina_mainbz 优先（产品P→行业D次序），东财兜底。
-    v4.8 起各分部带 GROSS_PROFIT（毛利额，元）：tushare 取 bz_profit（缺则 收入−成本），
-    东财取 MAIN_BUSINESS_RPOFIT（缺则 收入×毛利率 折算）。分部净利润无公开数据源，
-    业务构成图的利润口径一律为毛利。"""
-    code, _ = secucode.split(".")
-    try:
-        ts = to_ts_code(code)
-        y0 = date.today().year - 2
-        rng = {"start_date": f"{y0}0101", "end_date": date.today().strftime("%Y%m%d")}
-        rows = None
-        mainop_type = None
-        for tp, mt in (("P", "2"), ("D", "1")):  # 产品优先，地区当行业位展示
-            got = ts_call("fina_mainbz", {"ts_code": ts, "type": tp, **rng})
-            if got:
-                rows, mainop_type = got, mt
-                break
-        if not rows:
-            raise RuntimeError("fina_mainbz 空返回")
-        latest_ed = max(r.get("end_date") or "" for r in rows)
-        items = [r for r in rows if r.get("end_date") == latest_ed]
-        # 源头重复条目去重（2026-09-02 宝丰实证：fina_mainbz 会同时返回「烯烃产品」与「烯烃」两行，
-        # 收入/成本完全一致——同源改名跟踪残留。签名=（收入,成本）全等即同一条业务线，留先发行）
-        seen_sig, deduped = set(), []
-        for r in items:
-            sig = (r.get("bz_sales"), r.get("bz_cost"))
-            if sig in seen_sig:
-                continue
-            seen_sig.add(sig)
-            deduped.append(r)
-        if len(deduped) < len(items):
-            print(f"注：fina_mainbz 重复条目已去重 {len(items)}→{len(deduped)}"
-                  f"（同收入同成本，同源改名残留）", file=sys.stderr)
-        items = deduped
-        total = sum(float(r["bz_sales"]) for r in items if r.get("bz_sales")) or None
-        out = []
-        for r in items:
-            sales = float(r["bz_sales"]) if r.get("bz_sales") else None
-            cost = float(r["bz_cost"]) if r.get("bz_cost") else None
-            gp = None
-            if r.get("bz_profit") is not None:
-                gp = float(r["bz_profit"])
-            elif sales is not None and cost is not None:
-                gp = sales - cost
-            out.append({
-                "REPORT_DATE": _fmt_date(latest_ed),
-                "REPORT_NAME": f"{latest_ed[:4]}年报" if latest_ed.endswith("1231") else latest_ed,
-                "MAINOP_TYPE": mainop_type,
-                "ITEM_NAME": r.get("bz_item"),
-                "MAIN_BUSINESS_INCOME": sales,
-                "MBI_RATIO": (sales / total if (sales and total) else None),
-                "GROSS_RPOFIT_RATIO": ((sales - cost) / sales if (sales and cost is not None) else None),
-                "GROSS_PROFIT": gp,
-            })
-        return out
-    except Exception:
-        return _mainop_norm_em(_em_mainop(secucode))
-
-
-# ---------------- 审计意见（供 L4 红灯 a 项判定，不计入 1D 红旗） ----------------
-
-def fetch_audit(code: str):
-    """tushare fina_audit 最新年报审计意见。失败/无数据返回 None。"""
-    try:
-        rows = ts_call("fina_audit", {"ts_code": to_ts_code(code)})
-        if rows:
-            rows.sort(key=lambda x: x.get("end_date") or "", reverse=True)
-            return rows[0]
-    except OSError:
-        pass  # 网络层错误静默走降级
-    except RuntimeError as e:
-        print(f"⚠️ fetch_audit: {e}", file=sys.stderr)
-    return None
-
-
-_RF_CACHE: dict = {}  # 无风险利率按日期缓存：peers 场景每股重复请求同一端点（P1-C）
-
-
-def fetch_risk_free():
-    """中债 10 年期国债到期收益率（东财 RPTA_WEB_TREASURYYIELD；列编码 EMM00166466=10年，
-    同页 EMM00588704=2年 / EMM00166462=5年 / EMM00166469=30年）。
-    返回 (日期, 收益率%) 或 None。valuation_inputs.risk_free 的直接来源。
-    模块级按当日缓存：同进程 peers 批量时只请求一次。"""
-    today = date.today().isoformat()
-    if today in _RF_CACHE:
-        return _RF_CACHE[today]
-    try:
-        d = get("https://datacenter-web.eastmoney.com/api/data/v1/get?reportName="
-                "RPTA_WEB_TREASURYYIELD&columns=ALL&pageSize=1&pageNumber=1")
-        row = ((d.get("result") or {}).get("data") or [{}])[0]
-        y = row.get("EMM00166466")
-        res = ((row.get("SOLAR_DATE") or "")[:10], round(float(y), 2)) if y is not None else None
-    except Exception:
-        res = None
-    _RF_CACHE[today] = res
-    return res
-
-
+# 注：E1-E6 取数函数族与东财端点工具 _em_dc 已拆分至 em_data.py（见下 import）；
+# 本模块保留传输/缓存/映射/格式化/输出组装，职责边界见 em_data.py 头部 docstring。
 def _ttm_cutoff(today: date = None) -> str:
     """近 12 个月窗口起点（YYYYMMDD）。用 today-365 天而非 replace(year-1)，
     避免今天恰好是 2/29 时 replace 崩溃（闰日）。"""
     return ((today or date.today()) - timedelta(days=365)).strftime("%Y%m%d")
 
-
-def fetch_div_yield(code: str, price: float):
-    """TTM 税前股息率（tushare dividend）：只计 div_proc=实施 且除息日在近 12 个月内的
-    每股派息合计 ÷ 现价；同除息日多条记录去重。返回 (每股派息, 股息率%, 明细) 或 None。
-    valuation_inputs.div_yield 的税前基准（AH/港股按规则自行折税后）。"""
-    try:
-        rows = ts_call("dividend", {"ts_code": to_ts_code(code),
-                                    "fields": "ts_code,end_date,div_proc,cash_div_tax,ex_date"})
-        cutoff = _ttm_cutoff()
-        by_ex = {}
-        for r in rows:
-            if (r.get("div_proc") == "实施" and r.get("ex_date") and r.get("cash_div_tax")
-                    and r["ex_date"] >= cutoff):
-                by_ex.setdefault(r["ex_date"], float(r["cash_div_tax"]))
-        if not by_ex or not price:
-            return None
-        per_share = sum(by_ex.values())
-        items = sorted(by_ex.items(), reverse=True)
-        return per_share, per_share / price * 100, items
-    except Exception:
-        return None
+# ---------------- 取数函数族 re-export（em_data.py） ----------------
+# 从子模块 re-export 全部被测试（import em_fetch as em 按名访问）与主流程输出组装
+# 用到的符号；ts_call/get 绝不在此覆盖（宿主版本是测试 rebind 的目标）。
+from em_data import (  # noqa: E402,F401
+    _EM_F10_CACHE, _EM_F10_PAGE, _HK_DAILY_CACHE, _A_DAILY_CACHE, _RF_CACHE,
+    _em_quote, _daily_basic_latest, _em_kline_monthly, _em_f10, _f10_is_annual,
+    _pick_latest_per_period, _ts_annual_fetch_3, _ts_annual_em_map, _compose_annual_row,
+    _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows, _em_hkf10_annual_rows,
+    _em_holders, _em_consensus, _em_mainop, _mainop_norm_em, _em_dc,
+    _hk_daily_series, _a_daily_series,
+    fetch_pe_pb_band, fetch_forecast_express, fetch_forensic, fetch_governance,
+    fetch_disclosure, fetch_quote, fetch_kline_monthly, fetch_holders, fetch_consensus,
+    fetch_mainop, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_timing_material,
+    fetch_debt,
+)
 
 
-def fetch_timing_material(code: str, is_hk: bool = False):
-    """时机分素材（v4.8，技术面六信号数据源唯一化——神华事故里假 MA60/假月线的产生环节
-    正是「模型手拼」，与 quote 防伪同源）：现价/MA60/MA120/52 周高低，全部出自日线序列
-    （A股 tushare daily 近 430 天；港股复用 hk_daily 缓存）。失败返回 None。"""
-    try:
-        if is_hk:
-            rows = _hk_daily_series(f"{code}.HK")
-            closes = [float(r["close"]) for r in rows
-                      if r.get("close") is not None and r.get("trade_date")]
-        else:
-            end = date.today().strftime("%Y%m%d")
-            beg = (date.today() - timedelta(days=430)).strftime("%Y%m%d")
-            rows = ts_call("daily", {"ts_code": to_ts_code(code), "start_date": beg, "end_date": end},
-                           fields="ts_code,trade_date,close")
-            rows = sorted((r for r in rows if r.get("trade_date") and r.get("close") is not None),
-                          key=lambda x: x["trade_date"])
-            closes = [float(r["close"]) for r in rows]
-        if len(closes) < 60:
-            return None
-
-        def _ma(n):
-            return round(sum(closes[-n:]) / n, 2) if len(closes) >= n else None
-        win = closes[-250:]  # 52 周 ≈ 250 个交易日
-        return {"price": round(closes[-1], 2), "ma60": _ma(60), "ma120": _ma(120),
-                "high_52w": round(max(win), 2), "low_52w": round(min(win), 2),
-                "n": len(closes)}
-    except Exception:
-        return None
 
 
-def fetch_debt(code: str):
-    """最新报告期有息负债与货币资金（tushare balancesheet）。
-    返回 dict（st_borr/non_cur_liab_due_1y/lt_borr/bond_payable/money_cap，单位元）或 None。"""
-    try:
-        rows = ts_call("balancesheet", {"ts_code": to_ts_code(code), **_fin_rng()})
-        rows = [r for r in rows if str(r.get("report_type")) == "1"]
-        if not rows:
-            return None
-        return _pick_latest_per_period(rows)[0]
-    except OSError:
-        return None  # 网络层错误静默走降级
-    except RuntimeError as e:
-        print(f"⚠️ fetch_debt: {e}", file=sys.stderr)
-        return None
+
+
 
 
 # ---------------- E7 定性站内搜索（东财，保持不动） ----------------
@@ -1470,16 +521,18 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
                 out.append("TTM股息率: [近12个月无实施分红记录或 tushare dividend 失败；"
                            "若公司确有分红请手工核查并标注路径]\n")
         # 时机分素材（v4.8）：现价/MA60/MA120/52周高低出自日线序列，随 --out 落盘，
-        # fill 时机判定小表的技术面信号一律取自本行，禁止手估（神华假 MA60 同源修复）
+        # fill 时机判定小表的技术面信号一律取自本行，禁止手估（神华假 MA60 同源修复）；
+        # 月收序列不在此重复——归 E2 月线输出（月度收盘/月末PE，price_history 的 pe 字段照抄 E2）
         tm = fetch_timing_material(pure, is_hk)
         if tm:
             _E1_CAPTURE["timing"] = tm
             out.append(f"时机素材: 现价{tm['price']} | MA60 {tm.get('ma60')} / "
                        f"MA120 {tm.get('ma120') or '—'} | 52周高低 {tm['high_52w']}/{tm['low_52w']}"
-                       f"（{tm['n']}个交易日，日线序列计算——技术面信号一律取自本行，禁止手估）\n")
+                       f"（{tm['n']}个交易日，日线序列计算——技术面信号一律取自本行，禁止手估；"
+                       f"月收序列见 E2，勿在本行重建口径）\n")
         else:
             out.append("时机素材: [未获取到（日线序列失败或不足60个交易日），"
-                       "技术面信号须注明手工口径与来源]\n")
+                       "技术面信号须注明手工口径与来源；月收序列仍以 E2 月线输出为准]\n")
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
     return out
@@ -1800,11 +853,14 @@ def summarize(code: str, years: int, searches: list = None) -> str:
     mkt = "港股" if is_hk else "A股"
     out = [f"# {pure} 数据摘要（{mkt}）\n"]
 
-    # E1 先跑（K 线缩放校准依赖 E1 的东财报价），其余章节并发（单请求最坏路径约 60s，
-    # 串行叠加单股可达分钟级）；max_workers 克制在 4，避免触发限流
-    out.extend(_sec_e1(secid, is_hk, pure))
-
-    jobs = []
+    # E1 并入并发池（v4.8.3 评估）：原「E1 先跑供 K 线缩放校准」的理由不成立——E2 东财兜底
+    # _em_kline_monthly 在函数内自调 fetch_quote 取价校准，不依赖 E1 先行；_E1_CAPTURE 仅
+    # _sec_e1 写入、main 在线程池 join（with 块退出）后才读，无时序竞态；map 保序使 E1 输出
+    # 仍居首。E1 入池后其串行的 6 个取数与其余章节并行，缩短整段等待；同冷键并发由
+    # ts_call per-key 锁兜底（quote 先拉 430 天 daily、timing 同 E1 job 内串行复用不受影响）。
+    # 唯一新增并发面：tushare 全失败降级东财时 E2 校准的 fetch_quote 与 E1 东财 quote 同 URL，
+    # 罕见且 get 有 2h 磁盘缓存兜底，可接受。
+    jobs = [lambda: _sec_e1(secid, is_hk, pure)]
     if is_hk:
         jobs.append(lambda: _sec_e3_hk(pure))
     else:
@@ -1880,6 +936,16 @@ def main():
             print(summarize(peer, years))
 
 
+def _debug_summary() -> None:
+    """EM_FETCH_DEBUG=1：运行末尾 stderr 打一行汇总（请求数/缓存命中/重试等待）。
+    逐请求 [net]/[cache-hit]/[disk-hit] 行仍保留供单点诊断，本行为整体效率画像。"""
+    if not _TS_DEBUG:
+        return
+    print(f"[em_fetch stats] tushare请求 {_STATS['ts_net']} | 进程缓存命中 {_STATS['ts_mem']} | "
+          f"磁盘缓存命中(ts {_STATS['ts_disk']} / em {_STATS['em_disk']}) | "
+          f"东财网络 {_STATS['em_net']} | 网络重试等待 {_STATS['wait']} 次", file=sys.stderr)
+
+
 if __name__ == "__main__":
     try:
         main()
@@ -1891,3 +957,5 @@ if __name__ == "__main__":
     except ValueError as e:
         print(f"错误：{e}", file=sys.stderr)
         sys.exit(2)
+    finally:
+        _debug_summary()

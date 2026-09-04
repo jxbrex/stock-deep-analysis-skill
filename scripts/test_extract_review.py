@@ -99,9 +99,22 @@ def test_extract_date_no_topbar():
     print("OK extract 日期双路径（新版副标题 / 旧版顶栏兼容）")
 
 
+def test_find_tail_sniff_large_file():
+    """v4.10 大 HTML 只读头尾判定：>8KB 报告（渲染标记在文件末尾 </body> 前）仍能命中。"""
+    with tempfile.TemporaryDirectory() as d:
+        # 中部用纯 ASCII 填充把文件撑过 8KB，MARK 仍在文件末尾（渲染标记固定在尾部）——头尾读取必须命中
+        big = "x" * 40000 + FAKE_REPORT
+        p = _write(d, "测试股份-600000-7.50-6.5-2026-08-08.html", big)
+        assert os.path.getsize(p) > 8192, "夹具必须是大文件分支（>8KB）"
+        got = E.find_prev_report("600000", d)
+        assert got == p, f"大文件尾部标记应命中，实际 {got}"
+    print("OK find_prev_report 大文件（头尾读取命中尾部渲染标记）")
+
+
 if __name__ == "__main__":
     test_find_prev_report()
     test_find_include_unmarked()
     test_extract_anchors()
     test_extract_date_no_topbar()
-    print("全部 4 项测试通过")
+    test_find_tail_sniff_large_file()
+    print("全部 5 项测试通过")

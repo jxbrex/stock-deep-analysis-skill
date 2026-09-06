@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_l1.py — 第 3 章（公司本质）图族（v4.10 从 charts.py 拆出）：3.1 业务构成（build_segments_plot）/ 3.2 产业链位置（build_chain_plot）/ 3.4 财务五年趋势图墙（build_fin_trend）+ 3 章锚点注入（_inject_l1_charts）。依赖 charts_base 与 scoring。"""
+"""charts_l1.py — 第 3 章（公司本质）图族（v4.9 从 charts.py 拆出）：3.1 业务构成（build_segments_plot）/ 3.2 产业链位置（build_chain_plot）/ 3.4 财务五年趋势图墙（build_fin_trend）+ 3 章锚点注入（_inject_l1_charts）。依赖 charts_base 与 scoring。"""
 
 import sys
 
@@ -203,10 +203,12 @@ def build_fin_trend(fill: dict) -> str:
       {"title":"营收 × 毛利率",
        "bars":[{"name":"营收","unit":"亿","values":[301.7,...]}],
        "lines":[{"name":"毛利率","pct":true,"values":[36.7,...]}]}, ...]}
-    （bars/lines[].values 与 years 等长、全为数字；bars 每面板 1-2 条（双柱并排：第一条沙色、
-    第二条钢蓝，如 经营现金流+自由现金流）；lines 每面板 1-2 条（第 2 条渲染为灰虚线）；
-    pct=true 按 % 展示；lines[].threshold 可选红虚线阈值（如现金含量 0.7）。
-    标准 4 面板：营收×毛利率 / 归母净利×净利率×ROE / 经营现金流+自由现金流×现金含量（阈值0.7) / 货币资金×短债覆盖率。
+    （bars/lines[].values 与 years 等长、全为数字；bars 每面板 0-2 条、lines 每面板 0-2 条，
+    柱线至少其一（v4.9.1 起支持无 bars 的纯线面板，如应收/存货周转天数，只出右轴、网格随线域）；
+    柱色只表系列归属：沙=第一系列/钢蓝=第二系列（v4.9.1 起取消单柱最新年钢蓝高亮，与双柱口径统一）；
+    lines 首条钢蓝实线、第 2 条灰虚线；pct=true 按 % 展示；lines[].threshold 可选红虚线阈值（如现金含量 0.7）。
+    标准 4 面板（v4.9.1）：营收×毛利率 / 归母净利+扣非净利×净利率×ROE / 经营现金流+自由现金流×现金含量
+    （阈值0.7) / 应收+存货周转天数（纯双线，照抄 E3 周转天数行）；货币资金×短债覆盖率降为可替换可选面板。
     数据照抄 em_fetch E3 年表，禁手估。有效面板 <3 或年数 <3 → 返回空串；必填硬校验在 validate 层）"""
     ft = fill.get("fin_trend") or {}
     years = [str(y) for y in ft.get("years") or []]
@@ -230,8 +232,9 @@ def build_fin_trend(fill: dict) -> str:
             if lname and _series_ok(ln.get("values") or []):
                 lines.append({"name": lname, "values": [_num(v) for v in ln["values"]],
                               "pct": bool(ln.get("pct")), "threshold": _num(ln.get("threshold"))})
-        if bars and lines:
-            panels.append({"title": str(p.get("title") or bars[0]["name"]).strip(),
+        if bars or lines:
+            panels.append({"title": str(p.get("title")
+                                        or (bars[0]["name"] if bars else lines[0]["name"])).strip(),
                            "bars": bars[:2], "lines": lines[:2]})
     if len(years) < 3 or len(panels) < 3:
         return ""
@@ -241,33 +244,39 @@ def build_fin_trend(fill: dict) -> str:
         n = len(years)
         W, H, T, B, L, R = 480, 158, 26, 18, 38, 38
         slot = (W - L - R) / n
-        # 左轴=柱（柱不断轴：值域含 0 基线）；右轴=线（按数据垫边，含阈值）
-        bv_all = [v for b in p["bars"] for v in b["values"]]
-        if min(bv_all) >= 0:
-            blo, bhi = _pad_domain(0.0, max(bv_all), 0.15, floor=0.0)
-        else:
-            blo, bhi = _pad_domain(min(bv_all), max(bv_all), 0.15)
-        lv_all = [v for ln in p["lines"] for v in ln["values"]]
-        th_all = [ln["threshold"] for ln in p["lines"] if ln["threshold"] is not None]
-        llo, lhi = _pad_domain(min(lv_all + th_all), max(lv_all + th_all), 0.25)
-        YB = _lin_map(blo, bhi, H - B, T)
-        YL = _lin_map(llo, lhi, H - B, T)
-        y0 = YB(0)
+        has_bars = bool(p["bars"])
+        has_lines = bool(p["lines"])
+        # 左轴=柱（柱不断轴：值域含 0 基线）；右轴=线（按数据垫边，含阈值）；纯线面板无左轴
+        if has_bars:
+            bv_all = [v for b in p["bars"] for v in b["values"]]
+            if min(bv_all) >= 0:
+                blo, bhi = _pad_domain(0.0, max(bv_all), 0.15, floor=0.0)
+            else:
+                blo, bhi = _pad_domain(min(bv_all), max(bv_all), 0.15)
+        if has_lines:
+            lv_all = [v for ln in p["lines"] for v in ln["values"]]
+            th_all = [ln["threshold"] for ln in p["lines"] if ln["threshold"] is not None]
+            llo, lhi = _pad_domain(min(lv_all + th_all), max(lv_all + th_all), 0.25)
+        YB = _lin_map(blo, bhi, H - B, T) if has_bars else None
+        YL = _lin_map(llo, lhi, H - B, T) if has_lines else None
+        y0 = YB(0) if has_bars else H - B
         line_colors = [_C_BLUE, _C_STONE]
-        HALO = '#f7f2e7'   # 与 .mini-cell 底色一致：文字光晕防柱线叠字（lieflat paint-order 语法）
+        HALO = _C_PAPER_CELL   # 与 .mini-cell 底色一致：文字光晕防柱线叠字（lieflat paint-order 语法）
         halo = f' stroke="{HALO}" stroke-width="3" paint-order="stroke"'
         svg = [f'<svg viewBox="0 0 {W} {H}">']
-        # 轴刻度：左（柱）带浅网格，右（线）只出刻度字
-        for t in _ticks(blo, bhi, 3):
-            gy = YB(t)
+        # 轴刻度：左（柱）带浅网格+刻度字，右（线）只出刻度字；纯线面板网格随线域、不出左刻度字
+        for t in (_ticks(blo, bhi, 3) if has_bars else _ticks(llo, lhi, 3)):
+            gy = (YB if has_bars else YL)(t)
             svg.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="{_C_GRID}" stroke-width="1"/>')
-            svg.append(f'<text x="{L - 4}" y="{gy + 3:.1f}" text-anchor="end" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
-        for t in _ticks(llo, lhi, 3):
-            svg.append(f'<text x="{W - R + 4}" y="{YL(t) + 3:.1f}" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
+            if has_bars:
+                svg.append(f'<text x="{L - 4}" y="{gy + 3:.1f}" text-anchor="end" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
+        if has_lines:
+            for t in _ticks(llo, lhi, 3):
+                svg.append(f'<text x="{W - R + 4}" y="{YL(t) + 3:.1f}" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
         svg.append(f'<line x1="{L}" y1="{y0:.1f}" x2="{W - R}" y2="{y0:.1f}" stroke="{_C_AXIS}" stroke-width="1.2"/>')
         # 图例（顶部单行）
         lx = L
-        bar_colors = [_C_SAND, _C_BLUE]   # 双柱：第一条沙、第二条钢蓝
+        bar_colors = [_C_SAND, _C_BLUE]   # 柱色只表系列归属：第一条沙、第二条钢蓝
         for bi, b in enumerate(p["bars"]):
             blab = f'{b["name"]}（{b["unit"]}，左轴）'
             svg.append(f'<rect x="{lx}" y="6" width="11" height="8" rx="2" fill="{bar_colors[bi]}"/>')
@@ -288,17 +297,16 @@ def build_fin_trend(fill: dict) -> str:
                            f'stroke-width="1" stroke-dasharray="3 3"/>')
                 svg.append(f'<text x="{W - R + 4}" y="{ty - 3:.1f}" font-size="8"{halo} fill="{_C_RED}">'
                            f'{_fmt(ln["threshold"])}</text>')
-        # 柱：单柱=沙色历史+钢蓝最新年；双柱=并排（第一条沙、第二条钢蓝，不做逐年变色）
+        # 柱：颜色只表系列归属（沙=第一系列/钢蓝=第二系列），单双柱均不逐年变色（v4.9.1）
         nb = len(p["bars"])
         bw = min(slot * (0.5 if nb == 1 else 0.32), 30)
         for bi, b in enumerate(p["bars"]):
             for i, v in enumerate(b["values"]):
                 if nb == 1:
                     x = L + i * slot + (slot - bw) / 2
-                    c = _C_BLUE if i == n - 1 else _C_SAND
                 else:
                     x = L + i * slot + slot / 2 + (bi - (nb - 1) / 2) * (bw + 3) - bw / 2
-                    c = bar_colors[bi]
+                c = bar_colors[bi]
                 y = YB(v)
                 svg.append(f'<rect x="{x:.1f}" y="{min(y, y0):.1f}" width="{bw:.1f}" '
                            f'height="{max(abs(y0 - y), 1):.1f}" rx="2.5" fill="{c}"/>')
@@ -323,24 +331,29 @@ def build_fin_trend(fill: dict) -> str:
             svg.append(f'<text x="{L + i * slot + slot / 2:.1f}" y="{H - 4:.1f}" text-anchor="middle" '
                        f'font-size="8" fill="{_C_LABEL}">{_esc(yr[2:])}</text>')
         svg.append('</svg>')
-        # 头行：标题 + 最新值（首柱带同比，双柱列各自末值，各线列末值）
-        b0 = p["bars"][0]
-        b_last = f'{_fmt(b0["values"][-1])}{b0["unit"]}'
-        yoy = ""
-        if n >= 2 and b0["values"][-2] != 0:
-            yoy = f' <span class="m-yoy">{(b0["values"][-1] / b0["values"][-2] - 1) * 100:+.1f}%</span>'
-        if len(p["bars"]) > 1:
-            b1 = p["bars"][1]
-            b_last += f' / {_fmt(b1["values"][-1])}{b1["unit"]}'
+        # 头行：标题 + 最新值（首柱带同比，双柱列各自末值，各线列末值；纯线面板只列线末值）
+        head_parts = []
+        if p["bars"]:
+            b0 = p["bars"][0]
+            b_last = f'{_fmt(b0["values"][-1])}{b0["unit"]}'
+            yoy = ""
+            if n >= 2 and b0["values"][-2] != 0:
+                yoy = f' <span class="m-yoy">{(b0["values"][-1] / b0["values"][-2] - 1) * 100:+.1f}%</span>'
+            if len(p["bars"]) > 1:
+                b1 = p["bars"][1]
+                b_last += f' / {_fmt(b1["values"][-1])}{b1["unit"]}'
+            head_parts.append(f'{b_last}{yoy}')
         line_lasts = " / ".join((f'{_fmt(ln["values"][-1])}%' if ln["pct"] else _fmt(ln["values"][-1]))
                                 for ln in p["lines"])
+        if line_lasts:
+            head_parts.append(line_lasts)
         cells.append(f'<div class="mini-cell"><div class="m-head"><span class="m-name">{_esc(p["title"])}</span>'
-                     f'<span class="m-val">{b_last}{yoy} ｜ {line_lasts}</span></div>{"".join(svg)}</div>')
+                     f'<span class="m-val">{" ｜ ".join(head_parts)}</span></div>{"".join(svg)}</div>')
 
     return (f'<span class="section-tag">财务五年趋势（{_esc(years[0])}–{_esc(years[-1])}）</span>'
             '<div class="mini-grid">' + "".join(cells) + '</div>'
             '<span class="source">财务五年趋势（脚本按 fin_trend 字段生成，数据照抄 em_fetch E3 年表）：'
-            '组合图双轴——柱=金额（左轴 亿；单柱时沙=历史/钢蓝=最新年，双柱并排时沙=第一条/钢蓝=第二条），'
+            '组合图双轴——柱=金额（左轴 亿；沙=第一系列/钢蓝=第二系列），'
             '线=比率（右轴 %/倍，钢蓝实线=第一条、灰虚线=第二条），红虚线=阈值（如现金含量 0.7 盈利质量线）；'
             '图为概览，异常年份归因见本块正文与红旗四项卡</span>')
 

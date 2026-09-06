@@ -9,7 +9,7 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `stk_holdernumber`（股东户数）、`adj_factor`（复权因子）；**无权限**：`news`（新闻快讯）、
 `hk_income`/`hk_fina_indicator`（港股财务）。脚本对港股 E3 采取**尝试调用 + 失败自动降级**策略：
 先试 tushare 港股接口，无权限/失败时自动 curl 东财 `RPT_HKF10_FN_MAININDICATOR` 兜底
-（`em_fetch.py::_em_hkf10_annual_rows`），再不可得才提示模型走妙想 MCP；
+（`em_data.py::_em_hkf10_annual_rows`），再不可得才提示模型走妙想 MCP；
 **`hk_daily` 限流 1次/分钟** → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
 
 **妙想 MCP（mx-ds-mcp-stdio，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务
@@ -27,6 +27,13 @@ HTTP 旧版曾因 ZCode 不携带自定义 headers 而 403 禁用，stdio 版绕
 **注意**：返回为自然语言接口的半结构化 JSON（中文指标名+带单位值），指标名/口径由 AI 理解层决定、
 存在漂移（实测"股东户数"查询被误解析为日度序列）——**不进 em_fetch.py 脚本**，只做模型直调；
 脚本通道保持 tushare 固定字段的确定性。工具在 MCP 加载的会话生效（`mcp__mx-ds-mcp-stdio__mx_*`）。
+
+**MCP 缺席时的 skill 替补（2026-09-06 起）**：`mcp__mx-ds-mcp-stdio__mx_*` 不在工具列表时，
+改经 Skill 工具调用 mx 系列 skill（同一东财妙想 API，密钥已配在 skill 内）——定量查数
+（行情/财务/港股财务，对应 `mx_*_finance_data` 各品种）用 `mx-data`；定性检索
+（新闻/公告/研报，对应 `mx_finance_search_news`/`mx_finance_search_notice`）用 `mx-search`；
+选股筛选（对应 `mx_stocks_screener`）用 `mx-xuangu`。定位与口径纪律同上
+（半结构化、模型直调层、不进 em_fetch.py 脚本）。
 
 **tushare 新增接口（2026-08-07 接入 em_fetch.py，实测有权限）**：`daily_basic` 历史序列（PE/PB 分位）、
 `forecast`（业绩预告）、`express`（业绩快报）、`pledge_stat`/`stk_holdertrade`/`repurchase`（治理包）、
@@ -240,7 +247,8 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 
 ```
 scripts/em_fetch.py（首选：内部 tushare 优先、东财自动兜底，均结构化）
-  → 均失败/缺字段 → 妙想 MCP 直查（mx_*_finance_data；港股财务首选通道）
+  → 均失败/缺字段 → 妙想 MCP 直查（mx_*_finance_data；港股财务首选通道；
+    MCP 缺席时经 Skill 工具调 mx-data/mx-search/mx-xuangu 替补，同一妙想 API）
     → 仍无 → 本手册东财手工 curl（特定字段补充，如港股财务 HKF10）
       → 仍无 → 定性查询：有WebSearch用WebSearch；有妙想用 mx_finance_search_news/notice；都无则E7+10jqka已知URL
         → 仍无 → 委派仅限边界清晰机械任务（定性调研禁委派，见SKILL.md Step 1.3）
@@ -361,11 +369,12 @@ curl -s --max-time 15 -H "User-Agent: Mozilla/5.0" "https://datacenter.eastmoney
   ① 进程内 `_TS_CACHE`（同进程同 (api, 归一化参数) 只发一次）；② 磁盘 TTL 缓存（跨进程/跨报告）：
   **行情类 2h / 财务类 12h / 治理类 24h**（`_TS_TIER_*` 分组；`EM_FETCH_NO_CACHE=1` 全旁路）。
   同日重跑 / `--check` 修复循环 / peers 批量主要命中磁盘缓存，不重复烧额度。
-- **实测频控（当前会员包）**：`hk_daily` **1 次/分钟**（脚本注释实测；单次拉全量 + 缓存复用，
-  E1/E2 共用一次）；`report_rc`（E5 一致预期）**1 次/分钟**（脚本注释实测）。
+- **实测频控（当前会员包）**：`hk_daily` **1 次/小时**（2026-09-06 复测，与 MCP 通道同档，
+  此前「1 次/分钟」记录作废——score_calibration.py 既有注释一致；单次拉全量 + 缓存复用，
+  E1/E2/timing 共用一次，进程内失败写哨兵不再重试）；`report_rc`（E5 一致预期）**1 次/分钟**（脚本注释实测）。
   每日总积分/次数上限未公开——多股大批量取数时按分钟级间隔自然分摊（每股内部 4 并发、股间串行，
   见下），**密集重打同一接口是唯一确定的烧额度方式**（是否触发硬限待实测）。
-- **错误码 40203 两义**：tushare MCP 直调 `hk_daily` = **限流 1 次/小时**（实测）；
+- **错误码 40203 两义**：`hk_daily`（HTTP 与 MCP 通道同）= **限流 1 次/小时**（2026-09-06 复测）；
   `yc_cb`（国债收益率，risk_free 取数）多数账号 = **无权限**。遇 40203 先按接口分清
   「限流」还是「无权限」，再决定等待重试还是走降级链。
 - **无权限接口清单（当前会员包）**：`news`（新闻快讯）、`hk_income`/`hk_fina_indicator`（港股财务）、
@@ -374,9 +383,9 @@ curl -s --max-time 15 -H "User-Agent: Mozilla/5.0" "https://datacenter.eastmoney
 
 ### tushare MCP 直调（`mcp__tushare__*`，模型直调通道）
 
-- **限流比脚本 HTTP 通道更紧**：`hk_daily` 实测 **1 次/小时**（40203）——**禁止直调**；
-  港股日线/K 线一律走 em_fetch.py（HTTP 通道 1 次/分钟 + 缓存）或妙想 `mx_hk_finance_data`
-  （细则见 data-collection.md Step 1.0）。
+- `hk_daily` 两通道同为 **1 次/小时**（2026-09-06 复测）——MCP 直调仍**禁止**（无缓存复用）；
+  港股日线/K 线一律走 em_fetch.py（HTTP 通道 + 磁盘缓存 2h，同报告内 E1/E2/timing 共用一次拉取）
+  或妙想 `mx_hk_finance_data`（细则见 data-collection.md Step 1.0）。
 
 ### 东财野生端点（em_fetch `get()` / 手工 curl——兜底通道）
 
@@ -389,7 +398,7 @@ curl -s --max-time 15 -H "User-Agent: Mozilla/5.0" "https://datacenter.eastmoney
 - 手工 curl 纪律：6 个核心端点**同一条消息并行发出**；单接口超时重试 1 次仍失败即降级
   （见上方「调用方式」）。
 
-### 妙想 MCP（`mx_*`，模型直调层）
+### 妙想 MCP（`mx_*`，模型直调层；MCP 缺席时经 mx-data/mx-search/mx-xuangu skill 调用，同一 API）
 
 - 未见明确频控数字（**待实测**）；已记录的约束是返回口径漂移（半结构化指标名）而非限流。
   免费额度实感约束：同一报告内妙想检索类调用控制在必要次数内，避免反复同义查询。

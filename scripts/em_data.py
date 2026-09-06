@@ -55,16 +55,23 @@ _A_DAILY_CACHE = {}  # A股日线序列缓存：fetch_quote(单日涨跌) 与 fe
 
 
 def _hk_daily_series(ts_code: str, years: int = 6) -> list:
-    """港股日线序列。hk_daily 限流实测 1次/分钟（会员级），单次拉全量缓存复用：
-    E1 取最新价、E2 聚合月线共用同一次调用，避免同脚本内二次调用被限流。"""
+    """港股日线序列（按 trade_date 升序）。hk_daily 限流实测 1次/小时（会员级，2026-09-06 复测），单次拉全量缓存复用：
+    E1 取最新价、E2 聚合月线共用同一次调用，避免同脚本内二次调用被限流。
+    tushare 返回倒序（新→旧），缓存前统一升序——timing 的 MA/52 周窗口依赖尾部切片。
+    失败写空哨兵：1次/小时限流下同进程重试必撞墙，消费方命中哨兵即走各自降级。"""
     if ts_code not in _HK_DAILY_CACHE:
         end = date.today().strftime("%Y%m%d")
         beg = f"{date.today().year - years}0101"
-        rows = ts_call("hk_daily", {"ts_code": ts_code, "start_date": beg, "end_date": end})
-        if not rows:
-            raise RuntimeError("hk_daily 空返回")
+        try:
+            rows = ts_call("hk_daily", {"ts_code": ts_code, "start_date": beg, "end_date": end})
+        except Exception:
+            rows = []
+        rows = sorted((r for r in rows if r.get("trade_date")), key=lambda x: x["trade_date"])
         _HK_DAILY_CACHE[ts_code] = rows
-    return _HK_DAILY_CACHE[ts_code]
+    rows = _HK_DAILY_CACHE[ts_code]
+    if not rows:
+        raise RuntimeError("hk_daily 空返回或已失败（哨兵）")
+    return rows
 
 
 def _a_daily_series(ts_code: str, days: int = 430) -> list:
@@ -441,11 +448,17 @@ def fetch_quote(secid: str, is_hk: bool = False) -> dict:
 
 # ---------------- E2 月线 ----------------
 
+def _em_kline_url(secid: str, klt: int, beg: str, end: str) -> str:
+    """push2his K线 URL 拼装（klt=周期：101 日 / 103 月；fqt=1 前复权）——
+    _em_kline_monthly 与 score_calibration._em_kline_daily 共用，口径唯一。"""
+    return (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
+            f"&fields1=f1,f2,f3&fields2=f51,f53&klt={klt}&fqt=1&beg={beg}&end={end}")
+
+
 def _em_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
     end = "20991231"
     beg = f"{date.today().year - years}0101"
-    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
-           f"&fields1=f1,f2,f3&fields2=f51,f53&klt=103&fqt=1&beg={beg}&end={end}")
+    url = _em_kline_url(secid, 103, beg, end)
     d = get(url).get("data") or {}
     out = []
     # 换算差异（实测）：A股K线 ×100（2331=23.31）；港股K线为真实价（53.600），无需换算
@@ -619,6 +632,9 @@ def _compose_annual_row(r: dict, ind: dict, cf: dict, em: dict) -> dict:
         "TOTALOPERATEREVE": r.get("total_revenue"),
         "PARENTNETPROFIT": r.get("n_income_attr_p"),
         "PARENTNETPROFITTZ": None,  # 同比在外层回填（需相邻期）
+        # 扣非净利润：tushare fina_indicator profit_dedt 主源，缺期次东财 F10 KCFJCXSYJLR 兜底（v4.9.1）
+        "KCFJCXSYJLR": ind.get("profit_dedt") if ind.get("profit_dedt") is not None
+        else em.get("KCFJCXSYJLR"),
         # 财务指标字段级 fallback：tushare fina_indicator 缺期次时用东财 F10 补齐
         "ROEJQ": ind.get("roe") if ind.get("roe") is not None else em.get("ROEJQ"),
         "XSMLL": ind.get("grossprofit_margin") if ind.get("grossprofit_margin") is not None
@@ -1044,7 +1060,8 @@ def fetch_timing_material(code: str, is_hk: bool = False):
         return {"price": round(closes[-1], 2), "ma60": _ma(60), "ma120": _ma(120),
                 "high_52w": round(max(win), 2), "low_52w": round(min(win), 2),
                 "n": len(closes)}
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ fetch_timing_material({code}): {e}", file=sys.stderr)
         return None
 
 

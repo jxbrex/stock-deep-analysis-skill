@@ -369,7 +369,7 @@ def _matrix_slot(q: float, v: float):
 
 
 def _position_steps(quality: float, valuation: float, timing, calc: dict, red_flag: str):
-    """仓位决策链纯函数（11 卡逻辑体，v4.10 从 build_position_card 抽出便于直接单测；
+    """仓位决策链纯函数（11 卡逻辑体，v4.9 从 build_position_card 抽出便于直接单测；
     HTML 渲染留在卡片函数）。输入 质量/估值/时机分、估值 calc、红灯 → 返回
     (final_label, steps, slot_txt)：steps 为轨迹文案列表（只列实际触发条目），
     slot_txt 为矩阵落位说明（非矩阵路径为 None）。

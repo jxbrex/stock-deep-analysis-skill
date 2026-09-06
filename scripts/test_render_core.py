@@ -37,11 +37,56 @@ def minimal_fill(**over):
                         '<span class="scenario-pess">7.2</span>/'
                         '<span class="scenario-base">11</span>/'
                         '<span class="scenario-opt">15.6</span> 元，结论：观察。'),
-        "conclusion_html": "<p><strong>关键优势：</strong>" + "优势证据。" * 60 + "</p>",
+        "conclusion_html": (
+            '<div class="concl-grid">'
+            '<div class="concl-card"><div class="concl-head">关键优势</div>' + "优势证据。" * 20 +
+            '<div class="concl-ref">详见 <a href="#s3">3 公司本质</a></div></div>'
+            '<div class="concl-card"><div class="concl-head">关键弱点</div>' + "弱点证据。" * 20 +
+            '<div class="concl-ref">详见 <a href="#s5">5 风险评估</a></div></div>'
+            '<div class="concl-card"><div class="concl-head">当前市场认知</div>' + "卖方假设。" * 15 +
+            '<div class="concl-ref">详见 <a href="#s8">8 市场预期差</a></div></div>'
+            '<div class="concl-card"><div class="concl-head">核心投资逻辑</div>' + "论点证伪。" * 15 +
+            '<div class="concl-ref">详见 <a href="#s7">7 估值与安全边际</a></div></div>'
+            '</div>'),
         "p0_html": "<p>关键驱动分析。</p>",
-        "l1_html": "".join(_dim(long_text) for _ in range(6)),
+        # v4.9.1 补充修订二：第 5 块用 3.5 治理 trig-strip 紧凑形态（单行 trig + 评分依据链）
+        "l1_html": ("".join(_dim(long_text) for _ in range(5))
+                    + '<div class="dim-block"><div class="dim-header">'
+                      '<span class="dim-name">3.5 治理与资本配置</span><span class="dim-weight">7%</span>'
+                      '<span class="score-line" style="margin-left:auto;margin-bottom:0;">'
+                      '<span class="badge badge-green">7.5</span></span></div>'
+                      '<p><strong>判词：</strong>股权集中、激励覆盖充分，近三年资本运作记录干净，无质押风险。</p>'
+                      '<div class="trig-strip">'
+                      '<div class="trig"><span class="trig-dot hit"></span>'
+                      '<span class="trig-cond">股权与控制权</span>'
+                      '<span class="trig-mt">控股股东持股 34.2%，无质押冻结</span>'
+                      '<span class="trig-status hit">正面</span></div>'
+                      '<div class="trig"><span class="trig-dot hit"></span>'
+                      '<span class="trig-cond">管理层与激励</span>'
+                      '<span class="trig-mt">2024 限制性股票覆盖核心技术人员 312 人</span>'
+                      '<span class="trig-status hit">正面</span></div>'
+                      '<div class="trig"><span class="trig-dot miss"></span>'
+                      '<span class="trig-cond">风险点</span>'
+                      '<span class="trig-mt">关联交易占比 6.8%（高于同业 3% 均值）</span>'
+                      '<span class="trig-status miss">关注</span></div></div>'
+                      '<p><strong>评分：</strong>7.5——基准 7.0，股权/激励两项正面 +0.5；'
+                      '关联交易关注项不扣分但列入 13 章跟踪。</p></div>'),
         "l3_html": "".join(_dim(long_text) for _ in range(3)),
-        "l4_html": "<p>风险评估。</p>",
+        # v4.9.1 补充修订二：l4 章首红灯 hero 三卡（pass=通过）+ 黄灯说明 + 损失预演卡
+        "l4_html": ('<div class="flag-hero">'
+                    '<div class="flag-hero-card pass"><div class="fh-name">a 财务造假与极高杠杆</div>'
+                    '<div class="fh-verdict">通过</div>'
+                    '<div class="fh-desc">审计标准无保留；商誉/净资产 3.2%；控股股东无质押；非 ST</div></div>'
+                    '<div class="flag-hero-card pass"><div class="fh-name">b 立案调查与重大违规</div>'
+                    '<div class="fh-verdict">通过</div>'
+                    '<div class="fh-desc">近三年无立案调查/重大违规披露（公告检索）</div></div>'
+                    '<div class="flag-hero-card pass"><div class="fh-name">c 主营不可逆衰退</div>'
+                    '<div class="fh-verdict">通过</div>'
+                    '<div class="fh-desc">核心产品收入连续增长，无被禁/被主要市场抛弃迹象</div></div>'
+                    '</div>'
+                    '<p>黄灯扣分：无（四类逐项核查未命中）。</p>'
+                    '<div class="danger-card"><strong>损失预演：</strong>假设两年后亏损 30%，'
+                    '最可能是商品价格深跌叠加产能释放不及预期；与黄灯清单高度重合，无清单外新风险。</div>'),
         "valuation_method": "PE历史时段匹配法", "stock_type": "周期股",
         "valuation": {"shares": 100, "horizon": "12个月", "scenarios": [
             {"key": "pess", "label": "悲观", "trigger": "下行", "profit": 80, "pe": [8, 10]},
@@ -52,21 +97,40 @@ def minimal_fill(**over):
         "valuation_html": "<p>估值方法说明。</p>",
         "gap_tier": "B", "gap_html": "<p>预期差。</p>",
         "peers_meta": "—",
-        "peers_html": ('<table><tr><td>同业</td></tr></table>'
+        "peers_html": ('<div class="table-scroll"><table class="freeze-first">'
+                       '<tr><th>公司</th><th>PE(TTM)</th><th>ROE</th></tr>'
+                       '<tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td>'
+                       '<td class="cell-best">11</td><td>14%</td></tr>'
+                       '<tr><td>同业甲</td><td class="cell-worst">25</td><td>9%</td></tr>'
+                       '</table></div>'
                        '<span class="source">数据来源：测试</span>'),
-        "next_review": "2026-11-27", "dash_html": "<p>仪表盘。</p>",
+        "next_review": "2026-11-27",
+        "dash_html": ('<div class="table-scroll"><table class="dash-table freeze-first">'
+                      '<tr><th>指标</th><th>当前值</th><th>触发阈值</th><th>触发后操作</th>'
+                      '<th>数据来源</th><th>更新频率</th></tr>'
+                      '<tr><td>毛利率</td><td>34%</td><td>≥36%</td>'
+                      '<td>加仓至标配（需要一段足够长的操作说明文字来验证长文列换行样式）</td>'
+                      '<td>E3 年表</td><td>季度</td></tr></table></div>'
+                      '<span class="source">数据来源：测试</span>'),
         "position_html": "<p>时机判定与决策逻辑。" * 12 + "</p>",
         "scores": {"1A": 7, "1B": 7, "1C": 7, "1D": 7, "1E": 7, "1F": 7,
                    "3A": 7, "3B": 7, "3C": 7},
         "timing_scores": {"筹码面": 5, "技术面": 5},
         "yellow_deductions": [],
+        # v4.8 可选图字段：11 章股东户数趋势（v4.9.1 起移至章首）；golden 覆盖模板新顺序
+        "holders": [{"date": "2025-03-31", "num": 188153, "chg": None},
+                    {"date": "2025-06-30", "num": 175200, "chg": -6.9},
+                    {"date": "2025-09-30", "num": 160800, "chg": -8.2},
+                    {"date": "2025-12-31", "num": 152300, "chg": -5.3}],
         # v4.9 必填图字段：3.4 财务趋势图墙（组合面板）+ 4.1 利润增长图
+        # v4.9.1 形态：归母净利面板带扣非第二柱；第 4 面板为纯线周转天数面板
         "fin_trend": {"years": ["2021", "2022", "2023", "2024", "2025"], "panels": [
             {"title": "营收 × 毛利率",
              "bars": [{"name": "营收", "unit": "亿", "values": [100, 110, 120, 125, 130]}],
              "lines": [{"name": "毛利率", "pct": True, "values": [30, 31, 32, 33, 34]}]},
-            {"title": "归母净利 × 净利率 × ROE",
-             "bars": [{"name": "归母净利", "unit": "亿", "values": [8, 9, 10, 10.5, 11]}],
+            {"title": "归母净利+扣非净利 × 净利率 × ROE",
+             "bars": [{"name": "归母净利", "unit": "亿", "values": [8, 9, 10, 10.5, 11]},
+                      {"name": "扣非净利", "unit": "亿", "values": [7.5, 8.5, 9.5, 10, 10.5]}],
              "lines": [{"name": "净利率", "pct": True, "values": [8, 8.5, 9, 9.5, 10]},
                        {"name": "ROE", "pct": True, "values": [12, 13, 14, 14, 14]}]},
             {"title": "经营现金流+自由现金流 × 现金含量",
@@ -74,9 +138,9 @@ def minimal_fill(**over):
                       {"name": "自由现金流", "unit": "亿", "values": [7, 8, 9, 9, 10]}],
              "lines": [{"name": "现金含量", "values": [1.2, 1.1, 1.0, 1.05, 1.1],
                         "threshold": 0.7}]},
-            {"title": "货币资金 × 短债覆盖率",
-             "bars": [{"name": "货币资金", "unit": "亿", "values": [50, 55, 60, 65, 70]}],
-             "lines": [{"name": "短债覆盖率", "values": [2.2, 2.5, 2.4, 2.6, 2.8]}]},
+            {"title": "运营资金周转天数",
+             "lines": [{"name": "应收账款周转天数", "values": [65, 48, 62, 73, 60]},
+                       {"name": "存货周转天数", "values": [122, 98, 96, 97, 120]}]},
         ]},
         "growth_plot": {"hist": [
             {"y": "2022", "rev": 10.0, "np": 12.5},
@@ -413,8 +477,8 @@ def test_writing_discipline_warns():
                      '<tbody><tr><td>归母净利</td><td>2023: 8.0，2024: 15.2，2025: 30.8</td></tr></tbody></table>'
                      '<span class="source">来源：mx 批量</span>')
     assert "三年数字并排" in capture(minimal_fill(peers_html=peers_stacked)), "td 内年份堆叠应告警"
-    peers_ok = ('<table><thead><tr><th>指标</th><th>同业甲</th></tr></thead>'
-                '<tbody><tr><td>ROE变化</td><td>8.0→30.8（大升）</td></tr></tbody></table>'
+    peers_ok = ('<table><thead><tr><th>公司</th><th>ROE变化</th></tr></thead>'
+                '<tbody><tr><td>同业甲</td><td>8.0→30.8（大升）</td></tr></tbody></table>'
                 '<span class="source">来源：mx 批量</span>')
     assert "三年数字并排" not in capture(minimal_fill(peers_html=peers_ok)), "起→终格式不应告警"
     # pe_history 与第 10 章绑定：cycle_html 缺失 → 告警；填了 → 不告警
@@ -504,8 +568,8 @@ def test_segments_chain_charts():
 
 
 def test_price_history_and_holders():
-    """v4.8 ①发丝图挂第 10 章（历史带之后、时段表之前）；②户数趋势挂第 11 章（时机判定后、
-    三轨判定卡之前）；缺字段时两图整块消失。"""
+    """v4.8 ①发丝图挂第 10 章（历史带之后、时段表之前）；②户数趋势挂第 11 章（v4.9.1 起
+    移至章首：时机判定小表前、三轨判定卡之前）；缺字段时两图整块消失。"""
     months = []
     for y in (2023, 2024, 2025):
         for m in range(1, 13):
@@ -528,12 +592,14 @@ def test_price_history_and_holders():
         html = open(out, encoding="utf-8").read()
     assert 'aria-label="股价与PE历史走势"' in html, "发丝图应生成"
     assert 'aria-label="股东户数趋势"' in html, "户数趋势图应生成"
-    # 发丝图在第 10 章内；户数图在第 11 章内、三轨判定卡之前
+    # 发丝图在第 10 章内；户数图在第 11 章章首（v4.9.1：时机判定小表前、三轨判定卡之前）
     assert html.find('id="s10"') < html.find('aria-label="股价与PE历史走势"'), "发丝图应在第 10 章"
     s11_pos = html.find('id="s11"')
     holders_pos = html.find('aria-label="股东户数趋势"')
+    position_pos = html.find("时机判定与决策逻辑")
     card_pos = html.find("三轨判定与仓位结论")
-    assert s11_pos < holders_pos < card_pos, "户数图应在第 11 章内、三轨判定卡之前"
+    assert s11_pos < holders_pos < position_pos < card_pos, \
+        "户数图应在第 11 章章首（时机判定小表前、三轨判定卡之前）"
     assert "188,153" in html, "户数应带千位符"
     # v4.8.2 原位美化：面积填充 / 发丝加粗 / 年末竖网格 / 末端药丸标签
     ph_seg = html.split('aria-label="股价与PE历史走势"', 1)[1].split('</svg>', 1)[0]
@@ -541,11 +607,11 @@ def test_price_history_and_holders():
     assert 'stroke-width="1.8"' in ph_seg, "发丝线应加粗至 1.8"
     assert 'stroke="#f0ebdf"' in ph_seg, "年份 tick 应有竖向浅网格线"
     assert 'rx="8"' in ph_seg, "末端最新值标签应有药丸底色"
-    # 缺字段：两图整块消失
+    # 缺字段：两图整块消失（v4.9.1 起 minimal_fill 默认含 holders，需显式置 None）
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "_fill_t.json")
         with open(p, "w", encoding="utf-8") as fp:
-            json.dump(minimal_fill(), fp, ensure_ascii=False)
+            json.dump(minimal_fill(holders=None), fp, ensure_ascii=False)
         out = R.render(p, out_path=os.path.join(d, "out.html"))
         html2 = open(out, encoding="utf-8").read()
     assert 'aria-label="股价与PE历史走势"' not in html2, "缺字段发丝图应消失"
@@ -629,13 +695,25 @@ def test_chain_columns_balanced():
 
 def test_fin_trend_wall():
     """v4.9：fin_trend 组合图墙——4 面板、双轴（左亿右%）、阈值红虚线、柱图同比、
-    第二条线灰虚线；缺字段/面板不足拒渲染。"""
+    第二条线灰虚线；v4.9.1：归母净利面板带扣非双柱、第 4 面板纯线（周转天数）、
+    柱色只表系列归属（单柱不再有钢蓝最新年高亮）；缺字段/面板不足拒渲染。"""
     html = R.build_fin_trend(minimal_fill())
     assert html.count("mini-cell") == 4, "标准 4 面板"
     assert 'stroke-dasharray="3 3"' in html, "现金含量应画 0.7 阈值红虚线"
     assert 'stroke-dasharray="4 3"' in html, "ROE 第二条线应为灰虚线"
     assert "m-yoy" in html, "柱图应带同比标注"
     assert "左轴" in html and "右轴" in html, "图例应标明双轴"
+    cells = html.split('<div class="mini-cell">')
+    # v4.9.1：单柱面板（营收）柱全部沙色，取消钢蓝最新年高亮
+    assert not re.search(r'<rect[^>]*fill="#4a6fa5"', cells[1]), "单柱面板不应有钢蓝柱"
+    # 归母净利+扣非净利双柱面板：第二柱系列（扣非）钢蓝、第一柱（归母）沙色
+    assert "扣非净利（亿，左轴）" in cells[2], "归母净利面板应含扣非第二柱图例"
+    assert re.search(r'<rect[^>]*fill="#4a6fa5"', cells[2]), "扣非第二柱应为钢蓝"
+    # 第 4 面板纯线（应收/存货周转天数）：无柱无图例色块、两条线、头行只列两条线末值
+    assert "运营资金周转天数" in cells[4], "第 4 面板应为周转天数纯线面板"
+    assert "<rect" not in cells[4], "纯线面板不应有柱或图例色块 rect"
+    assert cells[4].count("<polyline") == 2, "周转天数应为双线"
+    assert re.search(r'm-val">60 / 120<', cells[4]), "纯线面板头行只列两条线末值"
     assert not R.build_fin_trend(minimal_fill(fin_trend={"years": ["2024", "2025"], "panels": []}))
     _expect_valueerror(minimal_fill(fin_trend=None), "fin_trend 缺失应拒渲染")
     f = minimal_fill()
@@ -669,7 +747,7 @@ def test_scenario_cards_eval_colors():
 
 
 def test_position_steps_direct():
-    """v4.10：仓位决策链已抽成纯函数 _position_steps——直接测决策分支
+    """v4.9：仓位决策链已抽成纯函数 _position_steps——直接测决策分支
     （红灯熔断 / 中枢为负 / 直落重仓 / 上浮封顶 / 0 兜底 / 观察池下调）。"""
     import contextlib
     import io
@@ -707,7 +785,7 @@ def test_position_steps_direct():
 
 
 def test_hero_band_claims_warns():
-    """v4.10 Hero 文案引用分位/历史带概念时的数据支撑告警：
+    """v4.9 Hero 文案引用分位/历史带概念时的数据支撑告警：
     无 p25/p75 支撑 / 极性矛盾 → 告警；概念齐备且无矛盾 → 不告警。"""
     import contextlib
     import io
@@ -738,7 +816,8 @@ def test_hero_band_claims_warns():
 
 
 def test_conclusion_structure_warns():
-    """v4.10 conclusion_html 四段判词结构：缺段 / 乱序 → 告警；四段顺序正确 → 不告警。"""
+    """v4.9.1 补充修订二：conclusion_html 四卡结构——缺卡 / 乱序 → 告警；四卡顺序正确 → 不告警。
+    校验按纯文本关键词，对容器形式不敏感（旧四段 <p> 写法同样检出，但新规范为 .concl-grid 卡）。"""
     import contextlib
     import io
 
@@ -749,25 +828,28 @@ def test_conclusion_structure_warns():
         return buf.getvalue()
 
     body = "（数据证据支撑充分，论据详实可靠，具备参考价值。）" * 6
-    four = (f"<p><strong>关键优势：</strong>{body}</p>"
-            f"<p><strong>关键弱点：</strong>{body}</p>"
-            f"<p><strong>当前市场认知：</strong>{body}</p>"
-            f"<p><strong>核心投资逻辑：</strong>{body}</p>")
-    assert "缺段" not in capture(minimal_fill(conclusion_html=four)), "四段齐全不应告警"
-    three = four.replace("<p><strong>当前市场认知：</strong>", "")
+
+    def card(head, ref):
+        return (f'<div class="concl-card"><div class="concl-head">{head}</div>{body}'
+                f'<div class="concl-ref">详见 {ref}</div></div>')
+
+    four = ('<div class="concl-grid">' + card("关键优势", '<a href="#s3">3 公司本质</a>')
+            + card("关键弱点", '<a href="#s5">5 风险评估</a>')
+            + card("当前市场认知", '<a href="#s8">8 市场预期差</a>')
+            + card("核心投资逻辑", '<a href="#s7">7 估值与安全边际</a>') + '</div>')
+    assert "缺卡" not in capture(minimal_fill(conclusion_html=four)), "四卡齐全不应告警"
+    three = four.replace(card("当前市场认知", '<a href="#s8">8 市场预期差</a>'), "")
     out = capture(minimal_fill(conclusion_html=three))
-    assert "缺段" in out and "当前市场认知" in out, "缺段应告警并点名缺失判词"
-    mixed = (f"<p><strong>核心投资逻辑：</strong>{body}</p>"
-             f"<p><strong>关键优势：</strong>{body}</p>"
-             f"<p><strong>关键弱点：</strong>{body}</p>"
-             f"<p><strong>当前市场认知：</strong>{body}</p>")
+    assert "缺卡" in out and "当前市场认知" in out, "缺卡应告警并点名缺失卡头"
+    mixed = ('<div class="concl-grid">' + card("核心投资逻辑", "7") + card("关键优势", "3")
+             + card("关键弱点", "5") + card("当前市场认知", "8") + '</div>')
     out = capture(minimal_fill(conclusion_html=mixed))
-    assert "顺序错误" in out, "四段乱序应告警"
-    print("OK conclusion 四段结构（齐全放行 / 缺段点名 / 乱序告警）")
+    assert "顺序错误" in out, "四卡乱序应告警"
+    print("OK conclusion 四卡结构（齐全放行 / 缺卡点名 / 乱序告警）")
 
 
 def test_review_miss_diagnostics_warns():
-    """v4.10 复盘「未命中」缺诊断方向：含未命中而无规律/反例字样 → 告警。"""
+    """v4.9 复盘「未命中」缺诊断方向：含未命中而无规律/反例字样 → 告警。"""
     import contextlib
     import io
 
@@ -790,7 +872,7 @@ def test_review_miss_diagnostics_warns():
 
 
 def test_peers_roe_outlier_warns():
-    """v4.10 peers_plot ROE 量级倒挂：目标点 ROE 脱离同业量级 → 告警；同量级 → 不告警。"""
+    """v4.9 peers_plot ROE 量级倒挂：目标点 ROE 脱离同业量级 → 告警；同量级 → 不告警。"""
     import contextlib
     import io
 
@@ -823,7 +905,7 @@ def test_peers_roe_outlier_warns():
 
 
 def test_fill_literal_mustache_survives():
-    """v4.10 fill 片段含字面 {{KEY}} 不被模板占位符替换误吞（实体化原样显示，渲染通过）。"""
+    """v4.9 fill 片段含字面 {{KEY}} 不被模板占位符替换误吞（实体化原样显示，渲染通过）。"""
     with tempfile.TemporaryDirectory() as d:
         f = minimal_fill()
         # position_html 里带一段「模板占位符示例」文本
@@ -840,7 +922,7 @@ def test_fill_literal_mustache_survives():
 
 
 def test_validate_warns_reach_stderr():
-    """v4.10 validate 告警路径：触发告警的 fill → stderr 有「内容校验」前缀输出。"""
+    """v4.9 validate 告警路径：触发告警的 fill → stderr 有「内容校验」前缀输出。"""
     import contextlib
     import io
     fill = minimal_fill(subtitle="测试行业 · 报告日期：2026-01-01")
@@ -854,7 +936,7 @@ def test_validate_warns_reach_stderr():
 
 
 def test_triggers_strip():
-    """v4.10 触发条件状态条：三态类名/非法 status 归 pending/空字段空串/非法与超量告警。"""
+    """v4.9 触发条件状态条：三态类名/非法 status 归 pending/空字段空串/非法与超量告警。"""
     import contextlib
     import io
     html = R.build_triggers_strip(minimal_fill(triggers=[
@@ -871,6 +953,107 @@ def test_triggers_strip():
     with contextlib.redirect_stderr(buf):
         R.validate_content(f, R.compute_valuation(f))
     assert "非法 status" in buf.getvalue() and "> 8" in buf.getvalue(), "非法值与超量应告警"
+
+
+def test_backtest_triggers_warning():
+    """v4.9.1：回测模式（prev 已填）triggers 缺失 → 告警（旧触发条件核对由状态条承载，
+    dash_html 不再手写核对表）；triggers 已填 → 无此告警。"""
+    import contextlib
+    import io
+    prev = {"date": "2026-08-05", "quality": 7.0, "valuation": 6.0, "timing": 5.0,
+            "target_range": "10-12"}
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        R._check_backtest_flags(minimal_fill(prev=prev, review_html="<p>复盘。</p>"))
+    assert "triggers 未填" in buf.getvalue(), "prev 已填而 triggers 缺失应告警"
+    buf2 = io.StringIO()
+    with contextlib.redirect_stderr(buf2):
+        R._check_backtest_flags(minimal_fill(prev=prev, review_html="<p>复盘。</p>",
+                                             triggers=[{"cond": "提价兑现", "status": "hit"}]))
+    assert "triggers 未填" not in buf2.getvalue(), "triggers 已填不应再告警"
+
+
+def test_table_alignment_keeps_highlight_class():
+    """v4.9.1：fix_table_alignment 只动 num/center，td 上的 cell-best/cell-worst 高亮类存活。"""
+    html = R.fix_table_alignment(
+        '<table><tr><th>公司</th><th>PE(TTM)</th><th>ROE</th></tr>'
+        '<tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td><td class="cell-best">11</td>'
+        '<td>14%</td></tr>'
+        '<tr><td>同业甲</td><td class="cell-worst">25</td><td>9%</td></tr></table>')
+    assert "cell-best num" in html, "数字列应追加 num 且保留 cell-best"
+    assert "cell-worst num" in html, "数字列应追加 num 且保留 cell-worst"
+
+
+def test_governance_strip_compact_warns():
+    """v4.9.1 补充修订二：3.5 治理块单行化——trig-strip 块内 <p> 恰为 2（判词+评分）→ 不告警；
+    trig 行后另起 <p> 正文（>2 个 <p>）→ 告警；3.5 未用 trig-strip 的存量写法 → 不打扰。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    def l1_with_35(inner):
+        dims = [('<div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，'
+                 '论据详实可靠，行业地位稳固，具备长期参考价值。</p></div>')] * 5
+        return "".join(dims) + ('<div class="dim-block"><div class="dim-header">'
+                                '<span class="dim-name">3.5 治理与资本配置</span></div>'
+                                + inner + '</div>')
+
+    trig = ('<div class="trig"><span class="trig-dot hit"></span>'
+            '<span class="trig-cond">股权与控制权</span>'
+            '<span class="trig-mt">控股股东持股 34.2%，无质押冻结</span>'
+            '<span class="trig-status hit">正面</span></div>')
+    compact = ('<p><strong>判词：</strong>股权集中、激励充分，论据详实可靠具备参考价值。</p>'
+               f'<div class="trig-strip">{trig}{trig}</div>'
+               '<p><strong>评分：</strong>7.5——基准 7.0，激励到位 +0.5；关联交易关注 −0.0。</p>')
+    assert "恰为 2" not in capture(minimal_fill(l1_html=l1_with_35(compact))), "紧凑形态不应告警"
+    loose = compact.replace('</div><p><strong>评分',
+                            f'</div><p>补充正文一段，论据详实可靠具备参考价值和数据支撑。</p>{trig}'
+                            '<p><strong>评分')
+    out = capture(minimal_fill(l1_html=l1_with_35(loose)))
+    assert "恰为 2" in out, "trig 行后另起 <p> 正文应告警"
+    legacy = ('<p>公司治理正文一段，未用分块列示的存量写法，论据详实可靠具备参考价值与数据支撑。'
+              '治理结构稳定，激励到位，分红持续。</p>')
+    assert "恰为 2" not in capture(minimal_fill(l1_html=l1_with_35(legacy))), "未用 trig-strip 不打扰"
+
+    # 补充修订四：3.3 护城河 / 4.3 催化剂同款 <p> 恰为 2 规则
+    def dim_with(name, inner):
+        return ('<div class="dim-block"><div class="dim-header">'
+                f'<span class="dim-name">{name}</span></div>' + inner + '</div>')
+    dims5 = [('<div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，'
+              '论据详实可靠，行业地位稳固，具备长期参考价值。</p></div>')] * 5
+    assert "恰为 2" not in capture(minimal_fill(
+        l1_html="".join(dims5) + dim_with("3.3 商业模式与护城河", compact))), "3.3 紧凑形态不应告警"
+    assert "恰为 2" in capture(minimal_fill(
+        l1_html="".join(dims5) + dim_with("3.3 商业模式与护城河", loose))), "3.3 另起正文应告警"
+    l3_43 = ("".join(dims5[:2]) + dim_with("4.3 催化剂", loose))
+    assert "恰为 2" in capture(minimal_fill(l3_html=l3_43)), "4.3 另起正文应告警"
+    print("OK 3.5 治理块单行化（紧凑放行 / 另起正文告警 / 存量不打扰 / 3.3+4.3 同款覆盖）")
+
+
+def test_peers_orientation_warns():
+    """v4.9.1 补充修订二：同业表公司强制行标题——目标公司蓝 style 落 <th> 表头（公司列旧方向）
+    → 告警；标在行首格（<td>）→ 不告警。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    col_form = ('<table><thead><tr><th>指标</th>'
+                '<th style="color:#4a6fa5;font-weight:700;">测试股份</th><th>同业甲</th></tr></thead>'
+                '<tbody><tr><td>PE(TTM)</td><td>11</td><td>25</td></tr></tbody></table>'
+                '<span class="source">来源：mx 批量</span>')
+    assert "公司=行" in capture(minimal_fill(peers_html=col_form)), "公司列旧方向应告警"
+    assert "公司=行" not in capture(minimal_fill()), "行标题形态不应告警"
+    print("OK peers 公司行标题（th 蓝 style 告警 / 行首格放行）")
 
 
 if __name__ == "__main__":

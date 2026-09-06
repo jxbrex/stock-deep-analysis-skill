@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_scenario.py — 情景类图族（v4.10 从 charts.py 拆出）：05 目标价走廊（build_scenario_spectrum）/ 三情景表+三指标卡（build_scenario_block）/ 07 估值-质量散点图（build_peers_plot）。依赖 charts_base 与 scoring。"""
+"""charts_scenario.py — 情景类图族（v4.9 从 charts.py 拆出）：05 目标价走廊（build_scenario_spectrum）/ 三情景表+三指标卡（build_scenario_block）/ 07 估值-质量散点图（build_peers_plot）。依赖 charts_base 与 scoring。"""
 
 import math
 

@@ -45,6 +45,147 @@
 
 ## 版本历史
 
+### V4.9.1（2026-09-04）— 全面审计修复：残骸清理 + 版本标签归一 + charts 壳删除 + 解析合并 + 文档补齐
+
+- **失败残骸坟场清理**：删除 artifacts/ 全部内容（约 4.1MB：v4.8-v4.9 调试截图、
+  重构备份 `_render_report_phase_a_backup.py`/`_em_fetch_pre_split.py`、一次性迁移脚本、
+  各版本冒烟 fill、预览 HTML、案例报告——均未追踪、不部署、无引用）与 scripts/__pycache__。
+- **版本标签归一**：v4.9 合并发布时遗留的 29 处「v4.10」误标（charts 六模块文件头、
+  validate/scoring/render_report/monthly_checkup/测试/fill-schema/模板 CSS 注释）
+  全部改回 v4.9；模板注释变更触发 golden 快照有意重建一次。
+- **charts.py 兼容壳删除**（42 行）：render_report/validate 改从 charts_base 与图族模块
+  直导；render_report 三段 `# noqa F401` 再导出块从 96 名收窄到 7 名
+  （= 测试经 R.* 消费且自身未定义的全集），注释如实标注用途。
+- **em_fetch re-export 收窄**：40 名 → 21 名（删 5 缓存容器 + 14 私名 helper，
+  全仓库 grep 零消费实证；docstring 改为如实描述）；data-sources.md/scoring.md
+  两处 `em_fetch.py::私名` 文档前缀改指真身模块 em_data.py。
+- **文件名解析合并（owner = extract_review.parse_report_name）**：extract_review 新增
+  `parse_report_name()`（三代命名：新命名/带「-复盘-」回测版/pre-v4.0 旧 _ 分隔命名；
+  代码 6 位 = A股/北交所、5 位 = 港股；返回 company/code/quality/valuation/date/is_review），
+  `find_prev_report` 内部改用它——旧 _ 分隔命名自此也参与回测触发匹配（原 `-{code}-`
+  子串判定漏掉 _ 命名的 pre-v4.0 报告，宽松档名存实亡）。score_calibration 删本地
+  `parse_filename`、monthly_checkup 删本地 `_REPORT_RE`，均改为 import 复用。
+  **monthly_checkup 修复性口径变化**：开始识别回测版（旧正则不认「-复盘-」段，同代码
+  最新一份会被漏成旧版）与旧 _ 命名报告；旧命名无估值分显示为「—」。
+- **--disclosure 修复**：删掉 `code + (".SH" if startswith("6") else ".SZ")` 手拼
+  （港股 5 位/北交所 43/83/92 段静默拼错后缀），改复用 `em_fetch.fetch_disclosure`
+  （E1 同款口径：to_ts_code 市场映射含北交所→.BJ；按报告期倒序、优先未披露的最近期）；
+  港股 5 位显式跳过（tushare disclosure_date 仅覆盖沪深）。两处「口径待实测」注释随
+  复用 E1 已验证口径而落实删除。顺带修复：多只标的同一审查日触发 `overdue.sort()`
+  元组比较 dict 的 TypeError（改按日期键排序）。
+- 测试：test_extract_review 5→7 项（+parse_report_name 三代命名/边界、+旧 _ 命名触发匹配）；
+  test_calibration 第 1 段断言按 dict 口径改写（`无日期-600989-6.0-5.0.html → None` 边界保留）；
+  新增 test_monthly_checkup 2 项（合并口径扫描、--disclosure ts_code 映射 mock 禁网络）。
+  backtest.md 6.5 增「月度体检」用法小节。
+- **helper 去重与死物清理**：`_prev_track_rows` 共享实现落 charts_base
+  （validate.build_prev_strip 与 charts_misc.build_review_dumbbell 的旧键回退契约合并）；
+  push2his kline URL 收编为 em_data `_em_kline_url`（klt 参数化，score_calibration 删本地实现）；
+  散色值收编（`_C_PAPER_CELL`/`_C_BADGE_DEEP` 入 charts_base，三处硬编码改引用，色值逐字符不变）；
+  extract_review 删本地 `_num` 改从 scoring 导入；死物清理（charts_base 死 import sys、
+  score_calibration 死 import datetime、test_mcap_mode 死变量 SKILL_DIR、
+  deploy.ps1 排除清单删已不存在的 .backup-pre-v48）。
+- **文档补齐**：SKILL.md 补 v4.9 必填图字段（fin_trend/growth_plot 必填拒渲染、triggers 可选，
+  236-241 枚举段 + 自检清单各一处）；README scripts/ 目录树 7→24 项、测试「四个」→「七套」。
+- 测试套件由六套增至七套（新增 test_monthly_checkup），全部回归全绿。
+- **补充修订（2026-09-05，药明康德 603259 复盘报告 8 项反馈）**：
+  ① fin_trend 图墙标准 4 面板改为「营收×毛利率 / 归母净利+扣非×净利率×ROE / 现金流×现金含量 /
+  应收+存货周转天数（纯双线）」——E3 年表新增扣非净利列（tushare profit_dedt 主源、东财 F10 兜底）
+  与周转天数逐年行；渲染器/validate 支持无柱纯线面板（原 `bars and lines` 双双必填会跳过）。
+  ② 取消单柱「最新年钢蓝」高亮——钢蓝此前一身三职（单柱最新年/双柱第二系列/线第一系列），
+  柱色统一为只表系列归属（沙=第一系列/钢蓝=第二系列），最新年信息由头行最新值+同比与
+  x 轴最右位置承载。
+  ③ 3.5 治理与资本配置改用 `.trig-strip` 分块列示（复用 triggers 类族，绿=正面/红=风险/灰=中性）。
+  ④ 3.6 资本回报质量块首加 metric-row 三卡（ROIC 近 3 年 / WACC 8% / 覆盖倍数），不做独立 SVG 图
+  （ROIC 不在 E3 管道，单开数据链不值）；scoring.md 1F 补分型特例（未盈利/管线与困境反转豁免
+  ROIC vs WACC 主判据）。
+  ⑤ 同业当前指标表新增 `.cell-best`/`.cell-worst` 淡底类，每行按指标方向性各标一格
+  （三元素选择器+晚于斑马纹声明，否则偶数行斑马盖掉高亮）。
+  ⑥ `holders` 户数趋势图移至 11 章章首（原夹在手写正文与三轨判定卡之间，打断判定→结论阅读流）。
+  ⑦ 回测模式废止手写「旧触发条件核对表」（v4.9 triggers 状态条本就承载核对结果，双写冗余）——
+  核对结果写 triggers（target 写「阈值｜实际值」），prev 已填而 triggers 缺失渲染器告警。
+  ⑧ 13 章合并单表新增 `.dash-table` 类（指标/当前值/阈值列 nowrap、操作/来源长文列 12px）+
+  强制 table-scroll+freeze-first。
+  测试：test_render_core 34→36（户数图章首断言、单柱无钢蓝、纯线面板、cell-best 类存活、
+  回测 triggers 告警），golden 快照随模板/图墙有意重建并逐项核验；E3 实跑 603259 验证
+  扣非列与周转行非空。示例文档：artifacts/ 下 demo fill + 渲染产物（目检用，不入库）。
+- **补充修订二（2026-09-05，科大讯飞报告 4 项展示层反馈）**：
+  ① 核心结论四段长文改 `.concl-grid` 2×2 **结论卡网格**——四卡固定序（关键优势/关键弱点/
+  当前市场认知/核心投资逻辑），每卡=卡头+2-4 句浓缩要点+卡尾 `.concl-ref`「详见 X 章」锚索引
+  （优势→#s3／弱点→#s5／市场认知→#s8／投资逻辑→#s7·#s11，只链无条件章节）；
+  解决信息量大但重点不落地——浓缩省略的论据由被引章节承载，结论章不重复展开。
+  ② 3.5 治理分块收紧为**单行 trig 行**（dot+cond+mt+status 全内联，禁止 trig 后另起 `<p>` 正文，
+  整块 `<p>` 恰为 2=判词+评分末拍，超出渲染器告警）；**评分末拍强制依据链**
+  （基准 X.X + 加分项 − 扣分项，引用块内数据）——科大讯飞报告「看不到扣分/评分依据」实证。
+  ③ 同业当前指标表与 3 年趋势表统一为**公司=行标题**（原指标行/公司列与报告内其他表方向不一）；
+  cell-best/worst 随之改按指标列标注，且由「仅染淡底」升级为**染底+同色加粗**（淡底对比度过低实证）；
+  目标公司蓝粗标在行首格，落 `<th>` 表头=旧方向，渲染器告警。
+  ④ 红灯检查改 **hero 三卡**（5 章章首固定：a 财务造假与极高杠杆 / b 立案调查与重大违规 /
+  c 主营不可逆衰退），卡面=红灯名+大字 通过/不通过（pass 绿/fail 红）+小字核查路径或命中事实；
+  1 章命中时 danger-card 脚本注入逻辑不变。
+  改动全部落在模板 CSS + fill-schema 写作规范 + validate 告警三层，render_report.py 主逻辑零改动。
+  测试：test_render_core 36→38（3.5 单行化告警两分支、peers 方向告警两分支；结论卡结构用例改写），
+  golden 快照随模板 CSS/ fixture 新形态有意重建并逐项核验；demo 重跑覆盖新形态。
+- **补充修订三（2026-09-06，美图 01357 港股报告 5 项反馈）**：
+  ① **港股日线排序 bug 修复（数据正确性）**：tushare `hk_daily` 返回倒序（新→旧），
+  `_hk_daily_series` 未排序直接进缓存——`fetch_timing_material` 港股分支尾部切片
+  （closes[-60:]/[-250:]）吃到最旧数据，MA60/52 周高低全错（美图实证：算在 2020 年数据上，
+  用户手工重算纠正为 4.95/4.34/4.53/11.82/3.61）。根治于源头：缓存前统一按 trade_date
+  升序（quote 取 max/月线 dict 聚合两消费方免疫复查）。回归：test_em_fetch 新增 9b 段
+  （倒序输入 → MA60/52 周窗口精确断言 + 月线消费方免疫）。
+  ② **失败哨兵 + timing stderr 告警**：hk_daily 限流实为 **1 次/小时**（2026-09-06 复测，
+  此前「1 次/分钟」记录作废，与 score_calibration.py 既有注释一致）——失败不写缓存时
+  同进程 E1/E2/timing 三消费方各自重试、三连撞限流（当日实测踩中）。`_hk_daily_series`
+  失败写空哨兵，消费方命中即走各自降级；`fetch_timing_material` 裸 except 改 stderr 告警
+  （参照 fetch_debt 同款），限流/取数失败不再静默吞成 None。data-sources.md /
+  data-collection.md 限流口径同步修正。
+  ③ **妙想 skill 替补通道写入降级链**：妙想 MCP（`mcp__mx-ds-mcp-stdio__mx_*`）缺席时
+  经 Skill 工具调 `mx-data`（定量）/`mx-search`（定性检索）/`mx-xuangu`（选股）替补
+  （同一东财妙想 API，密钥配在 skill 内）——SKILL.md 工具检查硬门禁改三级判定
+  （MCP → mx skill → 标注降级），data-sources.md 降级链图与妙想段、data-collection.md
+  工具探测/定性通道表/港股 E3 规则同步。
+  ④ **3.5 治理 trig 条目名定宽对齐**：`.trig-cond` 加 `flex: 0 0 7em`（≤7 字单行、
+  超长自动换行，行间 mt 列对齐——美图「大股东持续减持」7 字实证），`.trig-status`
+  加 `flex-shrink: 0`；同类族 13 章 triggers 状态条同步受益。fill-schema 补
+  「cond ≤7 字为宜」。
+  ⑤ **3.5 重点事实深色加粗**：新增 `.trig-mt strong { color:#2b2620; font-weight:700 }`
+  （灰字论据中关键事实跳出）；fill-schema 补「金额/时间窗/比例用 <strong> 包裹，
+  每块至多 1 处」。
+  另：财务健康图墙缺第 4 面板（应收+存货周转天数）经核实为**设计内行为**——港股 HKF10
+  无周转天数字段 + 互联网附录已替换应收/存货口径，不改。
+  golden 快照随模板 CSS 有意重建并逐项核验；demo 补 7 字条+strong 实证形态。
+- **补充修订四（2026-09-06，云铝股份报告 3 项版式反馈 + 1 项讨论）**：
+  ① **trig 类族卡片化（3.5 治理分块 + 13 章 triggers 状态条同源受益）**：`.trig` 单行
+  flex 改 `flex-wrap`+`order` 重排（HTML 四 span 结构不变，纯 CSS）——标题 cond 居中独占行
+  （允许两行）、dot+status 居中徽章行、论据 mt 独占行左对齐；`.trig-strip` 网格桌面 3 列、
+  ≤1024px 两列、≤768px 单列（此前移动端无回退，2 列×4 段挤压，云铝手机端实证）。
+  cond 定宽 7em（修订三）随之作废，fill-schema 3.5 条款改写。
+  ② **dash-table 移动卡片化**：≤768px 行转卡片（tr 边框圆角底色、td 块级带
+  `td::before` 列名标签，六列列序写死 CSS、手写 dash_html 结构不变）；表头手写
+  `<tr><th>` 无 thead 包裹（浏览器归入 tbody）——整行隐藏须 `tr:has(th)`；
+  卡片内 `td.num` 改左对齐、freeze-first 首列冻结解除、斑马纹清除。
+  ③ **结论四卡统一短列表化**：四卡统一 `<ul>` 短列表（每条 ≤12 字短语 + 至多一个全角括注
+  （数字/日期/来源 ≤15 字，不加类）——①关键优势恰 3 条壁垒短语（云铝：水电成本壁垒
+  不可复制/报表现金含量足/业绩弹性一落地）、②弱点 2-3 条、③市场认知恰 2 条（卖方假设
+  带来源日期+定价隐含）、④投资逻辑恰 3 条固定槽位（论点/可观测证伪条件/路径判断——
+  证伪条件是回测输入，必须完整）；`.concl-card ul` 去 bullet、加粗深色+钢蓝色点前缀。
+  结论章定位由「摘要复述」转为「记忆点+索引」，展开论述由被引章节承载。
+  结论内容地板 200→120 字（四卡短列表化后原地板误伤合规卡）。
+  ④ **3.3 护城河清单化**：复用 trig 类族（零新 CSS）——cond=护城河名称、mt=一句论据、
+  status=评级三态（绿=宽阔/灰=中等/红=狭窄）；`<p>` 恰为 2 规则与 3.5 全同。
+  ⑤ **4.3 催化剂清单化**：同款 trig 清单（事件+时间窗+影响，已发生/进行中/已证伪）——
+  与 13 章触发条件前后呼应（4.3 是预判、13 是跟踪核对）。
+  ⑥ **4.2 项目确定性可选清单**（项目名+产能/投产时间+进度三态）；单项目或进度交织的
+  标的仍可整段论证——可选形态不强制。
+  ④⑤⑥ 校验：`_check_governance_strip` 泛化覆盖 3.3/4.3（trig-strip 块 `<p>` >2 告警），
+  test_render_core 补 3.3/4.3 用例。
+  ⑦ RIM 估值（剩余收益模型）经讨论**不立第三估值方法**——四件套校验链全围绕 PE 口径，
+  平行 BVPS/ROE 口径会翻倍校验复杂度且不消除周期股常态 ROE 的主观假设；其关系式
+  PB≈(ROE−g)/(r−g) 后续可作「合理带推导器」进 scoring.md（复用 metric_label 口径替换口），
+  本轮不动。
+  测试：50 项全绿（test_render_core 增补 3.3/4.3 `<p>` 校验用例），golden 快照随模板 CSS
+  有意重建；demo 补四卡 ul 短列表、3.3 护城河/4.2 项目/4.3 催化剂清单形态，桌面（1720px）
+  + 窄屏（502px）双宽度目检通过（含 dash 移动卡片、①-④卡括注锚）。
+
 ### V4.9（2026-09-04）— 青啤复盘七项改进 + 历史欠账清理（配色翻转 + 双新图 + DCF 分型双轨 + 挂起项 28 项）
 
 青岛啤酒报告复盘（用户反馈七点，讨论定案）落地。**渲染行为变更（golden 快照已重建）**：

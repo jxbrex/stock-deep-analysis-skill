@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_cycle.py — 第 10 章（周期规律）图族（v4.10 从 charts.py 拆出）：PE 历史带（build_pe_band）/ 股价与 PE 历史发丝图（build_price_history）。依赖 charts_base 与 scoring。"""
+"""charts_cycle.py — 第 10 章（周期规律）图族（v4.9 从 charts.py 拆出）：PE 历史带（build_pe_band）/ 股价与 PE 历史发丝图（build_price_history）。依赖 charts_base 与 scoring。"""
 
 from scoring import _num, _fmt, _esc
 from charts_base import *

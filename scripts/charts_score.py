@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_score.py — 评分类图族（v4.10 从 charts.py 拆出）：06 九维评分分布横条（build_score_bars）/ 02 敏感性龙卷风（build_sensitivity_tornado）。依赖 charts_base 与 scoring。"""
+"""charts_score.py — 评分类图族（v4.9 从 charts.py 拆出）：06 九维评分分布横条（build_score_bars）/ 02 敏感性龙卷风（build_sensitivity_tornado）。依赖 charts_base 与 scoring。"""
 
 from scoring import DIMS, LAYER_NAMES, badge_class, _dim_verdict, _num, _fmt, _esc
 from charts_base import *
@@ -19,7 +19,7 @@ def build_score_bars(sc: dict) -> str:
     H = T + 9 * ROW_H + GROUP_GAP + 36
     X = _lin_map(0, 10, BAR_A, BAR_B)
     # v4.9：评分条色跟随模板徽章加深系（白字/小字 AA 对比度），与 pastel 评价色（大面积填充）区分
-    badge_color = {"badge-green": "#4d804d", "badge-orange": "#96691a", "badge-red": "#b84a4a"}
+    # （色值字典 _C_BADGE_DEEP 在 charts_base 常量区，改色只动那里）
 
     parts = ['<span class="section-tag">评分分布</span>',
              _svg_open(W, H, "九维评分分布")]
@@ -36,7 +36,7 @@ def build_score_bars(sc: dict) -> str:
             s = float(adj.get(key, 0))
             w = float(weights.get(key, 0))
             cy = y + 2
-            color = badge_color[badge_class(s)]
+            color = _C_BADGE_DEEP[badge_class(s)]
             parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{BAR_B - BAR_A}" height="{BAR_H}" rx="5" fill="{_C_TRACK}"/>')
             parts.append(f'<rect x="{BAR_A}" y="{cy}" width="{max((BAR_B - BAR_A) * s / 10.0, 3):.1f}" '
                          f'height="{BAR_H}" rx="5" fill="{color}"/>')

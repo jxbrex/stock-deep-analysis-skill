@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""monthly_checkup.py — 月度体检：到期复盘提醒 + 评分校准复跑（v4.10 方向三落地）
+"""monthly_checkup.py — 月度体检：到期复盘提醒 + 评分校准复跑（v4.9 方向三落地）
 
 用法:
     python monthly_checkup.py [报告目录]     # 默认 D:\\个股深度分析
     python monthly_checkup.py --cal          # 同时复跑 score_calibration（联网取行情）
-    python monthly_checkup.py --disclosure   # 到期/临近标的加查财报披露计划（联网 tushare，口径待实测）
+    python monthly_checkup.py --disclosure   # 到期/临近标的加查财报披露计划（联网 tushare，
+                                             # 复用 em_fetch.fetch_disclosure 的 E1 同款口径）
 
-离线主流程：扫描报告目录 → 文件名解析（公司-代码-质量分-估值分-日期.html）+ 正文抓
-「下次审查：YYYY-MM-DD」→ 同代码取最新一份 → 按到期紧急度输出待办清单。
+离线主流程：扫描报告目录 → parse_report_name 文件名解析（三代命名：新命名/带「-复盘-」回测版/
+pre-v4.0 旧 _ 分隔命名，港股 5 位代码正常识别）+ 正文抓「下次审查：YYYY-MM-DD」
+→ 同代码取最新一份 → 按到期紧急度输出待办清单。
 纪律：本脚本只输出待办与统计，不做投资判断；复盘由主模型按 backtest.md 流程执行。
 """
 import os
@@ -16,6 +18,9 @@ import re
 import subprocess
 import sys
 from datetime import date, datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from extract_review import parse_report_name  # 文件名解析唯一 owner（extract_review.py）
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -26,20 +31,18 @@ for _s in (sys.stdout, sys.stderr):
 DEFAULT_DIR = r"D:\个股深度分析"
 DUE_SOON_DAYS = 7   # 未来 7 天内到期算「临近」
 
-# 文件名：宝丰能源-600989-7.00-3.9-2026-09-02.html（公司-代码-质量分-估值分-报告日）
-_REPORT_RE = re.compile(r"^(.+)-([0-9A-Z]{4,6})-([\d.]+)-([\d.]+)-(\d{4}-\d{2}-\d{2})\.html$",
-                        re.I)
 _NEXT_REVIEW_RE = re.compile(r"下次审查[：:]\s*(?:</span>)?\s*(\d{4}-\d{2}-\d{2})")
 
 
 def scan_reports(directory: str) -> list:
-    """扫报告目录 → 每代码最新一份的锚点字典列表。"""
+    """扫报告目录 → 每代码最新一份的锚点字典列表。
+    文件名口径 = extract_review.parse_report_name（三代命名；分数为 float，旧 _ 命名
+    无估值分则 valuation=None）。"""
     latest = {}
     for fn in sorted(os.listdir(directory)):
-        m = _REPORT_RE.match(fn)
-        if not m:
+        info = parse_report_name(fn)
+        if not info:
             continue
-        company, code, quality, valuation, rdate = m.groups()
         path = os.path.join(directory, fn)
         nxt = None
         try:
@@ -55,11 +58,17 @@ def scan_reports(directory: str) -> list:
                 nxt = mm.group(1)
         except OSError:
             pass
-        if code not in latest or rdate > latest[code]["date"]:
-            latest[code] = {"company": company, "code": code, "date": rdate,
-                            "quality": quality, "valuation": valuation,
-                            "next_review": nxt, "file": fn}
+        if info["code"] not in latest or info["date"] > latest[info["code"]]["date"]:
+            latest[info["code"]] = {"company": info["company"], "code": info["code"],
+                                    "date": info["date"], "quality": info["quality"],
+                                    "valuation": info["valuation"],
+                                    "next_review": nxt, "file": fn}
     return list(latest.values())
+
+
+def _fmt_score(v) -> str:
+    """分数显示：None（旧 _ 命名无估值分等）→ —；float 去尾零。"""
+    return "—" if v is None else f"{v:g}"
 
 
 def _parse_d(s):
@@ -88,21 +97,21 @@ def main():
             overdue.append((nd, r))
         elif (nd - today).days <= DUE_SOON_DAYS:
             due_soon.append((nd, r))
-    overdue.sort()
-    due_soon.sort()
+    overdue.sort(key=lambda t: t[0])   # 只看审查日：并列时比到 dict 会 TypeError
+    due_soon.sort(key=lambda t: t[0])
 
     print(f"月度体检 {today} ｜ 报告目录 {directory} ｜ 覆盖 {len(rows)} 只标的")
     print("=" * 72)
     if overdue:
         print(f"\n■ 已到期（{len(overdue)}）——应进入回测复盘流程（SKILL.md 同股再分析）")
         for nd, r in overdue:
-            print(f"  {r['company']}（{r['code']}）报告 {r['date']} ｜ 质量 {r['quality']} / "
-                  f"估值 {r['valuation']} ｜ 审查日 {nd} 已过期 {(today - nd).days} 天")
+            print(f"  {r['company']}（{r['code']}）报告 {r['date']} ｜ 质量 {_fmt_score(r['quality'])} / "
+                  f"估值 {_fmt_score(r['valuation'])} ｜ 审查日 {nd} 已过期 {(today - nd).days} 天")
     if due_soon:
         print(f"\n■ {DUE_SOON_DAYS} 天内临近（{len(due_soon)}）")
         for nd, r in due_soon:
-            print(f"  {r['company']}（{r['code']}）报告 {r['date']} ｜ 质量 {r['quality']} / "
-                  f"估值 {r['valuation']} ｜ 审查日 {nd}（{(nd - today).days} 天后）")
+            print(f"  {r['company']}（{r['code']}）报告 {r['date']} ｜ 质量 {_fmt_score(r['quality'])} / "
+                  f"估值 {_fmt_score(r['valuation'])} ｜ 审查日 {nd}（{(nd - today).days} 天后）")
     if no_anchor:
         print(f"\n□ 缺下次审查锚点（{len(no_anchor)}）——旧版报告或提取失败")
         for r in no_anchor:
@@ -113,20 +122,26 @@ def main():
         print("目录内无符合命名规范的报告文件。")
 
     if "--disclosure" in flags and (overdue or due_soon):
-        # 增量功能：tushare disclosure_date 拉财报披露计划（口径待实测校准）
+        # tushare disclosure_date 拉财报披露计划，复用 em_fetch.fetch_disclosure
+        # （E1 同款口径：to_ts_code 市场映射 6 位→.SH/.SZ、北交所 43/83/87/88/92→.BJ；
+        # 按报告期倒序，优先取未实际披露且有计划日期的最近报告期）
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         try:
             import em_fetch as em
             print("\n■ 财报披露计划（到期/临近标的）")
             for nd, r in overdue + due_soon:
-                ts = r["code"] + (".SH" if r["code"].startswith("6") else ".SZ")
+                if len(r["code"]) == 5:
+                    print(f"  {r['company']}（{r['code']}）港股：tushare disclosure_date "
+                          f"仅覆盖沪深，跳过（请按港交所披露易手工查）")
+                    continue
                 try:
-                    rows_d = em.ts_call("disclosure_date", {"ts_code": ts,
-                                                            "end_date": f"{today.year}1231"})
-                    if rows_d:
-                        latest = rows_d[0]
-                        print(f"  {r['company']}（{r['code']}）计划披露 {latest.get('pre_date', '?')}"
-                              f"（实际 {latest.get('actual_date') or '—'}）")
+                    disc = em.fetch_disclosure(r["code"])
+                    if disc and disc.get("实际披露"):
+                        print(f"  {r['company']}（{r['code']}）{disc['报告期']} "
+                              f"已于 {disc['实际披露']} 实际披露（计划 {disc.get('计划披露') or '—'}）")
+                    elif disc:
+                        print(f"  {r['company']}（{r['code']}）{disc['报告期']} "
+                              f"计划披露 {disc['计划披露']}（未披露）")
                     else:
                         print(f"  {r['company']}（{r['code']}）未查到披露计划")
                 except Exception as e:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_misc.py — 其余图族（v4.10 从 charts.py 拆出）：4.1 利润增长图（build_growth_plot，含 4 章锚点注入 _inject_l3_charts）/ 11 股东户数趋势（build_holders_plot）/ 12 回测哑铃（build_review_dumbbell）。依赖 charts_base 与 scoring。"""
+"""charts_misc.py — 其余图族（v4.9 从 charts.py 拆出）：4.1 利润增长图（build_growth_plot，含 4 章锚点注入 _inject_l3_charts）/ 11 股东户数趋势（build_holders_plot）/ 12 回测哑铃（build_review_dumbbell）。依赖 charts_base 与 scoring。"""
 
 import sys
 
@@ -103,7 +103,7 @@ def build_growth_plot(fill: dict) -> str:
             parts.append(f'<polygon points="{cx:.1f},{gy - 7:.1f} {cx + 7:.1f},{gy:.1f} {cx:.1f},{gy + 7:.1f} '
                          f'{cx - 7:.1f},{gy:.1f}" fill="{_C_BLACK}"/>')
             parts.append(f'<text x="{cx + 10:.1f}" y="{gy - 9:.1f}" font-size="10" '
-                         f'stroke="#f7f2e7" stroke-width="3" paint-order="stroke" '
+                         f'stroke="{_C_PAPER_CELL}" stroke-width="3" paint-order="stroke" '
                          f'fill="{_C_BLACK}">一致 {_s(g["cons"])}</text>')
             d = (g["lo"] + g["hi"]) / 2 - g["cons"]
             diffs.append(f'{_esc(g["y"])} {d:+.1f}pct')
@@ -172,13 +172,7 @@ def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) 
     连线带箭头（方向=上版→本版），绿=上调、红=下调，右列=分差。prev 为空 → 返回空串。"""
     if not prev:
         return ""
-    rows = []
-    for label, old, new in (("质量分", _num(prev.get("quality", prev.get("research"))), quality),
-                            ("估值分", _num(prev.get("valuation")), valuation),
-                            ("时机分", _num(prev.get("timing")), timing)):
-        if old is None or new is None:
-            continue
-        rows.append({"label": label, "old": old, "new": float(new)})
+    rows = _prev_track_rows(prev, quality, valuation, timing)
     if not rows:
         return ""
     W, NL, BAR_A, BAR_B = 1000, 110, 140, 890
@@ -191,7 +185,7 @@ def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) 
     for i, r in enumerate(rows):
         cy = T + i * ROW_H + ROW_H / 2 - 6
         xo, xn = X(r["old"]), X(r["new"])
-        d = r["new"] - r["old"]
+        d = r["d"]
         dcolor = _C_GREEN if d >= 0 else _C_RED
         # v4.8.1：连线末端加箭头（方向=上版→本版，直观看出分数升/降）；两点过近时不画
         s = 1 if xn >= xo else -1
@@ -235,7 +229,7 @@ _TRIG_STATUS = {"hit": ("已兑现", "hit"), "miss": ("未兑现", "miss"), "pen
 
 
 def build_triggers_strip(fill: dict) -> str:
-    """13 跟踪仪表盘·触发条件状态条（fill["triggers"] 可选字段，v4.10）：
+    """13 跟踪仪表盘·触发条件状态条（fill["triggers"] 可选字段，v4.9）：
     把 dash 触发条件结构化为状态条，垫在手写 dash_html 前。评价语义色：hit=绿 / miss=红 / pending=灰。
     triggers: [{"cond":"提价兑现","metric":"26H2 毛利率","target":"≥46%","status":"hit"}, ...]
     （status 三值：hit 已兑现 / miss 未兑现 / pending 待验证——首版报告全部 pending，

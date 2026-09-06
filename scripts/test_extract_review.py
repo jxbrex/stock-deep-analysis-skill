@@ -100,7 +100,7 @@ def test_extract_date_no_topbar():
 
 
 def test_find_tail_sniff_large_file():
-    """v4.10 大 HTML 只读头尾判定：>8KB 报告（渲染标记在文件末尾 </body> 前）仍能命中。"""
+    """v4.9 大 HTML 只读头尾判定：>8KB 报告（渲染标记在文件末尾 </body> 前）仍能命中。"""
     with tempfile.TemporaryDirectory() as d:
         # 中部用纯 ASCII 填充把文件撑过 8KB，MARK 仍在文件末尾（渲染标记固定在尾部）——头尾读取必须命中
         big = "x" * 40000 + FAKE_REPORT
@@ -111,10 +111,48 @@ def test_find_tail_sniff_large_file():
     print("OK find_prev_report 大文件（头尾读取命中尾部渲染标记）")
 
 
+def test_parse_report_name():
+    """文件名解析唯一 owner 的三代命名口径（score_calibration/monthly_checkup 复用本函数）。"""
+    # 新命名：公司-代码-质量分-估值分-日期
+    r = E.parse_report_name("宝丰能源-600989-7.00-3.9-2026-09-02.html")
+    assert r == {"company": "宝丰能源", "code": "600989", "quality": 7.0,
+                 "valuation": 3.9, "date": "2026-09-02", "is_review": False}
+    # 回测版：带「-复盘-」段
+    r = E.parse_report_name("万华化学-600309-6.74-7.4-复盘-2026-08-26.html")
+    assert r["is_review"] is True and r["code"] == "600309" and r["date"] == "2026-08-26"
+    # 旧 _ 分隔命名（pre-v4.0 单轨综合分）：valuation=None，is_review=False
+    r = E.parse_report_name("中国神华_601088_6.72_2026-08-07.html")
+    assert r["code"] == "601088" and r["quality"] == 6.72
+    assert r["valuation"] is None and r["is_review"] is False
+    # 港股 5 位代码前导零保留；北交所 92 段 6 位正常
+    assert E.parse_report_name("腾讯控股-00700-6.93-8.2-复盘-2026-08-23.html")["code"] == "00700"
+    assert E.parse_report_name("北证样本-920982-5.0-6.0-2026-08-01.html")["code"] == "920982"
+    # 边界：无日期 / 非报告 / 新命名缺一个分数段 → None
+    assert E.parse_report_name("无日期-600989-6.0-5.0.html") is None
+    assert E.parse_report_name("随手笔记.html") is None
+    assert E.parse_report_name("测试股份-600000-无日期.html") is None
+    assert E.parse_report_name("公司-600989-7.0-2026-08-01.html") is None
+    # 接受路径入参（取 basename）
+    r = E.parse_report_name(os.path.join("dir", "中兴通讯-000063-4.92-2.3-2026-08-24.html"))
+    assert r["code"] == "000063" and r["date"] == "2026-08-24"
+    print("OK parse_report_name（三代命名 + 港股/北交所 + 边界排除 + 路径入参）")
+
+
+def test_find_prev_report_legacy_naming():
+    """旧 _ 分隔命名（pre-v4.0）经统一解析口径后也参与回测触发匹配。"""
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "中国神华_601088_6.72_2026-08-07.html", FAKE_REPORT)
+        assert E.find_prev_report("601088", d) == p, "旧 _ 命名带标记应命中"
+        assert E.find_prev_report("00700", d) is None, "代码不一致不命中"
+    print("OK find_prev_report 旧 _ 命名（合并口径后覆盖旧一代报告）")
+
+
 if __name__ == "__main__":
+    test_parse_report_name()
     test_find_prev_report()
+    test_find_prev_report_legacy_naming()
     test_find_include_unmarked()
     test_extract_anchors()
     test_extract_date_no_topbar()
     test_find_tail_sniff_large_file()
-    print("全部 5 项测试通过")
+    print("全部 7 项测试通过")

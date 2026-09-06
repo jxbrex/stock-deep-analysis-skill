@@ -16,13 +16,13 @@
 - 校准结论需要 30+ 独立样本且持有期对齐；本表是描述性起点，每月复跑一次积累样本。
 """
 import os
-import re
 import sys
 import time
-from datetime import date, datetime
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import extract_review as E
+from extract_review import parse_report_name  # 文件名解析唯一 owner（合并口径）
 import em_fetch as em
 
 for _s in (sys.stdout, sys.stderr):
@@ -52,27 +52,16 @@ def bucket_of(v, buckets):
     return None
 
 
-def parse_filename(fn: str):
-    """文件名兜底提取 (code, date)：支持 -分隔与 _ 分隔两代命名。无标记/旧版报告也能取到。"""
-    m = re.search(r"-(\d{5,6})-[\d.]+-[\d.]+-(?:复盘-)?(\d{4}-\d{2}-\d{2})\.html$", fn)
-    if m:
-        return m.group(1), m.group(2)
-    m = re.search(r"_(\d{5,6})_[\d.]+_(\d{4}-\d{2}-\d{2})\.html$", fn)
-    if m:
-        return m.group(1), m.group(2)
-    return None
-
-
 def collect_reports(directory: str) -> list:
     """扫描目录 → [{path, code, rep_date, quality, valuation, timing, price}]。提取失败的跳过并告警。"""
     reps = []
     for fn in sorted(os.listdir(directory)):
         if not fn.lower().endswith(".html"):
             continue
-        fa = parse_filename(fn)
-        if not fa:
+        info = parse_report_name(fn)
+        if not info:
             continue
-        code, rep_date = fa
+        code, rep_date = info["code"], info["date"]
         path = os.path.join(directory, fn)
         try:
             ext = E.extract(path)
@@ -83,17 +72,15 @@ def collect_reports(directory: str) -> list:
         q, v = prev.get("quality"), prev.get("valuation")
         code = (ext.get("code") or code).split(".")[0]  # 归一：剥掉 .SH/.SZ 后缀
         if q is None and v is None:
-            # 旧版单轨报告（pre-v4.0）：无三轨分——取文件名代码后第一个分数作质量分近似
+            # 旧版单轨报告（pre-v4.0）：无三轨分——取文件名首分作质量分近似
             # （_ 分隔格式那是综合分，- 分隔双分格式第一个是质量分），入明细但不入桶
-            m3 = re.search(r"[_-]\d{5,6}[_-]([\d.]+)(?:[_-][\d.]+)?[_-](?:复盘-)?"
-                           r"\d{4}-\d{2}-\d{2}\.html$", fn)
-            if not m3:
+            if info["quality"] is None:
                 print(f"跳过 {fn}（未提取到三轨分，旧版单轨报告）", file=sys.stderr)
                 continue
             reps.append({"file": fn, "code": code,
                          "company": ext.get("company") or fn,
                          "rep_date": prev.get("date") or rep_date,
-                         "quality": float(m3.group(1)), "valuation": None, "timing": None,
+                         "quality": info["quality"], "valuation": None, "timing": None,
                          "price": ext.get("price"), "legacy": True})
             continue
         reps.append({"file": fn, "code": code,
@@ -119,8 +106,7 @@ def _ts(api_name: str, params: dict) -> list:
 def _em_kline_daily(secid: str, start: str, end: str) -> list:
     """东财日 K（klt=101, fqt=1 前复权）→ [{trade_date, adj_close}]。
     港股日线走此通道（tushare hk_daily 限 1次/小时，批量校准不可用）。"""
-    url = (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
-           f"&fields1=f1,f2,f3&fields2=f51,f53&klt=101&fqt=1&beg={start}&end={end}")
+    url = em._em_kline_url(secid, 101, start, end)
     d = em.get(url).get("data") or {}
     return [{"trade_date": k.split(",")[0].replace("-", ""), "adj_close": float(k.split(",")[1])}
             for k in (d.get("klines") or [])]

@@ -342,15 +342,12 @@ def _ttm_cutoff(today: date = None) -> str:
     return ((today or date.today()) - timedelta(days=365)).strftime("%Y%m%d")
 
 # ---------------- 取数函数族 re-export（em_data.py） ----------------
-# 从子模块 re-export 全部被测试（import em_fetch as em 按名访问）与主流程输出组装
-# 用到的符号；ts_call/get 绝不在此覆盖（宿主版本是测试 rebind 的目标）。
+# 从子模块 re-export 供宿主函数体与 test_em_fetch（import em_fetch as em 按名访问）
+# 实际消费的名字，历史上面向"全量门面"的纯挂名已收窄；
+# ts_call/get 绝不在此覆盖（宿主版本是测试 rebind 的目标）。
 from em_data import (  # noqa: E402,F401
-    _EM_F10_CACHE, _EM_F10_PAGE, _HK_DAILY_CACHE, _A_DAILY_CACHE, _RF_CACHE,
-    _em_quote, _daily_basic_latest, _em_kline_monthly, _em_f10, _f10_is_annual,
-    _pick_latest_per_period, _ts_annual_fetch_3, _ts_annual_em_map, _compose_annual_row,
-    _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows, _em_hkf10_annual_rows,
-    _em_holders, _em_consensus, _em_mainop, _mainop_norm_em, _em_dc,
-    _hk_daily_series, _a_daily_series,
+    _em_quote, _em_kline_url, _em_f10,
+    _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows,
     fetch_pe_pb_band, fetch_forecast_express, fetch_forensic, fetch_governance,
     fetch_disclosure, fetch_quote, fetch_kline_monthly, fetch_holders, fetch_consensus,
     fetch_mainop, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_timing_material,
@@ -579,10 +576,11 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
         out.append("## E3 财务年表\n[tushare 与东财均失败，按降级链走妙想 mx_ashare_finance_data 直查]\n")
     else:
         out.append("## E3 财务年表（年报）\n"
-                   "报告期 | 营收亿 | 归母净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
+                   "报告期 | 营收亿 | 归母净利亿 | 扣非净利亿 | 同比% | ROE% | 毛利率% | 净利率% | 负债率% | 经营现金流亿 | 现金含量")
         for r in annual:
             out.append(f"{r.get('REPORT_DATE_NAME')} | {yi(r.get('TOTALOPERATEREVE'))} | "
-                       f"{yi(r.get('PARENTNETPROFIT'))} | {yoy_text(r.get('PARENTNETPROFITTZ'))} | "
+                       f"{yi(r.get('PARENTNETPROFIT'))} | {yi(r.get('KCFJCXSYJLR'))} | "
+                       f"{yoy_text(r.get('PARENTNETPROFITTZ'))} | "
                        f"{pct(r.get('ROEJQ'))} | {pct(r.get('XSMLL'))} | {pct(r.get('XSJLL'))} | "
                        f"{pct(r.get('ZCFZL'))} | {yi(r.get('NETCASH_OPERATE_PK'))} | "
                        f"{(str(round(r['NCO_NETPROFIT'], 2)) if r.get('NCO_NETPROFIT') is not None else '—')}")
@@ -594,6 +592,15 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
     if capex_bits:
         out.append("资本开支（购建固定资产/无形资产等支付现金，DCF capex 直接取此口径）: "
                    + " ｜ ".join(capex_bits) + "\n")
+    # 周转天数逐年行（旧→新，v4.9.1）：fin_trend 应收/存货周转天数面板照抄本行
+    def _d0(v):
+        return str(round(v)) if v is not None else "—"
+    turnover_bits = [f"{r['REPORT_DATE_NAME']} 应收{_d0(r.get('YSZKZZTS'))}/存货{_d0(r.get('CHZZTS'))}"
+                     for r in reversed(annual)
+                     if r.get("YSZKZZTS") is not None or r.get("CHZZTS") is not None]
+    if turnover_bits:
+        out.append("周转天数（应收/存货，天；旧→新，fin_trend 周转天数面板照抄本行）: "
+                   + " ｜ ".join(turnover_bits) + "\n")
     # 有息负债（tushare balancesheet 最新报告期；短债=短期借款+一年内到期非流动负债，
     # 长债=长期借款+应付债券；短债覆盖=货币资金÷短债，分母 0 显示「无短债」）
     debt = fetch_debt(pure)

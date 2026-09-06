@@ -17,7 +17,7 @@ python "<技能目录>\scripts\em_fetch.py" [代码] --peers=[peer1],[peer2],[pe
 # 例: python "<技能目录>\scripts\em_fetch.py" 600989 --peers=600309,002001
 ```
 
-**妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp-stdio__mx_*` 在工具列表，脚本盲区/增强项）：
+**妙想 MCP 直调补充**（如 `mcp__mx-ds-mcp-stdio__mx_*` 在工具列表，脚本盲区/增强项；**MCP 缺席时改用 Skill 工具调 `mx-data` skill**，同一东财妙想 API，下列定量查询等价适用）：
 - **筹码分布（筹码面）**：tushare `cyq_*` 无权限 → `mx_ashare_finance_data(query="[公司] 最新获利比例、90%成本区间、平均成本、筹码集中度")`（实测返回平均成本/集中度）
 - **行业估值水位（2A）**：`mx_index_block_finance_data(query="[申万煤炭/对应行业] 最新 PE PB 及历史分位")`——从"跟自己历史比"升级为"跟行业当前比"
 - **大宗商品价格（P0 第一变量）**：`mx_macro_data(query="[动力煤/布伦特原油/对应品种] 最新价格及近30日走势")`
@@ -34,7 +34,7 @@ cmd 下用 `dir /s`），修正路径后重跑。**禁止因路径问题放弃�
 脚本一次输出：E1 行情估值（A股附 PE/PB 5年带与当前分位、PE P25-P75 分位区、下次财报披露计划日、
 **时机素材一行**：现价/MA60/MA120/52 周高低，全部日线序列计算并随 `--out` 落盘 `timing` 字段——
 **11 章时机判定小表的技术面信号一律取自落盘 `timing`，禁止手估**（神华假 MA60 同源修复））、
-E3 五年财务年表+红旗四项判定（三态输出，判定口径见 scoring.md「1D 盈利质量红旗清单」）+ 有息负债与短债覆盖行、
+E3 五年财务年表（v4.9.1 起含扣非净利列与应收/存货周转天数逐年行——分别回填 fin_trend 归母净利+扣非双柱面板与周转天数纯线面板）+红旗四项判定（三态输出，判定口径见 scoring.md「1D 盈利质量红旗清单」）+ 有息负债与短债覆盖行、
 审计意见 tushare 自动填（供 L4 红灯 a 判定）、
 E2 月线区间、E4 股东户数（回填 `holders` 图字段）、业绩预告/快报、1E 治理包（质押/增减持/回购）、
 E5 一致预期+目标价（目标价区间回填 `consensus` 图字段）、
@@ -52,10 +52,13 @@ E6 主营构成（含**毛利额与毛利占比**，回填 `segments` 图字段�
   估算或旧报告数值补任何行情类数字（think 里出现「输出被截断」字样而未重跑 = 违规）。
 **港股（5位数字代码，如 01880/06082）**：脚本自动识别 → secid 切 `116.` 前缀、
 价格 ÷1000、K线按真实价；E1/E2 直接可用（tushare hk_daily 缓存复用绕限流）。
-**禁止直调 tushare MCP 的 `hk_daily`**——MCP 通道限流 1 次/**小时**（40203 实测），
-港股日线/K线一律走 em_fetch.py（脚本 HTTP 通道 1 次/分钟+缓存）或妙想 MCP `mx_hk_finance_data`。
+**禁止直调 tushare MCP 的 `hk_daily`**——两通道限流同为 1 次/**小时**（2026-09-06 复测），
+港股日线/K线一律走 em_fetch.py（脚本 HTTP 通道 + 磁盘缓存 2h，同报告内 E1/E2/timing 共用一次拉取；
+进程内首调失败写哨兵，后续消费方直接走降级不再重试）或妙想 `mx_hk_finance_data`
+（MCP 缺席时 `mx-data` skill 替补）。
 **E3 港股财务：优先妙想 MCP `mx_hk_finance_data` 直查**（自然语言查询，如
-"壁仞科技(06082.HK) 2024年报和2025中报：营业总收入、归母净利、毛利率、ROE"，实测可用）；
+"壁仞科技(06082.HK) 2024年报和2025中报：营业总收入、归母净利、毛利率、ROE"，实测可用；
+MCP 缺席时经 `mx-data` skill 同义查询）；
 妙想不可用再按 `data-sources.md` 港股手册手工 curl HKF10。
 E4/E5/E6 输出"港股不支持"。**不要手工探测 secid——脚本已内置。**
 
@@ -65,8 +68,10 @@ E4/E5/E6 输出"港股不支持"。**不要手工探测 secid——脚本已内�
 
 1. WebSearch 是否在工具列表里？（不是"试了失败"——是列表里有没有）
 2. 妙想 MCP 工具（`mcp__mx-ds-mcp-stdio__mx_*`）是否在工具列表里？（定性检索与港股财务的关键通道）
-   缺席时：定性检索/筹码分布/行业估值水位走降级链，且必须在报告显式标注「妙想 MCP 缺席，
-   已走降级路径」（呼应 SKILL.md Phase 1 工具检查硬门禁，禁止静默跳过）
+   缺席再查 skill 列表是否含 `mx-data`/`mx-search`（同一东财妙想 API 的 skill 替补：定量查数 mx-data、
+   定性检索 mx-search、选股筛选 mx-xuangu）；两级均缺席时：定性检索/筹码分布/行业估值水位走降级链，
+   且必须在报告显式标注「妙想 MCP 缺席，已走降级路径」（呼应 SKILL.md Phase 1 工具检查硬门禁，
+   禁止静默跳过）
 3. curl 可用？（`curl --version` 0.3 秒即知）
 4. python 可用？（脚本是否跑通即知）
 
@@ -83,7 +88,7 @@ E4/E5/E6 输出"港股不支持"。**不要手工探测 secid——脚本已内�
 | 环境 | 定性搜索主路径 | 顺序 |
 |------|---------------|------|
 | **有 WebSearch** | WebSearch 工具 | 定性搜索主入口，搜索页一律禁用 |
-| **有妙想 MCP**（`mcp__mx-ds-mcp-stdio__mx_*` 在工具列表） | ① `mx_finance_search_news`（新闻/研报观点/评级/目标价，返回标题+摘要+来源+链接）<br>② `mx_finance_search_notice`（公告/年报原文，审计意见/重大事项） | 无 WebSearch 时的**定性首选**，检索质量高于 E7（实测） |
+| **有妙想 MCP**（`mcp__mx-ds-mcp-stdio__mx_*` 在工具列表；缺席时 `mx-search` skill 替补，同一 API） | ① `mx_finance_search_news`（新闻/研报观点/评级/目标价，返回标题+摘要+来源+链接）<br>② `mx_finance_search_notice`（公告/年报原文，审计意见/重大事项） | 无 WebSearch 时的**定性首选**，检索质量高于 E7（实测） |
 | **前两者都无** | ① `em_fetch.py --search` 调东财 E7 站内搜索（结构化 JSON）<br>② WebFetch 抓**已知 URL**的结构化页面：10jqka basic 四页（company/operate/holder/event）、巨潮公告、东财研报页 | E7 + 已知 URL；搜索页是最后手段 |
 
 **通用硬规则（不分环境）：**
@@ -214,4 +219,5 @@ E5 已给出一致 EPS 和目标价（档位B）。若要升级档位A（具体�
 - [ ] Sell-side estimates: 一致盈利预测（2026E/2027E净利）、一致目标价、关键假设（如有，必须带来源） — **E5**（档位B）+ 定性搜索（档位A）
 
 > 注：清单中的"定性搜索"指 Step 1.1 的环境自适应路径——有 WebSearch 用 WebSearch，
-> 有妙想 MCP 用 mx_finance_search_news/notice，都无则 E7 + 10jqka 已知 URL，不要写死工具名。
+> 有妙想 MCP 用 mx_finance_search_news/notice（MCP 缺席时 `mx-search` skill 替补），
+> 都无则 E7 + 10jqka 已知 URL，不要写死工具名。

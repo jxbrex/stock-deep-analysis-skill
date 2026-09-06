@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_base.py — SVG 图表基座（v4.10 从 charts.py 拆出）
+"""charts_base.py — SVG 图表基座（v4.9 从 charts.py 拆出）
 
-内容：全站图表共用色板常量（_C_*）、数值/格式/几何工具（_fmt_price/_fmt_amt/_pad_domain/_lin_map/_text_w/_wrap_label/_ticks）、情景字典（_SCENARIO_COLORS/_SCENARIO_NAMES）与 SVG 骨架 helper（_SVG_STYLE/_svg_open/_svg_close/_vgrid_ticks/_anchor_fit/_anchor_clamp）。只依赖 scoring（_fmt），被各图族模块与 charts.py 壳导入。"""
+内容：全站图表共用色板常量（_C_*，含模板 .mini-cell 底色 _C_PAPER_CELL 与徽章深色字典
+_C_BADGE_DEEP）、数值/格式/几何工具（_fmt_price/_fmt_amt/_pad_domain/_lin_map/_text_w/_wrap_label/_ticks）、
+情景字典（_SCENARIO_COLORS/_SCENARIO_NAMES）、SVG 骨架 helper（_SVG_STYLE/_svg_open/_svg_close/
+_vgrid_ticks/_anchor_fit/_anchor_clamp）与回测新旧对比共享行（_prev_track_rows）。
+只依赖 scoring，被各图族模块与 validate.py 导入。"""
 
 import math
-import sys
 
-from scoring import _fmt
+from scoring import _fmt, _num
 
 # SVG 色板（全站图表共用暖灰/钢蓝色系，唯一权威处；改色只动这里）
 _C_LABEL = "#6f695e"       # 轴刻度/灰字说明/虚线时点刻（v4.9 自 #8a8375 压深，小字对比度达标）
@@ -22,12 +25,15 @@ _C_OLIVE = "#66604f"       # 散点图非目标点
 _C_SAND = "#b3ab93"        # 暖沙：历史柱/连线曲线/中轴/图例块
 _C_SAND_LT = "#ddd3bd"     # 浅沙：分带虚线/分位段
 _C_TRACK = "#efe9db"       # 条底轨道/历史带底/面积填充
+_C_PAPER_CELL = "#f7f2e7"  # 米纸格底：与模板 .mini-cell 底色一致（文字光晕描边 paint-order 防叠字）
 _C_GOOD_LINE = "#c9bfa8"   # 7.0 良好线虚线
 _C_YEAR_GRID = "#f0ebdf"   # 发丝图年份竖网格
 # 评价色（好坏语义，绿好红坏不变）；股价涨跌方向色走模板 .up/.down（v4.9 起红涨绿跌）
 _C_GREEN = "#6ba86b"       # 绿（评价）：有利/上调/乐观/质量好
 _C_RED = "#c75b5b"         # 红（评价）：不利/下调/悲观/质量差
 _C_ORANGE = "#c08a2e"      # 橙：中档/基础情景
+# 徽章深色字典（跟随模板 .badge-* 加深系：白字/小字 AA 对比度；评分条色用，与 pastel 评价色区分）
+_C_BADGE_DEEP = {"badge-green": "#4d804d", "badge-orange": "#96691a", "badge-red": "#b84a4a"}
 
 
 def _fmt_price(v):
@@ -46,6 +52,20 @@ def _fmt_amt(v) -> str:
 
 _SCENARIO_COLORS = {"pess": _C_RED, "base": _C_ORANGE, "opt": _C_GREEN}
 _SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
+
+
+def _prev_track_rows(prev: dict, quality, valuation, timing) -> list:
+    """回测三轨分新旧对比共享行（build_prev_strip 与 build_review_dumbbell 同一口径）：
+    旧版 prev 键 research 自动映射 quality（兼容旧回测数据）；_num 解析、新旧均有效才入行；
+    d=新−旧（≥0 上调=好/绿，<0 下调=坏/红）——呈现映射（CSS 类 good/bad 与 SVG 色）由调用方各自完成。"""
+    rows = []
+    for label, old, new in (("质量分", _num(prev.get("quality", prev.get("research"))), quality),
+                            ("估值分", _num(prev.get("valuation")), valuation),
+                            ("时机分", _num(prev.get("timing")), timing)):
+        if old is None or new is None:
+            continue
+        rows.append({"label": label, "old": old, "new": float(new), "d": float(new) - old})
+    return rows
 
 
 def _pad_domain(lo: float, hi: float, ratio: float, floor=None):
@@ -148,12 +168,12 @@ def _anchor_clamp(x: float, w: float, lo: float, hi: float):
 
 
 # 供图族模块 `from charts_base import *` 拉取全部基座符号（含下划线名，
-# 免逐名漏列——v4.10 拆分初版曾漏 _C_INK 致 NameError）
+# 免逐名漏列——v4.9 拆分初版曾漏 _C_INK 致 NameError）
 __all__ = [
     "_C_LABEL", "_C_GRID", "_C_AXIS", "_C_BLUE", "_C_PAPER", "_C_INK", "_C_BLACK",
-    "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_GOOD_LINE",
-    "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE",
-    "_fmt_price", "_fmt_amt", "_SCENARIO_COLORS", "_SCENARIO_NAMES",
+    "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_PAPER_CELL",
+    "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
+    "_fmt_price", "_fmt_amt", "_SCENARIO_COLORS", "_SCENARIO_NAMES", "_prev_track_rows",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_anchor_fit", "_anchor_clamp",
 ]

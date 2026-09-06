@@ -306,6 +306,41 @@ finally:
     em.ts_call = _orig_ts9
 print("9. PE 带 P25/P75 + 时机素材 通过")
 
+# ---------------- 9b. 港股日线倒序回归（v4.9.1 补充修订三） ----------------
+# tushare hk_daily 返回倒序（新→旧），_hk_daily_series 缓存前统一升序；否则 timing 的
+# MA60/52周窗口吃到最旧数据（美图 01357 实证：MA60/52周高低算在 2020 年数据上）。
+import em_data as _emd
+_orig_ts9b = em.ts_call
+try:
+    # 300 个交易日 close=1..300 递增（日期升序时），按 tushare 真实形态倒序（新→旧）给出
+    rows_hk = [{"trade_date": f"2026{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "close": float(i + 1)}
+               for i in range(300)][::-1]
+    em.ts_call = lambda api, params=None, fields="": rows_hk if api == "hk_daily" else []
+    _emd._HK_DAILY_CACHE.pop("01357.HK", None)
+    tm = em.fetch_timing_material("01357", True)
+    assert tm["ma60"] == 270.5 and tm["ma120"] == 240.5, f"倒序未纠：实际 {tm}"
+    assert tm["high_52w"] == 300.0 and tm["low_52w"] == 51.0, f"52周窗口=最新250个交易日，实际 {tm}"
+    assert tm["price"] == 300.0 and tm["n"] == 300
+    # 升序不破坏既有消费方：月线聚合仍取每月最后交易日收盘，输出升序
+    km = em.fetch_kline_monthly("116.01357", 1, True)
+    assert km[-1]["close"] == 300.0 and km[0]["date"] < km[-1]["date"], f"实际 {km[:1]}…{km[-1:]}"
+    # 失败哨兵：ts_call 抛异常 → 进程内后续调用不再发网络（1次/小时限流下三连撞防护，
+    # 2026-09-06 美图 01357 实测：首调限流后 E2/timing 重试全撞墙）
+    calls = []
+    def _boom(api, params=None, fields=""):
+        calls.append(api)
+        raise RuntimeError("频率超限")
+    em.ts_call = _boom
+    _emd._HK_DAILY_CACHE.pop("99999.HK", None)
+    assert em.fetch_timing_material("99999", True) is None
+    assert em.fetch_timing_material("99999", True) is None
+    assert calls == ["hk_daily"], f"哨兵未生效：{calls}"
+finally:
+    em.ts_call = _orig_ts9b
+    _emd._HK_DAILY_CACHE.pop("01357.HK", None)
+    _emd._HK_DAILY_CACHE.pop("99999.HK", None)
+print("9b. 港股日线倒序回归 + 失败哨兵 通过")
+
 # ---------------- 10. E2 月线月末 PE(TTM) 回填（无网络，mock ts_call） ----------------
 # v4.8.1：fetch_kline_monthly A股 tushare 路径按月附 pe（月末交易日 pe_ttm，与 PE 带同参命中缓存）；
 # daily_basic 不可用 → 静默降级为仅 close（price_history 图自动只画股价线）

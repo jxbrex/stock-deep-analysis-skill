@@ -10,8 +10,6 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report
 
-SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
-
 
 def _fixture(valuation, valuation_inputs, thesis_prices):
     pess, base, opt = thesis_prices

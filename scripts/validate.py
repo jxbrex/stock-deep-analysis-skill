@@ -4,15 +4,15 @@
 
 内容：全部 _check_* 硬校验与告警项、validate_content 总开关、
 _tag_timing_table（时机小表自动补类）、_check_l4_order（黄灯四类顺序）、
-build_prev_strip（回测 Hero 对比条）。只依赖 scoring/charts 的常量与工具，
+build_prev_strip（回测 Hero 对比条）。只依赖 scoring/charts_base 的常量与工具，
 不依赖主模块运行时状态；告警直接打印 stderr（与拆分前行为一致）。
 """
 import json
 import re
 import sys
 
-from scoring import DIMS, _esc, _scenario_numbers
-from charts import _num, _fmt, _SCENARIO_NAMES
+from scoring import DIMS, _esc, _num, _fmt, _scenario_numbers
+from charts_base import _SCENARIO_NAMES, _prev_track_rows
 
 
 def _plain_text(frag: str) -> str:
@@ -175,12 +175,13 @@ def _check_chart_fields(fill: dict) -> None:
         lines_ok = [ln for ln in p.get("lines") or []
                     if ln.get("name") and len(ln.get("values") or []) == len(years)
                     and all(_num(v) is not None for v in ln.get("values") or [])]
-        if bars_ok and lines_ok:
+        if bars_ok or lines_ok:
             ok.append(p)
     if len(ok) < 3:
-        raise ValueError(f"fin_trend.panels 有效面板 {len(ok)} < 3（标准 4 面板：营收×毛利率 / "
-                         f"归母净利×净利率×ROE / 经营现金流+自由现金流×现金含量（阈值0.7) / "
-                         f"货币资金×短债覆盖率；每面板需 bars(1-2) + ≥1 条线，values 与 years 等长且全为数字）")
+        raise ValueError(f"fin_trend.panels 有效面板 {len(ok)} < 3（标准 4 面板（v4.9.1）：营收×毛利率 / "
+                         f"归母净利+扣非净利×净利率×ROE / 经营现金流+自由现金流×现金含量（阈值0.7) / "
+                         f"应收+存货周转天数（纯双线）；每面板 1-2 柱或 1-2 线、柱线至少其一，"
+                         f"values 与 years 等长且全为数字）")
     st = str(fill.get("stock_type") or "")
     if "未盈利" not in st and "管线" not in st:
         gp = fill.get("growth_plot")
@@ -239,8 +240,9 @@ def _check_thesis_consistency(fill: dict, calc: dict) -> None:
 def _check_content_floor(fill: dict) -> None:
     """内容地板（空心章节一律拒渲染）+ 表格来源标注数必须 ≥ 表格数。"""
     concl_len = len(_plain_text(fill.get("conclusion_html")))
-    if concl_len < 200:
-        raise ValueError(f"conclusion_html 纯文本仅 {concl_len} 字 < 200：核心结论四段不能为空洞")
+    if concl_len < 120:
+        raise ValueError(f"conclusion_html 纯文本仅 {concl_len} 字 < 120：核心结论四卡不能为空洞"
+                         f"（v4.9.1 补充修订四：四卡 ul 短列表化，地板由 200 下调）")
     for name, need in (("l1_html", 6), ("l3_html", 3)):
         # 与下方字数地板同口径（re.split），避免 class="dim-block x" 之类写法两口径打架
         n = len(re.split(r'<div class="dim-block">', fill.get(name) or "")) - 1
@@ -324,7 +326,7 @@ def _check_peers_plot_target(fill: dict, warns: list) -> None:
             if tpe and vpe and abs(tpe - vpe) / abs(vpe) > 0.3:
                 warns.append(f"peers_plot 目标公司 PE（{tpe:g}）与 valuation_inputs.pe_ttm（{vpe:g}）偏差 >30%："
                              f"请确认口径一致（A/H 股、IFRS/经调整、TTM/预测），确需混排在 peers_meta 注明")
-            # ROE 量级倒挂（v4.10）：fill 无独立 ROE 参照源可比对（E1 落盘无 roe、正文为文字），
+            # ROE 量级倒挂（v4.9）：fill 无独立 ROE 参照源可比对（E1 落盘无 roe、正文为文字），
             # 只对「目标点 ROE 明显脱离同业量级」这类机械异常告警——目标比最弱同业还低一半、
             # 或比最强同业高一倍，几乎必是口径不一（年报 vs TTM/加权、不同年份）或取数错误
             troe = _num(tg[0].get("roe"))
@@ -486,7 +488,7 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
     holders = fill.get("holders") or []
     if holders and len(holders) < 3:
         warns.append("holders 有效点 <3：户数趋势图不生成（E4 默认返回近 8 期，请回填 ≥3 期）")
-    # v4.10：触发条件状态条字段纪律
+    # v4.9：触发条件状态条字段纪律
     trg = fill.get("triggers") or []
     if trg:
         bad = [t for t in trg
@@ -498,7 +500,7 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
 
 
 def _check_hero_band_claims(fill: dict, warns: list) -> None:
-    """Hero 文案引用「分位/历史带」概念时的数据支撑核对（v4.10）：
+    """Hero 文案引用「分位/历史带」概念时的数据支撑核对（v4.9）：
     概念必须在 pe_history（第 10 章同源数据，与 E1 落盘 pe_p25/pe_p75、历史带同口径）有对应字段
     可佐证——「分位」→ p25/p75，「历史带/历史区间」→ hist_lo/hist_hi；有分位字段时再做
     现价 PE 相对位置的极性核对（称「低分位」而现价高于 P75、称「高分位」而现价低于 P25 即矛盾）。
@@ -531,9 +533,10 @@ def _check_hero_band_claims(fill: dict, warns: list) -> None:
 
 
 def _check_conclusion_structure(fill: dict, warns: list) -> None:
-    """conclusion_html 四段判词结构（fill-schema 1 核心结论，顺序固定）：
-    ①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑。缺段或乱序 → 告警不拒
-    （连续 <p>、<strong> 小标题开头；打分数字在 Hero/section-meta 已呈现，正文不重复）。"""
+    """conclusion_html 四卡结构（fill-schema 1 核心结论；v4.9.1 补充修订二起 .concl-grid
+    2×2 卡网格，顺序固定）：①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑。
+    缺卡或乱序 → 告警不拒（纯文本关键词校验，对容器形式不敏感；
+    评分数字在 Hero/section-meta 已呈现，正文不重复）。"""
     txt = _plain_text(fill.get("conclusion_html") or "")
     if len(txt) < 20:
         return  # 内容地板已在 _check_content_floor 拒渲染，这里防空
@@ -541,16 +544,42 @@ def _check_conclusion_structure(fill: dict, warns: list) -> None:
     pos = [txt.find(k) for k in keys]
     missing = [k for k, p in zip(keys, pos) if p < 0]
     if missing:
-        warns.append(f"conclusion_html 缺段：{'/'.join(missing)}——四段固定（连续 <p>、"
-                     f"<strong> 小标题开头）：①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑"
-                     f"（见 fill-schema「核心结论四段骨架」）")
+        warns.append(f"conclusion_html 缺卡：{'/'.join(missing)}——四卡固定（.concl-grid 内四张 "
+                     f".concl-card，.concl-head 卡头）：①关键优势→②关键弱点→③当前市场认知→④核心投资逻辑"
+                     f"（见 fill-schema「核心结论四卡骨架」）")
     elif pos != sorted(pos):
-        warns.append("conclusion_html 四段判词顺序错误：应为 ①关键优势→②关键弱点→"
+        warns.append("conclusion_html 四卡顺序错误：应为 ①关键优势→②关键弱点→"
                      "③当前市场认知→④核心投资逻辑")
 
 
+def _check_governance_strip(fill: dict, warns: list) -> None:
+    """v4.9.1 补充修订二：3.5 治理与资本配置分块单行化——整块 <p> 恰为 2 个
+    （判词段 + 评分末拍段）；trig 行后另起 <p> 正文 → 告警（论据应内联进 .trig-mt）。
+    未用 trig-strip 的旧存量 fill 不打扰。
+    补充修订四：同款清单推广到 3.3 护城河 / 4.3 催化剂（4.2 为可选形态不强制），
+    <p> 恰为 2 规则同步覆盖（4.3 评分段可省，校验只看 >2）。"""
+    for field, tags in (("l1_html", ("3.3", "3.5")), ("l3_html", ("4.3",))):
+        for blk in re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]:
+            tag = next((t for t in tags if t in blk), None)
+            if tag is None or "trig-strip" not in blk:
+                continue
+            np = len(re.findall(r"<p[ >]", blk))
+            if np > 2:
+                warns.append(f"{tag} 维度块含 {np} 个 <p>（应恰为 2：判词段+评分末拍段）："
+                             f"trig 行后不要另起 <p> 正文，论据压进 .trig-mt 一句内联（fill-schema 条款）")
+
+
+def _check_peers_orientation(fill: dict, warns: list) -> None:
+    """v4.9.1 补充修订二：同业两表公司强制行标题——目标公司蓝色加粗应标在行首格；
+    蓝 style 落在 <th> 表头 = 误写成「公司=列」旧方向 → 告警。"""
+    peers = fill.get("peers_html") or ""
+    if re.search(r"<th[^>]*style\s*=\s*[\"'][^\"']*color\s*:\s*#4a6fa5", peers, flags=re.I):
+        warns.append("peers_html 目标公司蓝色加粗落在 <th> 表头（写成了公司=列旧方向）："
+                     "当前指标表与趋势表应公司=行标题，目标公司蓝色加粗标在行首格（fill-schema peers 规则）")
+
+
 def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
-    """复盘「未命中」判定缺诊断方向告警（v4.10，backtest.md 6.6 复盘纪律）：
+    """复盘「未命中」判定缺诊断方向告警（v4.9，backtest.md 6.6 复盘纪律）：
     review_html 含「未命中」但未提「规律/反例」——未命中的旧假设必须写明是规律失效还是
     新反例（区分假设本身错 vs 触发条件变化），否则教训无法沉淀。"""
     rv = fill.get("review_html") or ""
@@ -590,6 +619,8 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_internal_codes(fill, warns)
     _check_writing_discipline(fill, warns)
     _check_conclusion_structure(fill, warns)
+    _check_governance_strip(fill, warns)
+    _check_peers_orientation(fill, warns)
     _check_prev_fields(fill, warns)
     _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
@@ -644,14 +675,10 @@ def build_prev_strip(prev: dict, quality: float, valuation: float, timing, targe
     if not prev:
         return ""
     items = []
-    for label, old, new in (("质量分", _num(prev.get("quality", prev.get("research"))), quality),
-                            ("估值分", _num(prev.get("valuation")), valuation),
-                            ("时机分", _num(prev.get("timing")), timing)):
-        if old is not None and new is not None:
-            d = new - old
-            # v4.9：分数差是评价语义（升=好），用 good/bad 而非 up/down（后者 v4.9 起为股价方向色）
-            cls = "good" if d >= 0 else "bad"
-            items.append(f'{label} {old:.2f}→{new:.2f} <span class="{cls}">({d:+.2f})</span>')
+    for r in _prev_track_rows(prev, quality, valuation, timing):
+        # v4.9：分数差是评价语义（升=好），用 good/bad 而非 up/down（后者 v4.9 起为股价方向色）
+        cls = "good" if r["d"] >= 0 else "bad"
+        items.append(f'{r["label"]} {r["old"]:.2f}→{r["new"]:.2f} <span class="{cls}">({r["d"]:+.2f})</span>')
     if prev.get("target_range"):
         items.append(f'目标价 {_esc(str(prev["target_range"]))} → {_esc(str(target_range))}')
     body = ' ｜ '.join(items)

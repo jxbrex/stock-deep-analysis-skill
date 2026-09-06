@@ -27,44 +27,36 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-# ---------- 子模块导入与再导出（v4.8.3 重构：单文件 → scoring/charts/validate） ----------
-# 测试与旧调用方以 `import render_report as R` 按名字访问内部函数（如 R.compute_scores、
-# R._ticks、R.validate_content），拆分后子模块全部公开名字必须在此原样可访问。
-# 依赖方向单向：scoring（共享基座）← charts / validate ← 本模块，无循环。
-from scoring import (  # noqa: F401（再导出，供 R.xxx 按名访问）
-    DIMS, DEFAULT_LAYER_SHARE, TIMING_DIMS, LAYER_NAMES, REQUIRED_SCALAR,
-    _dim_verdict, badge_class, valuation_badge_class,
-    _quality_verdict, _valuation_verdict, _timing_verdict,
-    _num, _fmt, _esc, compute_scores,
-    _scenario_numbers, _position_steps,
-    _valuation_four_rows, build_score_summary, build_valuation_process_card,
-    _POS_LADDER, _POS_LABEL, _matrix_slot, build_position_card,
+# ---------- 子模块导入与再导出（v4.8.3 重构：单文件 → scoring/charts_*/validate） ----------
+# 本模块实际使用的符号直接从真身模块导入（删除 charts.py 兼容壳后不再经壳中转）。
+# 依赖方向单向：scoring（共享基座）← charts_base / 各图族模块 / validate ← 本模块，无循环。
+from scoring import (
+    REQUIRED_SCALAR, valuation_badge_class,
+    _num, _esc, compute_scores, _scenario_numbers,
+    build_score_summary, build_valuation_process_card, build_position_card,
 )
-from charts import (  # noqa: F401（再导出）
-    _C_LABEL, _C_GRID, _C_AXIS, _C_BLUE, _C_PAPER, _C_INK, _C_BLACK, _C_STONE,
-    _C_OLIVE, _C_SAND, _C_SAND_LT, _C_TRACK, _C_GOOD_LINE, _C_YEAR_GRID,
-    _C_GREEN, _C_RED, _C_ORANGE,
-    _fmt_price, _fmt_amt, _SCENARIO_COLORS, _SCENARIO_NAMES,
-    _pad_domain, _lin_map, _text_w, _wrap_label, _ticks,
-    _SVG_STYLE, _svg_open, _svg_close, _vgrid_ticks, _anchor_fit, _anchor_clamp,
+from charts_base import _C_LABEL, _SCENARIO_COLORS, _SCENARIO_NAMES
+from charts_scenario import (
     build_scenario_spectrum, build_scenario_block, build_peers_plot,
-    build_score_bars, build_sensitivity_tornado, build_pe_band,
-    build_segments_plot, build_chain_plot, build_fin_trend, build_growth_plot,
-    _inject_l1_charts, _inject_l3_charts,
-    build_price_history, build_holders_plot, build_review_dumbbell,
-    build_triggers_strip,
 )
-from validate import (  # noqa: F401（再导出）
-    _plain_text, _check_price_date, _check_quote_consistency,
-    _check_score_ranges, _check_valuation_inputs, _check_valuation_scenarios,
-    _check_red_flag_breaker, _check_thesis_consistency, _check_content_floor,
-    _check_missing_required_warns, _check_stock_type_weights,
-    _check_thesis_price_tags, _check_thesis_info_floor, _check_peers_plot_target,
-    _check_timing_table_cells, _check_dim_blocks, _check_internal_codes,
-    _check_writing_discipline, _check_prev_fields, _check_misc_required,
-    _check_quote_present, _check_optional_charts,
+from charts_score import build_score_bars, build_sensitivity_tornado
+from charts_l1 import _inject_l1_charts
+from charts_cycle import build_pe_band, build_price_history
+from charts_misc import (
+    build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
+)
+from validate import (
     validate_content, _tag_timing_table, _check_l4_order, build_prev_strip,
 )
+
+# 再导出（供测试经 R.* 按名访问，本模块自身不用）：测试以 `import render_report as R`
+# 消费拆分后移居子模块的内部符号（如 R._ticks、R.build_segments_plot）
+from scoring import _position_steps  # noqa: F401
+from charts_base import _text_w, _ticks  # noqa: F401
+from charts_l1 import (  # noqa: F401
+    build_segments_plot, build_chain_plot, build_fin_trend,
+)
+from charts_misc import build_growth_plot  # noqa: F401
 
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
@@ -570,6 +562,11 @@ def _check_backtest_flags(fill: dict):
         print("⚠️ 回测模式（prev 已填）但 review_html 为空：R 回测复盘章节将缺失", file=sys.stderr)
     if review_html and not prev:
         print("⚠️ 有 review_html 但未填 prev：文件名与 Hero 不会标记「复盘」，请补 prev 字段", file=sys.stderr)
+    # v4.9.1：旧触发条件核对表（backtest.md 老规则的手写四列表）废止，核对结果改由 triggers 状态条承载
+    if prev and not fill.get("triggers"):
+        print("⚠️ 回测模式（prev 已填）但 triggers 未填：旧触发条件核对结果应由 triggers 状态条承载"
+              "（status=hit/miss/pending，metric 行写「阈值｜实际值」；v4.9.1 起 dash_html 不再手写旧核对表）",
+              file=sys.stderr)
     return prev, review_html
 
 
@@ -644,7 +641,7 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "CYCLE_META": fill.get("cycle_meta", ""),
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
-        # v4.10：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
+        # v4.9：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
         "TRIGGERS_HTML": build_triggers_strip(fill),
         "DASH_HTML": fill.get("dash_html", ""),
         "POSITION_HTML": _tag_timing_table(fill.get("position_html", "")),

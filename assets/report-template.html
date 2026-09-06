@@ -98,6 +98,11 @@ td.center, th.center { text-align: center; }
 .freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
 .freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
 .freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
+/* v4.9.1 同业对比当前指标表最优/最差高亮（补充修订二：随公司=行改按指标列标注；
+   淡底对比度过低实证不够明显，升级为染底+同色加粗文字；
+   三元素选择器+声明晚于斑马/hover 规则，否则偶数行斑马纹会盖掉高亮） */
+tbody tr td.cell-best { background: #d9e8d0; color: #2f6b33; font-weight: 700; }
+tbody tr td.cell-worst { background: #f5dbd1; color: #a8432f; font-weight: 700; }
 .source { display: block; font-size: 11px; color: #6f695e; margin: 4px 0 12px; }
 /* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 3.4 维度块）：两列网格双轴组合图 */
 .mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 8px; }
@@ -106,19 +111,35 @@ td.center, th.center { text-align: center; }
 .mini-cell .m-name { color: #57524a; font-weight: 600; }
 .mini-cell .m-val { font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
 .mini-cell .m-yoy { font-size: 10px; font-weight: 400; color: #6f695e; }
-/* v4.10 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
-.trig-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 16px; margin: 4px 0 10px; }
-.trig { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; padding: 5px 10px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; }
-.trig-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; align-self: center; }
+/* v4.9 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
+/* v4.9.1 补充修订四 卡片化重排：HTML 结构（dot/cond/mt/status 四 span）不变，纯 CSS order 重排——
+   标题居中独占行（允许两行）、dot+状态居中徽章行、论据独占行左对齐；
+   桌面 3 列（5 块=3+2、6 条=3+3），≤1024px 2 列，≤768px 单列（媒体查询块内） */
+.trig-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 10px; }
+.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 3px 6px; font-size: 12.5px; padding: 12px 14px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; text-align: center; }
+.trig-dot { order: 2; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .trig-dot.hit { background: #4d804d; }
 .trig-dot.miss { background: #b84a4a; }
 .trig-dot.pending { background: #7a715e; }
-.trig-cond { font-weight: 600; color: #2b2620; }
-.trig-mt { color: #6f695e; font-size: 11.5px; flex: 1; }
-.trig-status { font-size: 11px; font-weight: 700; }
+/* mt 灰字内 strong 深色加粗承载关键事实（金额/时间窗/比例） */
+.trig-cond { order: 1; flex: 0 0 100%; font-weight: 600; color: #2b2620; font-size: 13px; text-align: center; }
+.trig-mt { order: 4; flex: 0 0 100%; color: #6f695e; font-size: 11.5px; text-align: left; margin-top: 3px; }
+.trig-mt strong { color: #2b2620; font-weight: 700; }
+.trig-status { order: 3; font-size: 11px; font-weight: 700; flex-shrink: 0; }
 .trig-status.hit { color: #4d804d; }
 .trig-status.miss { color: #b84a4a; }
 .trig-status.pending { color: #7a715e; }
+@media (max-width: 1024px) { .trig-strip { grid-template-columns: repeat(2, 1fr); } }
+/* v4.9.1 补充修订二：5 章红灯检查 hero 三卡（l4_html 章首手写）；pass=通过（绿）/fail=不通过（红） */
+.flag-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
+.flag-hero-card { border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 16px; text-align: center; background: #fffdf9; }
+.flag-hero-card .fh-name { font-size: 12px; color: #6f695e; margin-bottom: 4px; }
+.flag-hero-card .fh-verdict { font-size: 26px; font-weight: 700; }
+.flag-hero-card .fh-desc { font-size: 11px; color: #6f695e; margin-top: 4px; }
+.flag-hero-card.pass { background: #f0f5ec; border-color: #cfdcc6; }
+.flag-hero-card.pass .fh-verdict { color: #4d804d; }
+.flag-hero-card.fail { background: #f9eeea; border-color: #e3c3bb; }
+.flag-hero-card.fail .fh-verdict { color: #b84a4a; }
 .mini-cell svg { width: 100%; height: auto; display: block; font-family: inherit; }
 .conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
 .warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
@@ -130,6 +151,10 @@ td.center, th.center { text-align: center; }
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
 /* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分 */
 .timing-table tr.total td { font-weight: 700; background: #f2eddd; }
+/* v4.9.1 跟踪与触发合并单表（13 章 dash_html）：指标/当前值/触发阈值列防折行，
+   触发后操作/数据来源长文列小字允许换行，行高不再被长文撑飞 */
+.dash-table th:nth-child(-n+3), .dash-table td:nth-child(-n+3) { white-space: nowrap; }
+.dash-table td:nth-child(4), .dash-table td:nth-child(5) { font-size: 12px; }
 .prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ece7db; font-size: 12px; color: #66604f; }
 .prev-tag { display: inline-block; background: #efe9db; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
 .rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
@@ -159,6 +184,18 @@ td.rev, th.rev { padding: 8px 12px; }
 /* v4.8 版式修复：段落间距（此前 p 零间距导致核心结论四段粘合）/ 侧栏目录（固定右缘，宽屏显示） */
 .section-body p + p { margin-top: 10px; }
 .section-body p + ul, .section-body ul + p { margin-top: 8px; }
+/* v4.9.1 补充修订二：1 核心结论 2×2 结论卡网格（四卡固定序：关键优势/关键弱点/当前市场认知/
+   核心投资逻辑；卡尾 concl-ref「详见 X 章」锚索引，浓缩要点+章节索引替代四段长文） */
+.concl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 2px 0 12px; }
+.concl-card { border: 1px solid #e0d7c3; border-radius: 6px; background: #f7f2e7; padding: 12px 16px; font-size: 13px; line-height: 1.7; }
+.concl-card .concl-head { font-weight: 700; color: #3a362e; margin-bottom: 4px; }
+.concl-card .concl-ref { font-size: 11px; color: #6f695e; margin-top: 6px; }
+.concl-card .concl-ref a { color: #4a6fa5; text-decoration: none; }
+/* v4.9.1 补充修订四 ①关键优势卡特许 <ul> 三条壁垒短语（≤12 字/条、不带数据——数据论证留 s3）：
+   去 bullet、加粗深色、钢蓝色点前缀，让三条短语在卡内视觉突出 */
+.concl-card ul { list-style: none; padding-left: 0; margin: 4px 0; }
+.concl-card ul li { font-weight: 600; color: #2b2620; padding: 2px 0; }
+.concl-card ul li::before { content: "▪ "; color: #4a6fa5; }
 .section { scroll-margin-top: 10px; }
 html { scroll-behavior: smooth; }
 .toc-side { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 50; }
@@ -179,6 +216,28 @@ html { scroll-behavior: smooth; }
   .hero-data-strip .d-item { flex: 1 1 calc(50% - 12px); margin-top: 10px; }
   .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
   .section-body { padding: 14px 16px; }
+  .concl-grid { grid-template-columns: 1fr; }
+  .flag-hero { grid-template-columns: 1fr; }
+  /* v4.9.1 补充修订四：trig-strip 单列（治理分块/触发条件条卡片纵向排列） */
+  .trig-strip { grid-template-columns: 1fr; }
+  /* v4.9.1 补充修订四 dash-table 移动卡片化：列序固定六列（指标/当前值/触发阈值/触发后操作/数据来源/更新频率），
+     行转卡片 + td::before 列名标签，免横向滚动；手写 dash_html 结构不变 */
+  .dash-table, .dash-table tbody, .dash-table tr, .dash-table td { display: block; width: 100%; }
+  /* 表头手写为 <tr><th>（无 thead 包裹，浏览器自动归入 tbody）：整行隐藏靠 tr:has(th) */
+  .dash-table thead, .dash-table tr:has(th) { display: none; }
+  .dash-table tr { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; margin: 0 0 10px; padding: 4px 0; }
+  .dash-table tbody tr:nth-child(even) td { background: transparent; }
+  .dash-table td { border-bottom: none; padding: 3px 12px; }
+  .dash-table td:nth-child(-n+3) { white-space: normal; }
+  .dash-table td:first-child { position: static; box-shadow: none; font-weight: 600; }
+  .dash-table td.num { text-align: left; }
+  .dash-table td::before { display: block; font-size: 10.5px; font-weight: 400; color: #6f695e; }
+  .dash-table td:nth-child(1)::before { content: "指标"; }
+  .dash-table td:nth-child(2)::before { content: "当前值"; }
+  .dash-table td:nth-child(3)::before { content: "触发阈值"; }
+  .dash-table td:nth-child(4)::before { content: "触发后操作"; }
+  .dash-table td:nth-child(5)::before { content: "数据来源"; }
+  .dash-table td:nth-child(6)::before { content: "更新频率"; }
 }
 @media print {
   body { background: #fff; padding: 12px; }
@@ -393,7 +452,7 @@ html { scroll-behavior: smooth; }
     <span class="section-meta">质量分 {{QUALITY_SCORE}} × 估值分 {{VALUATION_SCORE}} ｜ 时机分 {{TIMING_SCORE}} 微调</span>
   </div>
   <div class="section-body">
-    {{POSITION_HTML}}{{HOLDERS_PLOT_HTML}}
+    {{HOLDERS_PLOT_HTML}}{{POSITION_HTML}}
     {{POSITION_CARD_HTML}}
   </div>
 </div>

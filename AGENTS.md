@@ -10,7 +10,9 @@
 1. 在仓库内修改源文件
 2. 运行回归测试（scripts/test_*、golden 快照）
 3. 更新 CHANGELOG.md
-4. 经用户确认后 commit（git 操作必须先征得用户同意）
+4. 经用户确认后 commit（git 操作必须先征得用户同意）。**用户确认 commit 即同时授权
+   release**：commit 信息含版本号（vX.Y.Z）时，同步打同名 tag（如 `v4.9.2`），无需另行
+   请示；不含版本号的纯流程/文档提交不另打 tag
 5. 部署：先 `powershell -File scripts\deploy.ps1` 预览，确认后加 `-Go` 执行
 
 ## 目录约定

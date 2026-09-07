@@ -98,11 +98,11 @@ td.center, th.center { text-align: center; }
 .freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
 .freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
 .freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
-/* v4.9.1 同业对比当前指标表最优/最差高亮（补充修订二：随公司=行改按指标列标注；
-   淡底对比度过低实证不够明显，升级为染底+同色加粗文字；
-   三元素选择器+声明晚于斑马/hover 规则，否则偶数行斑马纹会盖掉高亮） */
-tbody tr td.cell-best { background: #d9e8d0; color: #2f6b33; font-weight: 700; }
-tbody tr td.cell-worst { background: #f5dbd1; color: #a8432f; font-weight: 700; }
+/* v4.9.2 同业对比当前指标表最优/最差标注：取消染底（与隔行斑马纹叠加显花，
+   甘李 4 行 12 处高亮实证），改纯文字——best 红加粗（红=强，A 股惯例）、worst 黑加粗；
+   斑马/hover 只动背景，不与文字色冲突，选择器随之简化 */
+td.cell-best { color: #b84a4a; font-weight: 700; }
+td.cell-worst { color: #2b2620; font-weight: 700; }
 .source { display: block; font-size: 11px; color: #6f695e; margin: 4px 0 12px; }
 /* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 3.4 维度块）：两列网格双轴组合图 */
 .mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 8px; }
@@ -114,9 +114,18 @@ tbody tr td.cell-worst { background: #f5dbd1; color: #a8432f; font-weight: 700; 
 /* v4.9 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
 /* v4.9.1 补充修订四 卡片化重排：HTML 结构（dot/cond/mt/status 四 span）不变，纯 CSS order 重排——
    标题居中独占行（允许两行）、dot+状态居中徽章行、论据独占行左对齐；
-   桌面 3 列（5 块=3+2、6 条=3+3），≤1024px 2 列，≤768px 单列（媒体查询块内） */
+   桌面 3 列（5 块=3+2、6 条=3+3），≤1024px 2 列，≤768px 单列（媒体查询块内）；
+   v4.9.2：恰 2/4 张时桌面改 2 列取整分排（4=2+2、2=1+1，见下方 :has 规则） */
 .trig-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 10px; }
-.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 3px 6px; font-size: 12.5px; padding: 12px 14px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; text-align: center; }
+/* v4.9.2 双数取整（甘李 3.3 护城河 4 卡 3+1 失衡实证）；:has 优先级高于下方 ≤1024px 媒体查询，
+   故包在 min-width:1025px 内互斥；旧浏览器无 :has 回退 3 列（优雅降级） */
+@media (min-width: 1025px) {
+  .trig-strip:has(> .trig:nth-child(2):last-child),
+  .trig-strip:has(> .trig:nth-child(4):last-child) { grid-template-columns: repeat(2, 1fr); }
+}
+/* v4.9.2：align-content 默认 stretch 会把短内容卡片的多余空间摊进各行线盒、标题被居中下推
+   （甘李 3.5「股权与控制权」行内下沉实证）——改贴顶排布，同行标题/徽章/论据起点恒对齐 */
+.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: flex-start; gap: 3px 6px; font-size: 12.5px; padding: 12px 14px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; text-align: center; }
 .trig-dot { order: 2; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .trig-dot.hit { background: #4d804d; }
 .trig-dot.miss { background: #b84a4a; }

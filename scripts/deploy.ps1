@@ -9,6 +9,17 @@ $repo = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $env:USERPROFILE '.agents\skills\stock-deep-analysis'
 $xd = @('.git', '__pycache__', 'artifacts', 'handoffs')
 
+# 文档超长行闸（v4.10.1）：单行 >1500 字符会触发 v4.9.2 立案的 Read 截断陷阱，warn-only
+function Test-DocLines {
+    $bad = 0
+    Get-ChildItem (Join-Path $repo 'references\*.md'), (Join-Path $repo 'SKILL.md'), (Join-Path $repo 'CHANGELOG.md') | ForEach-Object {
+        $f = $_.FullName; $n = 0
+        Get-Content $f | ForEach-Object { $n++; if ($_.Length -gt 1500) { Write-Host "  超长行 $($_.Length) 字符: $f 行 $n"; $bad++ } }
+    }
+    if ($bad -gt 0) { Write-Host "提示：文档超长行 $bad 处（>1500 字符，v4.9.2 截断陷阱立案阈值），建议拆行后再部署。" }
+}
+Test-DocLines
+
 if (-not $Go) {
     robocopy $repo $dest /MIR /L /XD $xd /NJH | Out-Null
     $rc = $LASTEXITCODE

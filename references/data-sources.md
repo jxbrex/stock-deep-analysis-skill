@@ -10,7 +10,7 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `hk_income`/`hk_fina_indicator`（港股财务）。脚本对港股 E3 采取**尝试调用 + 失败自动降级**策略：
 先试 tushare 港股接口，无权限/失败时自动 curl 东财 `RPT_HKF10_FN_MAININDICATOR` 兜底
 （`em_data.py::_em_hkf10_annual_rows`），再不可得才提示模型走妙想 MCP；
-**`hk_daily` 限流 1次/分钟** → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
+**`hk_daily` 限流 1次/小时**（2026-09-06 复测口径，"1 次/分钟"旧记录作废） → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
 
 **妙想 MCP（mx-ds-mcp-stdio，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务
 （stdio 型，ZCode 经 `npx mcp-remote` 桥接远程端点，认证头 `em_api_key` 作为进程参数传入），
@@ -103,7 +103,7 @@ https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f
 - `klt=101` + beg=近6个月 → MA60/MA120、近期高低点（技术面）
 - PE 历史序列 ≈ 每月收盘价 × 总股本 ÷ 对应时点 TTM 净利（净利从 E3 取）
 
-**覆盖清单项**：历史 PE 区间、关键价位、周期阶段（Checklist #9 #10）；
+**覆盖清单项**：历史 PE 区间、关键价位、周期阶段（Checklist #11 #12）；
 `pe_history.milestones` 的关键时点 PE（峰值/谷值/典型时段，3-6 个）同源取自本节月线序列
 
 ---
@@ -180,7 +180,7 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_WEB_R
 
 **卖方隐含净利** = 一致EPS × 总股本（E3 取）→ 与本文利润假设对比，完成档位B拆解。
 
-**覆盖清单项**：分析师评级分布、一致盈利预测、一致目标价（Checklist #11 #12、Step 1.4）
+**覆盖清单项**：分析师评级分布、一致盈利预测、一致目标价（Checklist #13 #14）
 
 ---
 

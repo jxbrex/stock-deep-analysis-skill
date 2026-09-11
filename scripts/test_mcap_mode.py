@@ -40,7 +40,11 @@ def _fixture(valuation, valuation_inputs, thesis_prices):
         "p0_html": "<p>P0 关键驱动测试。</p>",
         "l1_html": dim * 6,
         "l3_html": dim * 3,
-        "l4_html": "<p>红黄灯测试。</p>",
+        "l4_html": ('<p>红黄灯测试。</p>'
+                    '<div class="pm-grid">'
+                    '<div class="pm-card"><div class="pm-head">最可能的亏损故事</div><p>测试。</p></div>'
+                    '<div class="pm-card"><div class="pm-head">与红黄灯清单的重合度</div><p>测试。</p></div>'
+                    '<div class="pm-card"><div class="pm-head">清单外新风险</div><p>测试。</p></div></div>'),
         "valuation_method": "PE历史时段匹配法", "stock_type": "周期股",
         "valuation_html": "<p>估值方法说明。</p>",
         "gap_tier": "B", "gap_html": "<p>预期差测试。</p>",

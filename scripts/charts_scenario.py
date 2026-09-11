@@ -61,7 +61,7 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
         x1, x2 = X(c_lo), X(c_hi)
         parts.append(f'<rect x="{x1:.1f}" y="{T - 10}" width="{x2 - x1:.1f}" '
                      f'height="{axis_y - (T - 10):.1f}" fill="{_C_LABEL}" fill-opacity="0.13"/>')
-        clabel = f'卖方目标价 {_fmt_price(c_lo)}–{_fmt_price(c_hi)}'
+        clabel = f'卖方目标价 {_fmt_px(c_lo)}–{_fmt_px(c_hi)}'
         cw = _text_w(clabel, 10.5)
         cx_c = (x1 + x2) / 2
         c_anchor, c_tx = _anchor_clamp(cx_c, cw, L, W - 4)
@@ -82,13 +82,13 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
         parts.append(f'<text x="{L - 12}" y="{cy + 11}" text-anchor="end" font-size="13" '
                      f'font-weight="600" fill="{_C_INK}">{_esc(c["label"])}</text>')
         parts.append(f'<text x="{L - 12}" y="{cy + 25}" text-anchor="end" font-size="10.5" '
-                     f'fill="{_C_LABEL}">{_fmt_price(c["low"])}–{_fmt_price(c["high"])}</text>')
+                     f'fill="{_C_LABEL}">{_fmt_px(c["low"])}–{_fmt_px(c["high"])}</text>')
         parts.append(f'<rect x="{x_lo:.1f}" y="{cy:.1f}" width="{max(x_hi - x_lo, 3):.1f}" '
                      f'height="{BAR_H}" rx="8" fill="{c["color"]}"/>')
         parts.append(f'<line x1="{x_mid:.1f}" y1="{cy + 5:.1f}" x2="{x_mid:.1f}" y2="{cy + BAR_H - 5:.1f}" '
                      f'stroke="{_C_PAPER}" stroke-width="3"/>')
         pct = c["mid"] / price - 1
-        vlabel = f'{_fmt_price(c["mid"])}（{pct * 100:+.1f}%）'
+        vlabel = f'{_fmt_px(c["mid"])}（{pct * 100:+.1f}%）'
         # 中枢标签统一放条上方（v4.7.1：原"条外右侧放不下塞条内白字"与白刻交叠且手机上更挤）
         vw = _text_w(vlabel, 12.5)
         cx_mid = (x_lo + x_hi) / 2
@@ -109,7 +109,7 @@ def build_scenario_block(calc: dict, cur: str = "元") -> str:
         return ""
     rows = calc["rows"]
     head = ('<tr><th>指标</th>' + "".join(
-        f'<th class="center">{_esc(r["label"])}情景</th>' for r in rows) + "</tr>")
+        f'<th class="num">{_esc(r["label"])}情景</th>' for r in rows) + "</tr>")
 
     def row(name, fmt, cls="num"):
         cells = "".join(f'<td class="{cls}">{fmt(r)}</td>' if cls else f"<td>{fmt(r)}</td>" for r in rows)
@@ -125,18 +125,18 @@ def build_scenario_block(calc: dict, cur: str = "元") -> str:
             row("PE", lambda r: f"{r['pe_lo']:g}-{r['pe_hi']:g}x"),
         ]
     body = "".join([
-        row("时间维度", lambda r: _esc(r["horizon"]), "center"),
-        row("触发条件", lambda r: _esc(r["trigger"]), ""),
+        row("时间维度", lambda r: _esc(r["horizon"])),
+        row("触发条件", lambda r: _esc(r["trigger"])),
         *driver_rows,
-        row("目标价", lambda r: f"{r['low']:.0f}-{r['high']:.0f} {_esc(cur)}"),
-        row("较现价", lambda r: f'<span class="{"up" if r["upside"] >= 0 else "down"}">{r["upside"] * 100:+.1f}%</span>（中值{r["mid"]:.0f}）'),
+        row("目标价", lambda r: f"{_fmt_px(r['low'])}-{_fmt_px(r['high'])} {_esc(cur)}"),
+        row("较现价", lambda r: f'<span class="{"up" if r["upside"] >= 0 else "down"}">{r["upside"] * 100:+.1f}%</span>（中值{_fmt_px(r["mid"])}）'),
     ])
     table = ('<div class="table-scroll"><table class="scenario-table"><thead>'
              + head + "</thead><tbody>" + body + "</tbody></table></div>")
 
     c, odds, disp = calc["central"], calc["odds"], calc["dispersion"]
     c_cls = "up" if c >= 0 else "down"
-    c_sub = f'基础中值 {calc["rows"][1]["mid"] if len(calc["rows"])>1 else calc["rows"][0]["mid"]:.0f} ÷ 现价 {calc["price"]:g} − 1（{calc["horizon"]}）'
+    c_sub = f'基础中值 {_fmt_px(calc["rows"][1]["mid"] if len(calc["rows"])>1 else calc["rows"][0]["mid"])} ÷ 现价 {_fmt_px(calc["price"])} − 1（{calc["horizon"]}）'
     if c < 0:
         c_sub += "；中枢为负 → 回避"
     # v4.9 颜色语义拆分：中枢期望收益是方向量（随 .up/.down 红涨绿跌）；

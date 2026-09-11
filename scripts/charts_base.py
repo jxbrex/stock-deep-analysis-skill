@@ -41,6 +41,13 @@ def _fmt_price(v):
     return f"{v:.4g}"
 
 
+def _fmt_px(v):
+    """目标价/区间展示价（v4.10）：低价股两位小数（<10 元，如 5.88-6.47），其余整数。
+    缘起：工行报告 7 元价位被 :.0f 压成 6-6/8-8/9-9 假无区间。统一用于三情景表/
+    Hero 目标价区间卡/走廊图标签，同一份报告只此一种精度。"""
+    return f"{v:.2f}" if abs(v) < 10 else f"{v:.0f}"
+
+
 def _fmt_amt(v) -> str:
     """亿元金额标签：≥1000 带千位符，去尾零（1,156.0 → 1,156；56.8 → 56.8）。v4.8 业务构成图用。"""
     if v is None:
@@ -173,7 +180,7 @@ __all__ = [
     "_C_LABEL", "_C_GRID", "_C_AXIS", "_C_BLUE", "_C_PAPER", "_C_INK", "_C_BLACK",
     "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_PAPER_CELL",
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
-    "_fmt_price", "_fmt_amt", "_SCENARIO_COLORS", "_SCENARIO_NAMES", "_prev_track_rows",
+    "_fmt_price", "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_SCENARIO_NAMES", "_prev_track_rows",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_anchor_fit", "_anchor_clamp",
 ]

@@ -13,7 +13,11 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  /* v4.10 栈首朱雀仿宋（F1 引用式接入，OFL，本机需自装 TrionesType/zhuque）；
+     未装终端走 fallback 即原系统黑体栈，显示与此前一致。
+     当前发行版注册家族名实为「朱雀仿宋（预览测试版）」（2026-09-11 本机实证），
+     必须放栈首；无前缀名保留以兼容未来正式版与英文系统名 */
+  font-family: "朱雀仿宋（预览测试版）", "Zhuque Fangsong", "朱雀仿宋", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 14px; line-height: 1.7; color: #3a362e;
   background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
@@ -89,15 +93,18 @@ body {
 .verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+/* v4.10：tbody 内 th（行标题写法，如同业表公司名列）归一为 td 同式——否则 th 底色米黄穿透
+   斑马纹、首列条带断裂（工行 09-11 同业两表实证）；thead 表头样式不受影响 */
+tbody th { background: transparent; color: #3a362e; font-size: 13px; font-weight: 600; letter-spacing: 0; border-bottom: 1px solid #ece7db; }
 td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
-tbody tr:nth-child(even) td { background: #f7f2e7; }
-tr:hover td { background: #f2eddd; }
+tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background: #f7f2e7; }
+tr:hover td, tr:hover th { background: #f2eddd; }
 td.num, th.num { text-align: right; }
 td.center, th.center { text-align: center; }
 .freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fffdf9; z-index: 2; box-shadow: 1px 0 0 #ece7db; }
-.freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
-.freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
-.freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
+.freeze-first thead th:first-child { background: #f1ebdd; z-index: 3; }
+.freeze-first tbody tr:nth-child(even) td:first-child, .freeze-first tbody tr:nth-child(even) th:first-child { background: #f7f2e7; }
+.freeze-first tbody tr:hover td:first-child, .freeze-first tbody tr:hover th:first-child { background: #f2eddd; }
 /* v4.9.2 同业对比当前指标表最优/最差标注：取消染底（与隔行斑马纹叠加显花，
    甘李 4 行 12 处高亮实证），改纯文字——best 红加粗（红=强，A 股惯例）、worst 黑加粗；
    斑马/hover 只动背景，不与文字色冲突，选择器随之简化 */
@@ -153,6 +160,11 @@ td.cell-worst { color: #2b2620; font-weight: 700; }
 .conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
 .warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .danger-card { background: #f9eeea; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+/* v4.10 损失预演三联卡（l4_html 固定骨架）：三卡=最可能的亏损故事/与红黄灯清单重合度/
+   清单外新风险，与 scoring.md 损失预演强制三步一一对应；danger 家族红色语义 */
+.pm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0 14px; }
+.pm-card { background: #f9eeea; border-left: 3px solid #c75b5b; border-radius: 0 6px 6px 0; padding: 12px 14px; font-size: 13px; }
+.pm-head { font-size: 12px; font-weight: 700; color: #b84a4a; margin-bottom: 5px; }
 .info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .deduction { color: #b84a4a; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
 .deduction + br { display: none; }
@@ -226,6 +238,7 @@ html { scroll-behavior: smooth; }
   .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
   .section-body { padding: 14px 16px; }
   .concl-grid { grid-template-columns: 1fr; }
+  .pm-grid { grid-template-columns: 1fr; }
   .flag-hero { grid-template-columns: 1fr; }
   /* v4.9.1 补充修订四：trig-strip 单列（治理分块/触发条件条卡片纵向排列） */
   .trig-strip { grid-template-columns: 1fr; }

@@ -13,7 +13,11 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  /* v4.10 栈首朱雀仿宋（F1 引用式接入，OFL，本机需自装 TrionesType/zhuque）；
+     未装终端走 fallback 即原系统黑体栈，显示与此前一致。
+     当前发行版注册家族名实为「朱雀仿宋（预览测试版）」（2026-09-11 本机实证），
+     必须放栈首；无前缀名保留以兼容未来正式版与英文系统名 */
+  font-family: "朱雀仿宋（预览测试版）", "Zhuque Fangsong", "朱雀仿宋", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 14px; line-height: 1.7; color: #3a362e;
   background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
@@ -89,15 +93,18 @@ body {
 .verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+/* v4.10：tbody 内 th（行标题写法，如同业表公司名列）归一为 td 同式——否则 th 底色米黄穿透
+   斑马纹、首列条带断裂（工行 09-11 同业两表实证）；thead 表头样式不受影响 */
+tbody th { background: transparent; color: #3a362e; font-size: 13px; font-weight: 600; letter-spacing: 0; border-bottom: 1px solid #ece7db; }
 td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
-tbody tr:nth-child(even) td { background: #f7f2e7; }
-tr:hover td { background: #f2eddd; }
+tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background: #f7f2e7; }
+tr:hover td, tr:hover th { background: #f2eddd; }
 td.num, th.num { text-align: right; }
 td.center, th.center { text-align: center; }
 .freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fffdf9; z-index: 2; box-shadow: 1px 0 0 #ece7db; }
-.freeze-first th:first-child { background: #f1ebdd; z-index: 3; }
-.freeze-first tbody tr:nth-child(even) td:first-child { background: #f7f2e7; }
-.freeze-first tbody tr:hover td:first-child { background: #f2eddd; }
+.freeze-first thead th:first-child { background: #f1ebdd; z-index: 3; }
+.freeze-first tbody tr:nth-child(even) td:first-child, .freeze-first tbody tr:nth-child(even) th:first-child { background: #f7f2e7; }
+.freeze-first tbody tr:hover td:first-child, .freeze-first tbody tr:hover th:first-child { background: #f2eddd; }
 /* v4.9.2 同业对比当前指标表最优/最差标注：取消染底（与隔行斑马纹叠加显花，
    甘李 4 行 12 处高亮实证），改纯文字——best 红加粗（红=强，A 股惯例）、worst 黑加粗；
    斑马/hover 只动背景，不与文字色冲突，选择器随之简化 */
@@ -153,6 +160,11 @@ td.cell-worst { color: #2b2620; font-weight: 700; }
 .conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
 .warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .danger-card { background: #f9eeea; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+/* v4.10 损失预演三联卡（l4_html 固定骨架）：三卡=最可能的亏损故事/与红黄灯清单重合度/
+   清单外新风险，与 scoring.md 损失预演强制三步一一对应；danger 家族红色语义 */
+.pm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0 14px; }
+.pm-card { background: #f9eeea; border-left: 3px solid #c75b5b; border-radius: 0 6px 6px 0; padding: 12px 14px; font-size: 13px; }
+.pm-head { font-size: 12px; font-weight: 700; color: #b84a4a; margin-bottom: 5px; }
 .info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 .deduction { color: #b84a4a; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
 .deduction + br { display: none; }
@@ -226,6 +238,7 @@ html { scroll-behavior: smooth; }
   .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
   .section-body { padding: 14px 16px; }
   .concl-grid { grid-template-columns: 1fr; }
+  .pm-grid { grid-template-columns: 1fr; }
   .flag-hero { grid-template-columns: 1fr; }
   /* v4.9.1 补充修订四：trig-strip 单列（治理分块/触发条件条卡片纵向排列） */
   .trig-strip { grid-template-columns: 1fr; }
@@ -372,7 +385,7 @@ html { scroll-behavior: smooth; }
     <span class="section-meta"><span class="badge badge-red">扣 0.0 分</span></span>
   </div>
   <div class="section-body">
-    <div class="flag-hero"><div class="flag-hero-card pass"><div class="fh-name">a 财务造假与极高杠杆</div><div class="fh-verdict">通过</div><div class="fh-desc">审计标准无保留；商誉/净资产 3.2%；控股股东无质押；非 ST</div></div><div class="flag-hero-card pass"><div class="fh-name">b 立案调查与重大违规</div><div class="fh-verdict">通过</div><div class="fh-desc">近三年无立案调查/重大违规披露（公告检索）</div></div><div class="flag-hero-card pass"><div class="fh-name">c 主营不可逆衰退</div><div class="fh-verdict">通过</div><div class="fh-desc">核心产品收入连续增长，无被禁/被主要市场抛弃迹象</div></div></div><p>黄灯扣分：无（四类逐项核查未命中）。</p><div class="danger-card"><strong>损失预演：</strong>假设两年后亏损 30%，最可能是商品价格深跌叠加产能释放不及预期；与黄灯清单高度重合，无清单外新风险。</div>
+    <div class="flag-hero"><div class="flag-hero-card pass"><div class="fh-name">a 财务造假与极高杠杆</div><div class="fh-verdict">通过</div><div class="fh-desc">审计标准无保留；商誉/净资产 3.2%；控股股东无质押；非 ST</div></div><div class="flag-hero-card pass"><div class="fh-name">b 立案调查与重大违规</div><div class="fh-verdict">通过</div><div class="fh-desc">近三年无立案调查/重大违规披露（公告检索）</div></div><div class="flag-hero-card pass"><div class="fh-name">c 主营不可逆衰退</div><div class="fh-verdict">通过</div><div class="fh-desc">核心产品收入连续增长，无被禁/被主要市场抛弃迹象</div></div></div><p>黄灯扣分：无——四类（a 交易与股东行为 / b 行业与政策环境 / c 盈利与财务质量 / d 经营与公司治理）逐项核查无扣分。</p><p><strong>损失预演（假设两年后这笔投资亏损 30%）：</strong></p><div class="pm-grid"><div class="pm-card"><div class="pm-head">最可能的亏损故事</div><p>商品价格深跌叠加产能释放不及预期，利润腰斩后估值随之下杀。</p></div><div class="pm-card"><div class="pm-head">与红黄灯清单的重合度</div><p>与黄灯 b 类（行业周期）高度重合，是同一回事的概率高。</p></div><div class="pm-card"><div class="pm-head">清单外新风险</div><p>未识别出清单外新风险：资产负债表干净，无重大单一客户依赖。</p></div></div>
   </div>
 </div>
 
@@ -398,10 +411,10 @@ html { scroll-behavior: smooth; }
   </div>
   <div class="section-body">
     
-    <div class="plot-wrap"><svg viewBox="0 0 1000 236" role="img" aria-label="目标价走廊" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="435.5" y1="24" x2="435.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="435.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">10</text><line x1="799.5" y1="24" x2="799.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="799.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">15</text><line x1="128" y1="196" x2="976" y2="196" stroke="#e0d7c3" stroke-width="1.2"/><text x="4" y="213" font-size="11" fill="#6f695e">单位：元</text><line x1="435.5" y1="22" x2="435.5" y2="196" stroke="#4a6fa5" stroke-width="1.5" stroke-dasharray="5 4"/><text x="435.5" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">现价 10</text><text x="116" y="57.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">悲观</text><text x="116" y="71.0" text-anchor="end" font-size="10.5" fill="#6f695e">6.4–8</text><rect x="173.4" y="46.0" width="116.5" height="28" rx="8" fill="#c75b5b"/><line x1="231.7" y1="51.0" x2="231.7" y2="69.0" stroke="#fffdf9" stroke-width="3"/><text x="231.7" y="40.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c75b5b">7.2（-28.0%）</text><text x="116" y="109.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">基础</text><text x="116" y="123.0" text-anchor="end" font-size="10.5" fill="#6f695e">10–12</text><rect x="435.5" y="98.0" width="145.6" height="28" rx="8" fill="#c08a2e"/><line x1="508.3" y1="103.0" x2="508.3" y2="121.0" stroke="#fffdf9" stroke-width="3"/><text x="508.3" y="92.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c08a2e">11（+10.0%）</text><text x="116" y="161.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">乐观</text><text x="116" y="175.0" text-anchor="end" font-size="10.5" fill="#6f695e">14.4–16.8</text><rect x="755.8" y="150.0" width="174.7" height="28" rx="8" fill="#6ba86b"/><line x1="843.2" y1="155.0" x2="843.2" y2="173.0" stroke="#fffdf9" stroke-width="3"/><text x="843.2" y="144.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6ba86b">15.6（+56.0%）</text></svg></div><span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅</span>
+    <div class="plot-wrap"><svg viewBox="0 0 1000 236" role="img" aria-label="目标价走廊" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="435.5" y1="24" x2="435.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="435.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">10</text><line x1="799.5" y1="24" x2="799.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="799.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">15</text><line x1="128" y1="196" x2="976" y2="196" stroke="#e0d7c3" stroke-width="1.2"/><text x="4" y="213" font-size="11" fill="#6f695e">单位：元</text><line x1="435.5" y1="22" x2="435.5" y2="196" stroke="#4a6fa5" stroke-width="1.5" stroke-dasharray="5 4"/><text x="435.5" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">现价 10</text><text x="116" y="57.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">悲观</text><text x="116" y="71.0" text-anchor="end" font-size="10.5" fill="#6f695e">6.40–8.00</text><rect x="173.4" y="46.0" width="116.5" height="28" rx="8" fill="#c75b5b"/><line x1="231.7" y1="51.0" x2="231.7" y2="69.0" stroke="#fffdf9" stroke-width="3"/><text x="231.7" y="40.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c75b5b">7.20（-28.0%）</text><text x="116" y="109.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">基础</text><text x="116" y="123.0" text-anchor="end" font-size="10.5" fill="#6f695e">10–12</text><rect x="435.5" y="98.0" width="145.6" height="28" rx="8" fill="#c08a2e"/><line x1="508.3" y1="103.0" x2="508.3" y2="121.0" stroke="#fffdf9" stroke-width="3"/><text x="508.3" y="92.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c08a2e">11（+10.0%）</text><text x="116" y="161.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">乐观</text><text x="116" y="175.0" text-anchor="end" font-size="10.5" fill="#6f695e">14–17</text><rect x="755.8" y="150.0" width="174.7" height="28" rx="8" fill="#6ba86b"/><line x1="843.2" y1="155.0" x2="843.2" y2="173.0" stroke="#fffdf9" stroke-width="3"/><text x="843.2" y="144.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6ba86b">16（+56.0%）</text></svg></div><span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅</span>
     
     
-    <div class="table-scroll"><table class="scenario-table"><thead><tr><th>指标</th><th class="num">悲观情景</th><th class="num">基础情景</th><th class="num">乐观情景</th></tr></thead><tbody><tr><td>时间维度</td><td class="num">12个月</td><td class="num">12个月</td><td class="num">12个月</td></tr><tr><td>触发条件</td><td class="num">下行</td><td class="num">中性</td><td class="num">上行</td></tr><tr><td>归母净利</td><td class="num">80 亿</td><td class="num">100 亿</td><td class="num">120 亿</td></tr><tr><td>EPS</td><td class="num">0.80</td><td class="num">1.00</td><td class="num">1.20</td></tr><tr><td>PE</td><td class="num">8-10x</td><td class="num">10-12x</td><td class="num">12-14x</td></tr><tr><td>目标价</td><td class="num">6-8 元</td><td class="num">10-12 元</td><td class="num">14-17 元</td></tr><tr><td>较现价</td><td class="num"><span class="down">-28.0%</span>（中值7）</td><td class="num"><span class="up">+10.0%</span>（中值11）</td><td class="num"><span class="up">+56.0%</span>（中值16）</td></tr></tbody></table></div><div class="metric-row"><div class="metric-card"><div class="label">年化中枢期望收益</div><div class="value up">+10.0%</div><div class="sub">基础中值 11 ÷ 现价 10 − 1（12个月）</div></div><div class="metric-card"><div class="label">赔率（上行/下行）</div><div class="value bad">0.28</div><div class="sub">(基础中值−现价)÷(现价−悲观下限)；>1.5 为良好不对称</div></div><div class="metric-card"><div class="label">情景离散度</div><div class="value mid">84.0%</div><div class="sub">（乐观中值−悲观中值）÷ 现价；中不确定</div></div></div>
+    <div class="table-scroll"><table class="scenario-table"><thead><tr><th>指标</th><th class="num">悲观情景</th><th class="num">基础情景</th><th class="num">乐观情景</th></tr></thead><tbody><tr><td>时间维度</td><td class="num">12个月</td><td class="num">12个月</td><td class="num">12个月</td></tr><tr><td>触发条件</td><td class="num">下行</td><td class="num">中性</td><td class="num">上行</td></tr><tr><td>归母净利</td><td class="num">80 亿</td><td class="num">100 亿</td><td class="num">120 亿</td></tr><tr><td>EPS</td><td class="num">0.80</td><td class="num">1.00</td><td class="num">1.20</td></tr><tr><td>PE</td><td class="num">8-10x</td><td class="num">10-12x</td><td class="num">12-14x</td></tr><tr><td>目标价</td><td class="num">6.40-8.00 元</td><td class="num">10-12 元</td><td class="num">14-17 元</td></tr><tr><td>较现价</td><td class="num"><span class="down">-28.0%</span>（中值7.20）</td><td class="num"><span class="up">+10.0%</span>（中值11）</td><td class="num"><span class="up">+56.0%</span>（中值16）</td></tr></tbody></table></div><div class="metric-row"><div class="metric-card"><div class="label">年化中枢期望收益</div><div class="value up">+10.0%</div><div class="sub">基础中值 11 ÷ 现价 10 − 1（12个月）</div></div><div class="metric-card"><div class="label">赔率（上行/下行）</div><div class="value bad">0.28</div><div class="sub">(基础中值−现价)÷(现价−悲观下限)；>1.5 为良好不对称</div></div><div class="metric-card"><div class="label">情景离散度</div><div class="value mid">84.0%</div><div class="sub">（乐观中值−悲观中值）÷ 现价；中不确定</div></div></div>
     
     <p>估值方法说明。</p>
     <span class="section-tag">估值分计算</span><div class="table-scroll"><table><thead><tr><th>套件</th><th>输入值</th><th class="center">映射得分</th><th class="num">权重</th><th class="num">加权</th></tr></thead><tbody><tr><td>中枢分</td><td>年化中枢 +10.0%（12个月）</td><td class="center score-cell"><span class="badge badge-green">7.0</span></td><td class="num">×40%</td><td class="num">2.80</td></tr><tr><td>赔率分</td><td>赔率 0.28</td><td class="center score-cell"><span class="badge badge-red">3.5</span></td><td class="num">×25%</td><td class="num">0.88</td></tr><tr><td>合理倍数分</td><td>PE(TTM) 11x vs 合理带 10-12x</td><td class="center score-cell"><span class="badge badge-orange">5.0</span></td><td class="num">×25%</td><td class="num">1.25</td></tr><tr><td>股息分</td><td>股息率 2% − 无风险 1.7% = +0.3pct</td><td class="center score-cell"><span class="badge badge-orange">6.0</span></td><td class="num">×10%</td><td class="num">0.60</td></tr><tr><td colspan="2"><strong>估值分 = 2.80 + 0.88 + 1.25 + 0.60 = 5.5</strong></td><td class="center score-cell"><span class="badge badge-orange badge-lg">5.5</span></td><td colspan="2"><strong>合理无安全边际</strong></td></tr></tbody></table></div><span class="source">估值分档位：≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理无安全边际 / &lt;4 贵</span>

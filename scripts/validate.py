@@ -578,6 +578,61 @@ def _check_peers_orientation(fill: dict, warns: list) -> None:
                      "当前指标表与趋势表应公司=行标题，目标公司蓝色加粗标在行首格（fill-schema peers 规则）")
 
 
+def _check_peers_orientation(fill: dict, warns: list) -> None:
+    """v4.9.1 补充修订二：同业两表公司强制行标题——目标公司蓝色加粗应标在行首格；
+    蓝 style 落在 <th> 表头 = 误写成「公司=列」旧方向 → 告警。"""
+    peers = fill.get("peers_html") or ""
+    if re.search(r"<th[^>]*style\s*=\s*[\"'][^\"']*color\s*:\s*#4a6fa5", peers, flags=re.I):
+        warns.append("peers_html 目标公司蓝色加粗落在 <th> 表头（写成了公司=列旧方向）："
+                     "当前指标表与趋势表应公司=行标题，目标公司蓝色加粗标在行首格（fill-schema peers 规则）")
+
+
+def _check_peers_bestworst(fill: dict, warns: list) -> None:
+    """v4.10：同业当前指标表每列最优/最差标注（cell-best/cell-worst）缺失告警——
+    工行 09-11 报告两表零标注实证（软规则无门禁就不会被遵守）。matrix-table 兜底形态不适用。"""
+    peers = fill.get("peers_html") or ""
+    if ("<table" in peers and "matrix-table" not in peers
+            and "cell-best" not in peers and "cell-worst" not in peers):
+        warns.append("peers_html 当前指标表无 cell-best/cell-worst 最优/最差标注："
+                     "每列按指标方向性各标一格（低为优：PE/PB/负债率；高为优：ROE/增速等），"
+                     "规则见 fill-schema「表格」节")
+
+
+def _check_price_history_pe(fill: dict, warns: list) -> None:
+    """v4.10：price_history 的 pe 过半缺失 → 图只画股价线而标题仍挂 PE(TTM)（图文不符）。
+    A 股 E2 月线自带月末 PE(TTM) 序列应照抄——工行 09-11 报告 12 个点 pe 全缺实证。"""
+    ph = fill.get("price_history") or {}
+    series = ph.get("series") or []
+    if not series:
+        return
+    n_pe = sum(1 for p in series if isinstance(p, dict) and p.get("pe") is not None)
+    if n_pe * 2 < len(series):
+        warns.append(f"price_history 的 pe 字段仅 {n_pe}/{len(series)} 点有效（过半缺失）："
+                     "PE(TTM) 折线将不生成——A股 E2 月线输出自带月末 PE(TTM) 序列，照抄即可（禁手估）；"
+                     "港股或数据确实不可得时请在图注/正文注明口径")
+
+
+def _check_l4_form(fill: dict) -> None:
+    """v4.10：L4 固定形态硬门禁（工行 09-11 报告照抄 09-09 旧形态实证——软规则不拦就没人守）。
+    ①损失预演必须为三联卡（.pm-grid，骨架见 fill-schema），禁止退回单段 danger-card 长文；
+    ②黄灯扣分明细表行数必须与顶层 yellow_deductions 条数一致——多列=零扣分空行该删，
+    少列=扣分项没列全。类别字母缺失无法核对时降级告警。"""
+    l4 = fill.get("l4_html") or ""
+    if "pm-grid" not in l4:
+        raise ValueError("l4_html 缺损失预演三联卡（.pm-grid 固定骨架，v4.10 起）："
+                         "禁止退回单段 danger-card 长文——骨架见 fill-schema「损失预演三联卡骨架」")
+    yellow = fill.get("yellow_deductions") or []
+    rows = re.findall(r"<tr><td>\s*[abcd][\s　]", l4)
+    if rows and len(rows) != len(yellow):
+        raise ValueError(f"l4_html 黄灯扣分明细表 {len(rows)} 行与 yellow_deductions {len(yellow)} 条不一致："
+                         "只列 points>0 的类别行（零扣分类别不入表，表末一句「其余类别已核查无扣分」兜底），"
+                         "每行扣分须与 yellow_deductions 逐项对应")
+    if not rows and yellow:
+        print(f"⚠️ 内容校验: l4_html 黄灯扣分明细未检出表格形态（<td>a-d 类别行），但有 "
+              f"{len(yellow)} 条 yellow_deductions——请用扣分表正典形态（fill-schema「L4 黄灯扣分明细」）",
+              file=sys.stderr)
+
+
 def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
     """复盘「未命中」判定缺诊断方向告警（v4.9，backtest.md 6.6 复盘纪律）：
     review_html 含「未命中」但未提「规律/反例」——未命中的旧假设必须写明是规律失效还是
@@ -606,6 +661,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_red_flag_breaker(fill)
     _check_thesis_consistency(fill, calc)
     _check_content_floor(fill)
+    _check_l4_form(fill)
 
     warns = []
     _check_missing_required_warns(fill, warns)
@@ -621,6 +677,8 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_conclusion_structure(fill, warns)
     _check_governance_strip(fill, warns)
     _check_peers_orientation(fill, warns)
+    _check_peers_bestworst(fill, warns)
+    _check_price_history_pe(fill, warns)
     _check_prev_fields(fill, warns)
     _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
@@ -661,8 +719,11 @@ def _tag_timing_table(html: str) -> str:
 
 def _check_l4_order(l4_html: str) -> None:
     """黄灯四类须固定 a→b→c→d 顺序（SKILL.md L4 规范）；检出乱序则告警，由模型修正后重渲。
-    不做自动重排——四类内容块结构多变（有/无命中、合并段落），程序重排太脆。"""
-    seq = re.findall(r"<strong>\s*[（(]?\s*([abcd])\s*[)）]?", l4_html or "")
+    不做自动重排——四类内容块结构多变（有/无命中、合并段落），程序重排太脆。
+    v4.10：除 `<strong>(a` 行内形态外，同时识别扣分表形态 `<td>a 交易与股东行为</td>`
+    （工行报告用表格绕过了原正则；v4.10 起表格为唯一正典，行内形态仅作单条引用）。"""
+    seq = [a or b for a, b in re.findall(
+        r"<strong>\s*[（(]?\s*([abcd])\s*[)）]?|<td>\s*([abcd])[\s　]", l4_html or "")]
     if seq and seq != sorted(seq):
         print(f"⚠️ L4 黄灯扣分四类顺序应为 a→b→c→d，当前为 {'→'.join(seq)}；"
               f"请调整 l4_html 顺序后重新渲染", file=sys.stderr)

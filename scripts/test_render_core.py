@@ -72,7 +72,8 @@ def minimal_fill(**over):
                       '<p><strong>评分：</strong>7.5——基准 7.0，股权/激励两项正面 +0.5；'
                       '关联交易关注项不扣分但列入 13 章跟踪。</p></div>'),
         "l3_html": "".join(_dim(long_text) for _ in range(3)),
-        # v4.9.1 补充修订二：l4 章首红灯 hero 三卡（pass=通过）+ 黄灯说明 + 损失预演卡
+        # v4.9.1 补充修订二：l4 章首红灯 hero 三卡（pass=通过）；
+        # v4.10：黄灯无扣分只写核查兜底句（不列空行表）+ 损失预演改固定三联卡
         "l4_html": ('<div class="flag-hero">'
                     '<div class="flag-hero-card pass"><div class="fh-name">a 财务造假与极高杠杆</div>'
                     '<div class="fh-verdict">通过</div>'
@@ -84,9 +85,17 @@ def minimal_fill(**over):
                     '<div class="fh-verdict">通过</div>'
                     '<div class="fh-desc">核心产品收入连续增长，无被禁/被主要市场抛弃迹象</div></div>'
                     '</div>'
-                    '<p>黄灯扣分：无（四类逐项核查未命中）。</p>'
-                    '<div class="danger-card"><strong>损失预演：</strong>假设两年后亏损 30%，'
-                    '最可能是商品价格深跌叠加产能释放不及预期；与黄灯清单高度重合，无清单外新风险。</div>'),
+                    '<p>黄灯扣分：无——四类（a 交易与股东行为 / b 行业与政策环境 / '
+                    'c 盈利与财务质量 / d 经营与公司治理）逐项核查无扣分。</p>'
+                    '<p><strong>损失预演（假设两年后这笔投资亏损 30%）：</strong></p>'
+                    '<div class="pm-grid">'
+                    '<div class="pm-card"><div class="pm-head">最可能的亏损故事</div>'
+                    '<p>商品价格深跌叠加产能释放不及预期，利润腰斩后估值随之下杀。</p></div>'
+                    '<div class="pm-card"><div class="pm-head">与红黄灯清单的重合度</div>'
+                    '<p>与黄灯 b 类（行业周期）高度重合，是同一回事的概率高。</p></div>'
+                    '<div class="pm-card"><div class="pm-head">清单外新风险</div>'
+                    '<p>未识别出清单外新风险：资产负债表干净，无重大单一客户依赖。</p></div>'
+                    '</div>'),
         "valuation_method": "PE历史时段匹配法", "stock_type": "周期股",
         "valuation": {"shares": 100, "horizon": "12个月", "scenarios": [
             {"key": "pess", "label": "悲观", "trigger": "下行", "profit": 80, "pe": [8, 10]},
@@ -1054,6 +1063,205 @@ def test_peers_orientation_warns():
     assert "公司=行" in capture(minimal_fill(peers_html=col_form)), "公司列旧方向应告警"
     assert "公司=行" not in capture(minimal_fill()), "行标题形态不应告警"
     print("OK peers 公司行标题（th 蓝 style 告警 / 行首格放行）")
+
+
+def test_low_price_precision():
+    """v4.10：低价股目标价区间两位小数（_fmt_px，<10 元）——工行「6-6/8-8/9-9」被整数
+    格式化压没区间的实证修复；目标价行/Hero 区间卡/走廊图标签统一精度，≥10 元仍整数。"""
+    with tempfile.TemporaryDirectory() as d:
+        fill = minimal_fill(
+            price="7.94", pe_ttm="7.56",
+            valuation_inputs={"pe_ttm": 7.56, "pe_band": [6.5, 7.8],
+                              "div_yield": 3.9, "risk_free": 1.7},
+            valuation={"shares": 3564, "horizon": "12个月", "scenarios": [
+                {"key": "pess", "label": "悲观", "trigger": "息差续降", "profit": 3500, "pe": [6, 6.6]},
+                {"key": "base", "label": "基础", "trigger": "息差企稳", "profit": 3795, "pe": [7.1, 7.5]},
+                {"key": "opt", "label": "乐观", "trigger": "息差回升", "profit": 3950, "pe": [7.8, 8.4]},
+            ]},
+            thesis_html=('银行论点与关键证据。三情景目标价 '
+                         '<span class="scenario-pess">6.19</span>/'
+                         '<span class="scenario-base">7.77</span>/'
+                         '<span class="scenario-opt">8.98</span> 元，结论：回避当前价。'),
+        )
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(fill, fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    # 3500/3564×6=5.89、×6.6=6.48；3795/3564×7.1=7.56、×7.5=7.99（base 区间 → Hero 区间卡）
+    assert "5.89-6.48 元" in html, "悲观目标价应为两位小数区间"
+    assert "7.56-7.99" in html, "Hero 目标价区间卡应为 base 两位小数区间"
+    assert ">6-6 元<" not in html and ">8-8 元<" not in html, "整数压没区间的旧形态不得复现"
+    print("OK 低价股目标价两位小数（区间不再被整数格式化压没）")
+
+
+def test_scenario_table_alignment_fixed():
+    """v4.10：三情景表触发条件行随列右对齐（工行触发行不一致实证）——表头/时间维度/触发条件
+    全部 num 类；scenario-table 豁免 fix_table_alignment（长文本触发的长文剥类不再介入）。"""
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(), fp, ensure_ascii=False)
+        out = R.render(p, out_path=os.path.join(d, "out.html"))
+        html = open(out, encoding="utf-8").read()
+    assert '<th class="num">悲观情景</th>' in html, "情景列表头应 num 右对齐"
+    assert '<td class="num">下行</td>' in html, "触发条件行应随列 num"
+    assert '<td class="num">12个月</td>' in html, "时间维度行应随列 num"
+    long_trig = "NIM 降至 1.22%、信用成本升至 0.65% 的长触发条件文本"
+    html2 = R.fix_table_alignment(
+        f'<table class="scenario-table"><tr><th>指标</th><th class="num">悲观情景</th></tr>'
+        f'<tr><td>触发条件</td><td class="num">{long_trig}</td></tr></table>')
+    assert f'<td class="num">{long_trig}</td>' in html2, "scenario-table 应豁免长文剥类"
+    print("OK 三情景表全列右对齐 + scenario-table 豁免对齐修正")
+
+
+def test_l4_order_table_form():
+    """v4.10：黄灯四类顺序检查覆盖扣分表形态（<td>a …</td>）——跳号（b→c）放行，乱序告警。"""
+    import contextlib
+    import io
+
+    def capture(l4):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R._check_l4_order(l4)
+        return buf.getvalue()
+
+    ordered = ('<table><tbody>'
+               '<tr><td>b 行业与政策环境</td><td>x</td></tr>'
+               '<tr><td>c 盈利与财务质量</td><td>y</td></tr></tbody></table>')
+    assert capture(ordered) == "", "跳号但有序应放行"
+    messy = ordered.replace("<td>b 行业", "<td>c 行业").replace("<td>c 盈利", "<td>b 盈利")
+    assert "a→b→c→d" in capture(messy), "乱序应告警"
+    print("OK 黄灯扣分表形态顺序检查（跳号放行 / 乱序告警）")
+
+
+def test_archive_after_render():
+    """v4.10 B-min 归档：渲染成功后 _fill_/_em_ 前缀文件移入 _archive/ 并追加 _index.jsonl；
+    非 _fill_ 命名的 fill（fixture/存量文件）不动；归档在渲染成功之后（防伪链不断）。"""
+    with tempfile.TemporaryDirectory() as d:
+        quote_path = os.path.join(d, "_em_600000_quote.json")
+        with open(quote_path, "w", encoding="utf-8") as fp:
+            json.dump({"price": 10, "pe_ttm": 11}, fp)
+        fill = minimal_fill(quote={"source_file": quote_path, "date": "2026-08-27"})
+        p = os.path.join(d, "_fill_t.json")
+        with open(p, "w", encoding="utf-8") as fp:
+            json.dump(fill, fp, ensure_ascii=False)
+        R.render(p, out_path=os.path.join(d, "out.html"))
+        arch = os.path.join(d, "_archive")
+        assert not os.path.exists(p), "fill 应被移走"
+        assert not os.path.exists(quote_path), "quote 落盘应被移走"
+        assert os.path.exists(os.path.join(arch, "fill_测试股份_600000_2026-08-27.json")), "fill 归档命名"
+        assert os.path.exists(os.path.join(arch, "em_600000_quote_2026-08-27.json")), "quote 归档命名"
+        row = json.loads(open(os.path.join(arch, "_index.jsonl"), encoding="utf-8").read().strip())
+        assert row["company"] == "测试股份" and row["code"] == "600000", "索引行公司/代码"
+        assert row["html"] == "out.html" and row["renderer"] == R.RENDERER_VERSION, "索引行 html/渲染器版本"
+        p2 = os.path.join(d, "keep.json")
+        with open(p2, "w", encoding="utf-8") as fp:
+            json.dump(minimal_fill(), fp, ensure_ascii=False)
+        R.render(p2, out_path=os.path.join(d, "out2.html"))
+        assert os.path.exists(p2), "非 _fill_ 前缀 fill 不得被移动"
+        n = len(open(os.path.join(arch, "_index.jsonl"), encoding="utf-8").read().strip().splitlines())
+        assert n == 2, "每次渲染追加一行索引"
+    print("OK 渲染后归档（fill+quote 移入 _archive、索引追加、非 _fill_ 不动）")
+
+
+def test_peers_bestworst_warn():
+    """v4.10：同业当前指标表零 cell-best/cell-worst 标注 → 告警（工行 09-11 两表零标注实证）。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    bare = ('<div class="table-scroll"><table class="freeze-first">'
+            '<tr><th>公司</th><th>PE(TTM)</th></tr>'
+            '<tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td><td>11</td></tr>'
+            '<tr><td>同业甲</td><td>25</td></tr></table></div>'
+            '<span class="source">数据来源：测试</span>')
+    assert "cell-best" in capture(minimal_fill(peers_html=bare)), "零标注应告警"
+    assert "cell-best" not in capture(minimal_fill()), "fixture 自带标注不应告警"
+    print("OK peers 最优/最差标注缺失告警（零标注告警 / 自带放行）")
+
+
+def test_price_history_pe_warn():
+    """v4.10：price_history 的 pe 过半缺失 → PE 折线不生成，告警提示照抄 E2 月末 PE
+    （工行 09-11 报告 12 点全缺、图只剩股价线实证）。"""
+    import contextlib
+    import io
+
+    def capture(fill):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            R.validate_content(fill, R.compute_valuation(fill))
+        return buf.getvalue()
+
+    ph = {"label": "近12个月", "series": [{"m": f"2025-{m:02d}", "close": 7.5} for m in range(1, 13)]}
+    assert "月末 PE" in capture(minimal_fill(price_history=ph)), "pe 全缺应告警"
+    ph2 = {"label": "近12个月",
+           "series": [{"m": f"2025-{m:02d}", "close": 7.5, "pe": 7.6} for m in range(1, 13)]}
+    assert "月末 PE" not in capture(minimal_fill(price_history=ph2)), "pe 齐全不应告警"
+    print("OK price_history pe 缺失告警（全缺告警 / 齐全放行）")
+
+
+def test_l4_form_gates():
+    """v4.10：L4 固定形态硬门禁——缺 pm-grid 三联卡拒渲染（旧 danger-card 单段形态打回）；
+    黄灯扣分明细表行数 ≠ yellow_deductions 条数拒渲染（工行 09-11 照抄旧形态实证）。"""
+
+    def expect_reject(fill, needle):
+        try:
+            R.validate_content(fill, R.compute_valuation(fill))
+        except ValueError as e:
+            assert needle in str(e), f"拒绝理由应含「{needle}」，实际：{e}"
+            return
+        raise AssertionError(f"应拒渲染但未拒（期待理由含「{needle}」）")
+
+    f = minimal_fill()
+    f["l4_html"] = ('<div class="danger-card"><strong>损失预演：</strong>单段长文旧形态，'
+                    '故事与重合度与清单外风险糊在一个段落里。</div>')
+    expect_reject(f, "损失预演三联卡")
+    f2 = minimal_fill(yellow_deductions=[{"label": "x", "points": 0.5},
+                                         {"label": "y", "points": 0.5}])
+    f2["l4_html"] = (f2["l4_html"] + '<div class="table-scroll"><table><tbody>'
+                     '<tr><td>a 交易与股东行为</td><td>无</td><td>0</td></tr>'
+                     '<tr><td>b 行业与政策环境</td><td>x</td><td class="num">0.5</td></tr>'
+                     '<tr><td>c 盈利与财务质量</td><td>y</td><td class="num">0.5</td></tr>'
+                     '<tr><td>d 经营与公司治理</td><td>无</td><td>0</td></tr>'
+                     '</tbody></table></div><span class="source">数据来源：测试</span>')
+    expect_reject(f2, "只列 points>0")
+    f3 = minimal_fill(yellow_deductions=[{"label": "x", "points": 0.5}])
+    f3["l4_html"] = (f3["l4_html"] + '<div class="table-scroll"><table><tbody>'
+                     '<tr><td>b 行业与政策环境</td><td>x</td><td class="num">0.5</td></tr>'
+                     '</tbody></table></div><span class="source">数据来源：测试</span>')
+    R.validate_content(f3, R.compute_valuation(f3))  # 匹配形态不拒即通过
+    print("OK L4 形态门禁（旧形态拒 / 零扣分行拒 / 合规放行）")
+
+
+def test_fix_alignment_tie_goes_left():
+    """v4.10：fix_table_alignment 平票判左——文本为主的表整表左对齐不再锯齿
+    （工行 09-11 预期差表「净息差判断」行实证）；数字占多数的列仍右对齐。"""
+    tbl = ('<table><thead><tr><th>维度</th><th>中金</th><th>光大</th></tr></thead><tbody>'
+           '<tr><td>净利</td><td>基本不变</td><td>3,757 亿</td></tr>'
+           '<tr><td>息差判断</td><td>息差企稳</td><td>负债成本降幅趋缓</td></tr>'
+           '<tr><td>评级</td><td>跑赢行业</td><td>买入</td></tr></tbody></table>')
+    html = R.fix_table_alignment(tbl)
+    assert 'class="num"' not in html, "文本为主应整表左对齐"
+    tbl3 = ('<table><thead><tr><th>维度</th><th>卖方</th></tr></thead><tbody>'
+            '<tr><td>2026E 净利</td><td>3,757 亿</td></tr>'
+            '<tr><td>增速</td><td>+2.7%</td></tr>'
+            '<tr><td>息差判断</td><td>负债成本降幅趋缓</td></tr>'
+            '<tr><td>评级</td><td>买入</td></tr></tbody></table>')
+    html3 = R.fix_table_alignment(tbl3)
+    assert '<th class="num">卖方</th>' not in html3, "平票列应判左（表头不加 num）"
+    assert '>买入</td>' in html3, "平票列文字格不加 num"
+    tbl2 = ('<table><thead><tr><th>公司</th><th>PE</th></tr></thead><tbody>'
+            '<tr><td>甲</td><td>11</td></tr><tr><td>乙</td><td>25</td></tr>'
+            '<tr><td>丙</td><td>—</td></tr></tbody></table>')
+    html2 = R.fix_table_alignment(tbl2)
+    assert '<th class="num">PE</th>' in html2, "数字占多数的列仍应右对齐"
+    print("OK 对齐平票判左（文本表整表左 / 平票列左 / 数字列右不变）")
 
 
 if __name__ == "__main__":

@@ -150,5 +150,10 @@ def main():
     print("全部冒烟断言通过。")
 
 
+def test_mcap_mode_smoke():
+    """pytest 入口（v4.10.2 收编收集盲区）：mcap/PE 口径全量冒烟，主体在 main()。"""
+    main()
+
+
 if __name__ == "__main__":
     main()

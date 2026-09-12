@@ -90,7 +90,6 @@ body {
 .section-tag { display: block; width: fit-content; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
 .muted { color: #6f695e; }
-.verdict { color: #66604f; margin: 8px 0 16px; font-size: 13px; border-left: 3px solid #d0c6ae; padding-left: 10px; }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
 /* v4.10：tbody 内 th（行标题写法，如同业表公司名列）归一为 td 同式——否则 th 底色米黄穿透
@@ -287,12 +286,12 @@ html { scroll-behavior: smooth; }
         <div class="hero-track quality">
           <div class="s-label">质量分</div>
           <div class="s-value">{{QUALITY_SCORE}}</div>
-          <div class="s-sub">本质 {{L1_W}}% + 预期 {{L3_W}}% − 黄灯 {{YELLOW_TOTAL}}</div>
+          <div class="s-sub">{{QUALITY_WORD}}</div>
         </div>
         <div class="hero-track valuation">
           <div class="s-label">估值分</div>
           <div class="s-value {{VALUATION_VALUE_CLASS}}">{{VALUATION_SCORE}}</div>
-          <div class="s-sub">中枢·赔率·倍数·股息 四件套加权</div>
+          <div class="s-sub">{{VALUATION_WORD}}</div>
         </div>
       </div>
       <div class="hero-timing-mini">时机分 <span class="tv">{{TIMING_SCORE}}</span> · 微调 ±1 档</div>

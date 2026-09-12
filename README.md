@@ -98,8 +98,9 @@ stock-deep-analysis/
 │   ├── em_data.py              # 东财/tushare 取数函数族：E1-E6 全部 fetch_*（em_fetch 拆分模块）
 │   ├── em_cache.py             # 磁盘缓存原语 + TTL 分档常量（em_fetch 拆分模块）
 │   ├── render_report.py        # fill JSON → 最终 HTML（评分计算+图形生成+校验+自动命名）
+│   ├── align_fix.py            # 表格对齐自动修正机（渲染末道 transform）+ 时机小表自动补类
 │   ├── validate.py             # fill 内容校验：全部 _check_* 硬校验/告警项（render_report 拆分模块）
-│   ├── scoring.py              # 评分与卡片公共基座：维度/权重常量 + compute_scores 三轨评分
+│   ├── scoring.py              # 评分与估值公共基座：维度/权重常量 + compute_scores + compute_valuation 估值轨
 │   ├── charts_base.py          # SVG 图表基座：色板/数值几何工具/骨架 helper（各图族共享）
 │   ├── charts_scenario.py      # 情景类图族：目标价走廊 / 三情景表+三指标卡 / 估值-质量散点
 │   ├── charts_score.py         # 评分类图族：九维评分分布横条 / 敏感性龙卷风
@@ -111,7 +112,10 @@ stock-deep-analysis/
 │   ├── monthly_checkup.py      # 月度体检：到期复盘提醒 + 评分校准复跑
 │   ├── deploy.ps1              # 技能部署脚本（dry-run 预览 / -Go 实际部署）
 │   ├── golden/                 # 渲染输出 golden 快照基准（test_golden 逐字节比对底稿）
-│   ├── test_render_core.py     # render_report 核心评分/落位回归测试
+│   ├── conftest.py             # pytest 共享夹具：minimal_fill/render_fill/capture_stderr 等
+│   ├── test_render_gate.py     # 门禁校验回归（拒渲染/防伪/L4 硬门禁/仓位决策链）
+│   ├── test_render_charts.py   # 图表生成回归（各 build_* 图 / 对齐机）
+│   ├── test_render_e2e.py      # 端到端回归（render 全流程 / 归档 / 回测模式）
 │   ├── test_em_fetch.py        # em_fetch 取数链路回归测试
 │   ├── test_extract_review.py  # extract_review 回测触发/锚点提取回归测试
 │   ├── test_mcap_mode.py       # render_report 市值口径（mcap/metric_label）冒烟自检
@@ -124,15 +128,21 @@ stock-deep-analysis/
 
 ## 测试与自检
 
-`scripts/` 下七套测试全部离线可跑（无网络依赖）：
+`scripts/` 下测试全部离线可跑（无网络依赖）。统一入口（v4.10.2 起全量 pytest 收集）：
+
+```bash
+python -m pytest scripts/ -q    # 全部回归（门禁/图表/端到端/golden/em_fetch/校准/体检等）
+```
+
+也可逐文件直跑：
 
 ```bash
 cd scripts
-python test_render_core.py      # 决策矩阵落位 / 三情景取数 / 硬校验 / 币种
+python -m pytest test_render_gate.py test_render_charts.py test_render_e2e.py  # 渲染门禁/图表/端到端
 python test_em_fetch.py         # 市场映射 / 闰日 / 同比文字化 / 429 硬停
 python test_extract_review.py   # 回测触发判定 / 锚点提取
 python test_mcap_mode.py        # 市值口径渲染
-python test_golden.py           # 渲染器端到端 golden 快照（最小 fill 全量渲染，产物与入库快照逐字节比对）
+python test_golden.py           # 渲染器端到端 golden 快照（minimal/full/mcap 三份 fill 全量渲染，产物与入库快照逐字节比对）
 python test_calibration.py      # score_calibration 纯函数回归（文件名解析 / 分桶边界 / 同股去重）
 python test_monthly_checkup.py  # monthly_checkup 月度体检回归（scan_reports 合并口径 / --disclosure 市场映射）
 ```

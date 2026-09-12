@@ -7,6 +7,7 @@ compute_scores（三轨评分）、6/7/11 章卡片族（质量分汇总、估�
 依赖方向：最底层共享层，被 charts/validate/render_report 导入；自身仅依赖标准库。
 """
 import re
+import sys
 
 
 # 维度元数据：key -> (层, 显示名, 层内默认权重)
@@ -119,6 +120,11 @@ def _esc(s) -> str:
             .replace('"', "&quot;"))
 
 
+def _plain_text(frag: str) -> str:
+    """剥掉 HTML 标签后的纯文本（内容地板字数校验与对齐机的共用口径）。"""
+    return re.sub(r"<[^>]+>", "", frag or "").strip()
+
+
 def _scenario_numbers(s: dict):
     """单情景 profit/pe/mcap 三组数值的机械解析（compute_valuation 与内容校验共用同一口径）：
     返回 (profit, pe_lo, pe_hi, mc_lo, mc_hi)，缺失/不可解析/列表不足时为 None。
@@ -133,6 +139,151 @@ def _scenario_numbers(s: dict):
     mc_hi = _num(mc[1]) if len(mc) >= 2 else None
     return profit, pe_lo, pe_hi, mc_lo, mc_hi
 
+
+# 情景语义名（评分/估值层固有映射；可视化配色在 charts_base._SCENARIO_COLORS，按 key 查）
+_SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
+
+
+def compute_valuation(fill: dict):
+    """valuation 字段（结构化三情景假设）→ 全部估值数字由脚本计算。
+    输入：{"shares": 46.27（亿股）, "horizon": "12个月",
+           "scenarios": [{"key":"pess","label":"悲观","trigger":"…","profit":850（归母净利,亿）,"pe":[16,18]}, …]}
+    情景口径二选一：profit+pe（利润口径）或 "mcap":[低,高]（目标总市值亿元，
+    NAV/rNPV/SOTP 行业附录用；目标价 = mcap ÷ shares，无利润/EPS/PE 口径）。
+    返回 None（字段缺失/数据不足）或 dict：
+    rows（含每情景 eps/low/high/mid/upside）、central（年化中枢）、
+    odds（赔率）、dispersion（离散度）、base_lo/base_hi、horizon、mode（pe/mcap）。
+    rows 只填语义字段（label）；配色由 charts 层按 key 查 _SCENARIO_COLORS。"""
+    v = fill.get("valuation")
+    if not v:
+        return None
+    price = _num(fill.get("price"))
+    shares = _num(v.get("shares"))
+    if not price or not shares:
+        print("⚠️ valuation 已填但缺 price/shares，情景表与三指标卡未生成", file=sys.stderr)
+        return None
+    order = {"pess": 0, "base": 1, "opt": 2}
+    rows = []
+    for s in v.get("scenarios") or []:
+        profit, pe_lo, pe_hi, mc_lo, mc_hi = _scenario_numbers(s)
+        key = str(s.get("key") or "").lower()
+        if mc_lo is not None and mc_hi is not None:
+            lo, hi = mc_lo / shares, mc_hi / shares
+            profit = pe_lo = pe_hi = eps = None
+        elif profit is not None and pe_lo is not None and pe_hi is not None:
+            lo, hi = profit * pe_lo / shares, profit * pe_hi / shares
+            eps = profit / shares
+            mc_lo = mc_hi = None
+        else:
+            continue
+        mid = (lo + hi) / 2
+        rows.append({"key": key, "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
+                     "trigger": str(s.get("trigger") or ""), "horizon": str(s.get("horizon") or v.get("horizon") or "12个月"),
+                     "profit": profit, "pe_lo": pe_lo, "pe_hi": pe_hi,
+                     "mcap_lo": mc_lo, "mcap_hi": mc_hi,
+                     "eps": eps, "low": lo, "high": hi, "mid": mid,
+                     "upside": mid / price - 1})
+    if not rows:
+        return None
+    rows.sort(key=lambda r: order.get(r["key"], 1))
+    # 按 key 建字典取三情景：scenarios 含多余 key 或顺序混乱时，按排序位置取行会取错
+    by_key = {r["key"]: r for r in rows}
+    pess = by_key.get("pess", rows[0])
+    base = by_key.get("base", rows[1] if len(rows) > 1 else rows[0])
+    opt = by_key.get("opt", rows[-1])
+    # 年化中枢的时间维度用 base 情景的 horizon（rows 里已按情景级优先、valuation 级兜底解析）
+    horizon = base["horizon"]
+    m = re.search(r"(\d+\.?\d*)", horizon)
+    if m:
+        hv = float(m.group(1))
+        months = hv * 12 if "年" in horizon else hv  # 含"年"→×12；含"月"或纯数字 → 按月
+    else:
+        print(f"⚠️ horizon「{horizon}」无法解析出时长，按 12 个月处理", file=sys.stderr)
+        months = 12.0
+    central_raw = base["mid"] / price - 1
+    central = (1 + central_raw) ** (12 / months) - 1 if months > 0 else central_raw
+    down = price - pess["low"]
+    odds = None if down <= 0 else (base["mid"] - price) / down  # down<=0 → 悲观仍正收益 → ∞
+    dispersion = (opt["mid"] - pess["mid"]) / price
+    if rows[0]["mid"] > rows[-1]["mid"]:
+        print("⚠️ valuation 三情景目标价顺序异常（悲观中枢 > 乐观中枢），请检查 profit/pe 假设", file=sys.stderr)
+    return {"rows": rows, "central": central, "central_raw": central_raw, "months": months,
+            "odds": odds, "dispersion": dispersion, "base_lo": base["low"], "base_hi": base["high"],
+            "horizon": horizon, "price": price,
+            "mode": "mcap" if rows[0]["mcap_lo"] is not None else "pe"}
+
+
+def _lookup(val, pairs, default):
+    """阈值表查找：pairs 为 [(阈值, 分值)] 降序，返回首个 val >= 阈值 的分值。"""
+    for t, s in pairs:
+        if val >= t:
+            return s
+    return default
+
+
+def _lookup_lt(val, pairs, default):
+    """严格小于阈值表查找（合理倍数等「越低越好」口径用；pairs 升序）。"""
+    for t, s in pairs:
+        if val < t:
+            return s
+    return default
+
+
+# 估值分四件套阈值表（规则正文唯一权威在 scoring.md，改动须同步）
+_CENTRAL_TABLE = [(20, 9.0), (15, 8.0), (10, 7.0), (5, 6.0), (0, 5.0), (-5, 4.0), (-10, 3.0)]
+_ODDS_TABLE = [(2, 8.5), (1.5, 7.5), (1.0, 6.0), (0.5, 5.0), (0, 3.5)]
+_DIV_TABLE = [(3, 9.0), (2, 8.0), (1, 7.0), (0, 6.0), (-1, 5.0)]
+# 合理倍数：ratio = 现价 PE ÷ 带中枢，越低越便宜；1e-9 偏移保留原 ≤ 边界语义（≤1.1→5.0 / ≤1.2→3.5）
+_WARRANTED_TABLE = [(0.8, 9.0), (0.9, 8.0), (1.0, 7.0), (1.1 + 1e-9, 5.0), (1.2 + 1e-9, 3.5)]
+
+
+def _map_central(central: float) -> float:
+    return _lookup(central * 100, _CENTRAL_TABLE, 2.0)
+
+
+def _map_odds(odds) -> float:
+    if odds is None:
+        return 10.0  # ∞（悲观仍正收益）
+    return _lookup(odds, _ODDS_TABLE, 2.0)
+
+
+def _map_warranted(pe_ttm: float, band: list) -> float:
+    ratio = pe_ttm / ((band[0] + band[1]) / 2)
+    return _lookup_lt(ratio, _WARRANTED_TABLE, 2.0)
+
+
+def _map_div(div_yield: float, risk_free: float) -> float:
+    return _lookup(div_yield - risk_free, _DIV_TABLE, 4.0)
+
+
+def compute_valuation_score(calc: dict, inputs: dict):
+    """估值分四件套量化 = 中枢×0.4 + 赔率×0.25 + 合理倍数×0.25 + 股息×0.1。
+    inputs: {"pe_ttm": 13.5, "pe_band": [14.5, 15.5], "div_yield": 1.6, "risk_free": 1.7}
+    可选 metric_label：行业口径（P/NAV、P/rNPV、P/EV、经调整PE 等）替换过程卡默认 PE(TTM) 标签。
+    返回 dict（score + 四件套各分 + formula 文字）或 None（缺 calc/inputs/字段）。"""
+    if not calc or not inputs:
+        return None
+    pe_ttm = _num(inputs.get("pe_ttm"))
+    band = inputs.get("pe_band") or []
+    if pe_ttm is None or len(band) < 2:
+        return None
+    band = [_num(band[0]), _num(band[1])]
+    if band[0] is None or band[1] is None or band[1] <= band[0]:
+        return None
+    central_s = _map_central(calc["central"])
+    odds_s = _map_odds(calc["odds"])
+    warranted_s = _map_warranted(pe_ttm, band)
+    div_yield = _num(inputs.get("div_yield"))
+    risk_free = _num(inputs.get("risk_free"))
+    div_s = _map_div(div_yield, risk_free) if (div_yield is not None and risk_free is not None) else 5.0
+    total = round(central_s * 0.4 + odds_s * 0.25 + warranted_s * 0.25 + div_s * 0.1, 1)
+    return {
+        "score": total,
+        "central_s": central_s, "odds_s": odds_s,
+        "warranted_s": warranted_s, "div_s": div_s,
+        "formula": (f"中枢 {central_s:g}×0.4 + 赔率 {odds_s:g}×0.25 + "
+                    f"合理倍数 {warranted_s:g}×0.25 + 股息 {div_s:g}×0.1"),
+    }
 
 
 def compute_scores(fill: dict):
@@ -342,7 +493,9 @@ def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
 
 # 仓位档位序列（上浮 20% 硬顶、下调 0 兜底；规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步）
 _POS_LADDER = [0, 5, 10, 20]
-_POS_LABEL = {0: "不建议参与", 5: "轻仓 ≤5%", 10: "标准仓 ≤10%", 20: "重仓 ≤20%"}
+# 兜底档位文案常量：validate 红灯校验按此字面消费，改文案只许改这里（否则校验静默失效）
+_LABEL_REFUSE = "不建议参与"
+_POS_LABEL = {0: _LABEL_REFUSE, 5: "轻仓 ≤5%", 10: "标准仓 ≤10%", 20: "重仓 ≤20%"}
 
 
 def _matrix_slot(q: float, v: float):
@@ -379,7 +532,7 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
     steps = []
     slot_txt = None
     if red_flag:
-        final_label = "不建议参与"
+        final_label = _LABEL_REFUSE
         steps.append(f"红灯熔断：命中「{_esc(red_flag)}」→ 不建议参与（后续调节不再适用）")
     elif calc and calc["central_raw"] < 0:
         final_label = "回避（中枢为负，等价格）"
@@ -397,16 +550,22 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
             # 负索引回卷到重仓。被拦项统一记入 blocked_by_cap，在轨迹中说明未生效原因。
             up_used = 0
             blocked_by_cap = []
-            # 时机分调节（≥6 上浮一档 / <4 下调一档；0 兜底）
-            if timing is not None and timing >= 6:
-                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
-                        and _POS_LADDER[idx + 1] < 20):
-                    steps.append(f"时机分调节：时机分 {timing:.2f} ≥ 6 → 上浮一档"
+
+            def try_up(name: str, detail: str, cap_tag: str = None) -> None:
+                """上浮一档（受封顶约束）：合计净效应 ≤+1 档且不进 20 档；
+                被拦项记 blocked_by_cap（cap_tag 缺省取 detail），在轨迹中说明未生效原因。"""
+                nonlocal idx, up_used
+                if up_used == 0 and idx + 1 < len(_POS_LADDER) and _POS_LADDER[idx + 1] < 20:
+                    steps.append(f"{name}调节：{detail} → 上浮一档"
                                  f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
                     idx += 1
                     up_used = 1
                 elif idx + 1 < len(_POS_LADDER):  # 落位已在顶格时不重复解释
-                    blocked_by_cap.append(f"时机分 {timing:.2f} ≥ 6")
+                    blocked_by_cap.append(cap_tag if cap_tag is not None else detail)
+
+            # 时机分调节（≥6 上浮一档 / <4 下调一档；0 兜底）
+            if timing is not None and timing >= 6:
+                try_up("时机分", f"时机分 {timing:.2f} ≥ 6")
             elif timing is not None and timing < 4:
                 new_idx = max(idx - 1, 0)
                 steps.append(f"时机分调节：时机分 {timing:.2f} < 4 → 下调一档"
@@ -420,30 +579,16 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
                              f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[new_idx]]}）")
                 idx = new_idx
             elif calc and calc["dispersion"] < 0.40:
-                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
-                        and _POS_LADDER[idx + 1] < 20):
-                    steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% < 40% → 上浮一档"
-                                 f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
-                    idx += 1
-                    up_used = 1
-                elif idx + 1 < len(_POS_LADDER):
-                    blocked_by_cap.append(f"离散度 {calc['dispersion'] * 100:.1f}% < 40%")
+                try_up("离散度", f"离散度 {calc['dispersion'] * 100:.1f}% < 40%")
             # 赔率 ∞ 上浮一档（受封顶约束）
             if calc and calc["odds"] is None:
-                if (up_used == 0 and idx + 1 < len(_POS_LADDER)
-                        and _POS_LADDER[idx + 1] < 20):
-                    steps.append(f"赔率调节：赔率 ∞（悲观仍正收益）→ 上浮一档"
-                                 f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
-                    idx += 1
-                    up_used = 1
-                elif idx + 1 < len(_POS_LADDER):
-                    blocked_by_cap.append("赔率 ∞")
+                try_up("赔率", "赔率 ∞（悲观仍正收益）", "赔率 ∞")
             if blocked_by_cap:
                 steps.append("上浮封顶：" + "、".join(blocked_by_cap)
                              + " 同样满足上浮条件，受「上浮合计 ≤1 档且不进 20 档」限制未生效")
             final_label = _POS_LABEL[_POS_LADDER[idx]]
         elif pos == 0:
-            final_label = "不建议参与"
+            final_label = _LABEL_REFUSE
         else:
             # 观察池：不因时机/赔率上浮；时机 <4 或离散度 >90% 下调为不建议参与
             down = []
@@ -453,7 +598,7 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
                 down.append(f"离散度 {calc['dispersion'] * 100:.1f}% > 90%")
             if down:
                 steps.append(f"{'；'.join(down)} → 观察池下调为不建议参与")
-                final_label = "不建议参与"
+                final_label = _LABEL_REFUSE
             else:
                 final_label = "观察池"
         if not steps:
@@ -491,7 +636,7 @@ def build_position_card(fill: dict, quality: float, valuation: float, timing,
         f'<div class="ts-row"><span class="ts-formula">{s}</span></div>' for s in steps) + '</div>')
 
     # ③ 最终仓位结论徽章行（落位信息并入，报告只显示落位与结论）
-    final_badge = ("badge-red" if final_label in ("不建议参与",) or final_label.startswith("回避")
+    final_badge = ("badge-red" if final_label in (_LABEL_REFUSE,) or final_label.startswith("回避")
                    else "badge-orange" if final_label in ("观察池", "轻仓 ≤5%")
                    else "badge-blue" if final_label.startswith("标准仓") else "badge-green")
     slot_html = f'<span class="muted">{slot_txt} ｜ </span>' if slot_txt else ""

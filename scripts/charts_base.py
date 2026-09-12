@@ -3,14 +3,16 @@
 """charts_base.py — SVG 图表基座（v4.9 从 charts.py 拆出）
 
 内容：全站图表共用色板常量（_C_*，含模板 .mini-cell 底色 _C_PAPER_CELL 与徽章深色字典
-_C_BADGE_DEEP）、数值/格式/几何工具（_fmt_price/_fmt_amt/_pad_domain/_lin_map/_text_w/_wrap_label/_ticks）、
-情景字典（_SCENARIO_COLORS/_SCENARIO_NAMES）、SVG 骨架 helper（_SVG_STYLE/_svg_open/_svg_close/
-_vgrid_ticks/_anchor_fit/_anchor_clamp）与回测新旧对比共享行（_prev_track_rows）。
+_C_BADGE_DEEP）、数值/格式/几何工具（_fmt_px/_fmt_amt/_pad_domain/_lin_map/_text_w/_wrap_label/_ticks）、
+情景字典（_SCENARIO_COLORS）、SVG 骨架 helper（_SVG_STYLE/_svg_open/_svg_close/
+_vgrid_ticks/_hgrid_ticks/_legend_row/_anchor_fit/_anchor_clamp/_inject_chart_anchors）与回测新旧
+对比共享行（_prev_track_rows）。
 只依赖 scoring，被各图族模块与 validate.py 导入。"""
 
 import math
+import sys
 
-from scoring import _fmt, _num
+from scoring import _esc, _fmt, _num
 
 # SVG 色板（全站图表共用暖灰/钢蓝色系，唯一权威处；改色只动这里）
 _C_LABEL = "#6f695e"       # 轴刻度/灰字说明/虚线时点刻（v4.9 自 #8a8375 压深，小字对比度达标）
@@ -36,11 +38,6 @@ _C_ORANGE = "#c08a2e"      # 橙：中档/基础情景
 _C_BADGE_DEEP = {"badge-green": "#4d804d", "badge-orange": "#96691a", "badge-red": "#b84a4a"}
 
 
-def _fmt_price(v):
-    """走廊图价格标签：最多 4 位有效数字（472.3 / 46.15），精度匹配不确定性。"""
-    return f"{v:.4g}"
-
-
 def _fmt_px(v):
     """目标价/区间展示价（v4.10）：低价股两位小数（<10 元，如 5.88-6.47），其余整数。
     缘起：工行报告 7 元价位被 :.0f 压成 6-6/8-8/9-9 假无区间。统一用于三情景表/
@@ -58,7 +55,6 @@ def _fmt_amt(v) -> str:
 
 
 _SCENARIO_COLORS = {"pess": _C_RED, "base": _C_ORANGE, "opt": _C_GREEN}
-_SCENARIO_NAMES = {"pess": "悲观", "base": "基础", "opt": "乐观"}
 
 
 def _prev_track_rows(prev: dict, quality, valuation, timing) -> list:
@@ -154,6 +150,32 @@ def _vgrid_ticks(parts: list, X, vals: list, y1, y2, ty, suffix: str = "") -> No
         parts.append(f'<text x="{gx:.1f}" y="{ty}" text-anchor="middle" font-size="11" fill="{_C_LABEL}">{_fmt(v)}{suffix}</text>')
 
 
+def _hgrid_ticks(parts: list, Y, vals: list, x1, x2, tx, suffix: str = "", fs: int = 11,
+                 dy: int = 4, labels: bool = True) -> None:
+    """横向网格线 + 右对齐刻度文字（股价发丝图/利润增长图/财务趋势面板三图共用）。
+    x1/x2 为网格线横向范围、tx 为刻度文字右缘 x，数值由调用方按各图布局给出；
+    suffix 为刻度数字后的单位（% 等）；labels=False 只画线不出字（财务趋势纯线面板网格随线域）。"""
+    for v in vals:
+        gy = Y(v)
+        parts.append(f'<line x1="{x1}" y1="{gy:.1f}" x2="{x2}" y2="{gy:.1f}" stroke="{_C_GRID}" stroke-width="1"/>')
+        if labels:
+            parts.append(f'<text x="{tx}" y="{gy + dy:.1f}" text-anchor="end" font-size="{fs}" fill="{_C_LABEL}">{_fmt(v)}{suffix}</text>')
+
+
+def _legend_row(parts: list, items: list, x, y: int = 8, fs: int = 11, sw: int = 13, sh: int = 9,
+                rx: float = 2.5, dx: int = 18, gap: int = 22, tcolor: str = _C_LABEL):
+    """图例横排单行：逐项画「矩形色块 + 标签文字」并水平推进，返回行末 x（下一项起点）。
+    items: [(标签, 色块 fill)] 或 [(标签, 色块 fill, 色块额外属性)]；标签由本函数转义、推进宽度按
+    未转义文本量取；文字基线取色块下缘（y + sh - 1）。色块尺寸/字号/间距随各图版式由参数给定。"""
+    for it in items:
+        txt, fill = it[0], it[1]
+        extra = f' {it[2]}' if len(it) > 2 and it[2] else ""
+        parts.append(f'<rect x="{x}" y="{y}" width="{sw}" height="{sh}" rx="{rx}" fill="{fill}"{extra}/>')
+        parts.append(f'<text x="{x + dx}" y="{y + sh - 1}" font-size="{fs}" fill="{tcolor}">{_esc(txt)}</text>')
+        x += dx + _text_w(txt, fs) + gap
+    return x
+
+
 def _anchor_fit(x: float, w: float, lo: float, hi: float, inset: float):
     """居中标签近边缘改对齐：左缘先查，越界改 start/end 且锚点内缩 inset
     （走廊现价标签 / PE 带当前值标签）。返回 (text-anchor, x)。"""
@@ -174,13 +196,27 @@ def _anchor_clamp(x: float, w: float, lo: float, hi: float):
     return "middle", x
 
 
+def _inject_chart_anchors(html: str, items: tuple, owner: str, tail: str, hint: str) -> str:
+    """图表锚点注入（第 3 章 / 第 4 章共用）：items 为 (锚点注释, 图 HTML, 字段名) 序列，
+    锚点在 → 原位替换；锚点缺失但字段已填 → 图追加到章末尾 + stderr 告警；字段未填 → 锚点静默
+    清除（图返回空串）。owner=正文变量名、tail=追加位置描述、hint=锚点摆放建议，只用于告警文案。"""
+    for anchor, chart_html, field in items:
+        if anchor in html:
+            html = html.replace(anchor, chart_html)
+        elif chart_html:
+            html += "\n" + chart_html
+            print(f"⚠️ {owner} 缺 {anchor} 锚点：{field} 图已追加到{tail}（{hint}）", file=sys.stderr)
+    return html
+
+
 # 供图族模块 `from charts_base import *` 拉取全部基座符号（含下划线名，
 # 免逐名漏列——v4.9 拆分初版曾漏 _C_INK 致 NameError）
 __all__ = [
     "_C_LABEL", "_C_GRID", "_C_AXIS", "_C_BLUE", "_C_PAPER", "_C_INK", "_C_BLACK",
     "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_PAPER_CELL",
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
-    "_fmt_price", "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_SCENARIO_NAMES", "_prev_track_rows",
+    "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_prev_track_rows",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
-    "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_anchor_fit", "_anchor_clamp",
+    "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_hgrid_ticks", "_legend_row",
+    "_inject_chart_anchors", "_anchor_fit", "_anchor_clamp",
 ]

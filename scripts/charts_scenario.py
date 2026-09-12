@@ -4,7 +4,7 @@
 
 import math
 
-from scoring import _num, _fmt, _esc
+from scoring import _num, _fmt, _esc, _SCENARIO_NAMES
 from charts_base import *
 
 def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
@@ -17,7 +17,7 @@ def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
     cur = str(fill.get("currency") or "元")
     if calc:
         cols = [{"label": r["label"], "low": r["low"], "high": r["high"], "mid": r["mid"],
-                 "color": r["color"]} for r in calc["rows"]]
+                 "color": _SCENARIO_COLORS.get(r["key"], _C_LABEL)} for r in calc["rows"]]
     else:
         cols = []
         for s in fill.get("scenarios") or []:

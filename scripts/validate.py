@@ -2,22 +2,26 @@
 # -*- coding: utf-8 -*-
 """validate.py — fill 内容校验（render_report 拆分模块，v4.8.2 重构）
 
-内容：全部 _check_* 硬校验与告警项、validate_content 总开关、
-_tag_timing_table（时机小表自动补类）、_check_l4_order（黄灯四类顺序）、
-build_prev_strip（回测 Hero 对比条）。只依赖 scoring/charts_base 的常量与工具，
-不依赖主模块运行时状态；告警直接打印 stderr（与拆分前行为一致）。
+内容：全部 _check_* 硬校验与告警项、validate_content 总开关。
+只依赖 scoring/charts_base 的常量与工具，不依赖主模块运行时状态；
+告警直接打印 stderr（与拆分前行为一致）。
+v4.10.2 归位出清：_tag_timing_table → align_fix.py；_check_l4_order/build_prev_strip
+→ render_report.py（前者被 render 单点调用，后者为 Hero 片段构建，均非本模块校验职责）。
 """
 import json
 import re
 import sys
 
-from scoring import DIMS, _esc, _num, _fmt, _scenario_numbers
-from charts_base import _SCENARIO_NAMES, _prev_track_rows
+from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
+                     _SCENARIO_NAMES)
+from charts_base import _C_BLUE
 
 
-def _plain_text(frag: str) -> str:
-    """剥掉 HTML 标签后的纯文本（用于内容地板字数校验）。"""
-    return re.sub(r"<[^>]+>", "", frag or "").strip()
+# 正文 HTML 字段全集（写作纪律/代号泄漏/.rev 高亮检查用）
+_HTML_FIELDS = ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
+                "valuation_html", "gap_html", "peers_html", "dash_html", "position_html", "review_html")
+# 可含数据表的章节字段（source 来源标注检查用；thesis 不含表，剔除）
+_HTML_TABLE_FIELDS = _HTML_FIELDS[1:]
 
 
 def _check_price_date(fill: dict) -> None:
@@ -30,10 +34,29 @@ def _check_price_date(fill: dict) -> None:
         raise ValueError(f"date 格式非法: {fill.get('date')!r}（必须严格 YYYY-MM-DD）")
 
 
+def _strict_num(v):
+    """防伪比对专用严格解析：仅接受 int/float 或纯数字字符串，
+    夹带任何文字（如「18.6（H股口径）」）返回 None——防伪强度不应由解析层宽松度决定。"""
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v or "").strip()
+    return float(s) if re.fullmatch(r"-?\d+(\.\d+)?", s) else None
+
+
+def _req_strict(owner: str, key: str, raw):
+    """防伪字段存在即须为纯数字：有值但严格解析失败 → 拒渲染（夹带文字即防伪链疑点）。"""
+    v = _strict_num(raw)
+    if raw is not None and str(raw).strip() and v is None:
+        raise ValueError(f"{owner}.{key} 不是纯数字: {raw!r}——防伪比对字段禁止夹带文字"
+                         f"（如「18.6（H股口径）」），口径注请写进 .source 说明后重渲")
+    return v
+
+
 def _check_quote_consistency(fill: dict) -> None:
     """quote 防伪（神华 601088 现价造假事故修复）：fill 声明 quote.source_file 时，
     读 em_fetch --out 落盘 JSON，比对 price/pe_ttm，偏差 >1% 拒渲染（与估值分四件套同级）。
-    quote 字段缺失不拒（存量 fill 兼容），由 _check_quote_present 走告警。"""
+    fill 侧一律严格解析（_strict_num），夹带文字即拒；quote 字段缺失不拒（存量 fill 兼容），
+    由 _check_quote_present 走告警。"""
     q = fill.get("quote")
     if q is None:
         return
@@ -47,7 +70,7 @@ def _check_quote_consistency(fill: dict) -> None:
         raise ValueError(f"quote.source_file 读取失败: {src}（{e}）——防伪链断裂不能静默放行，"
                          f"请重跑 em_fetch --out 落盘后再渲染")
     for fill_key, ref_key in (("price", "price"), ("pe_ttm", "pe_ttm")):
-        fv, rv = _num(fill.get(fill_key)), _num(ref.get(ref_key))
+        fv, rv = _req_strict("fill", fill_key, fill.get(fill_key)), _num(ref.get(ref_key))
         if fv is None or rv is None or rv == 0:
             continue
         if abs(fv - rv) / abs(rv) > 0.01:
@@ -58,7 +81,7 @@ def _check_quote_consistency(fill: dict) -> None:
     # 只比 price/pe_ttm 两个点不够，估值分输入必须同源）
     vi = fill.get("valuation_inputs") or {}
     if not vi.get("metric_label"):  # 行业口径（P/NAV、P/rNPV 等）下 pe 语义非 PE(TTM)，跳过
-        vpe, rpe = _num(vi.get("pe_ttm")), _num(ref.get("pe_ttm"))
+        vpe, rpe = _req_strict("valuation_inputs", "pe_ttm", vi.get("pe_ttm")), _num(ref.get("pe_ttm"))
         if vpe is not None and rpe:
             if abs(vpe - rpe) / abs(rpe) > 0.01:
                 raise ValueError(f"valuation_inputs.pe_ttm 与 E1 落盘值不一致: fill={vpe:g} vs "
@@ -67,7 +90,8 @@ def _check_quote_consistency(fill: dict) -> None:
         # 合理带完全落在历史极值带之外 = 校准逻辑或取数必有一假（完全无交集才拦，部分重叠正常）
         band, hb = vi.get("pe_band") or [], ref.get("pe_band") or []
         if len(band) >= 2 and len(hb) >= 2:
-            blo, bhi = _num(band[0]), _num(band[1])
+            blo = _req_strict("valuation_inputs", "pe_band[0]", band[0])
+            bhi = _req_strict("valuation_inputs", "pe_band[1]", band[1])
             hlo, hhi = _num(hb[0]), _num(hb[1])
             if None not in (blo, bhi, hlo, hhi) and (bhi < hlo or blo > hhi):
                 raise ValueError(f"valuation_inputs.pe_band [{_fmt(blo)},{_fmt(bhi)}] 与 E1 落盘历史带 "
@@ -75,7 +99,7 @@ def _check_quote_consistency(fill: dict) -> None:
                                  f"越界即防伪链疑点，请核对 pe_band 取数与校准逻辑后重渲")
     # risk_free / div_yield 偏差 >0.3pct 告警不拒（允许手工估算/税后折算，但必须可见）
     for k in ("risk_free", "div_yield"):
-        fv, rv = _num(vi.get(k)), _num(ref.get(k))
+        fv, rv = _req_strict("valuation_inputs", k, vi.get(k)), _num(ref.get(k))
         if fv is None or rv is None:
             continue
         if k == "div_yield" and ref.get("market") != "A股":
@@ -204,8 +228,8 @@ def _check_red_flag_breaker(fill: dict) -> None:
     """红灯熔断：red_flag 非空 → position_html 必须包含「不建议参与」。"""
     red_flag = (fill.get("red_flag") or "").strip()
     pos_html = fill.get("position_html") or ""
-    if red_flag and "不建议参与" not in _plain_text(pos_html):
-        raise ValueError(f"红灯熔断：red_flag「{red_flag}」非空，position_html 必须包含「不建议参与」结论")
+    if red_flag and _LABEL_REFUSE not in _plain_text(pos_html):
+        raise ValueError(f"红灯熔断：red_flag「{red_flag}」非空，position_html 必须包含「{_LABEL_REFUSE}」结论")
 
 
 def _check_thesis_consistency(fill: dict, calc: dict) -> None:
@@ -255,8 +279,7 @@ def _check_content_floor(fill: dict) -> None:
     if pos_len < 100:
         raise ValueError(f"position_html 纯文本仅 {pos_len} 字 < 100：仓位决策四步不能为空洞")
     # 含表格的章节字段：source 来源标注数必须 ≥ 表格数
-    for name in ("conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html", "valuation_html",
-                 "gap_html", "peers_html", "dash_html", "position_html", "review_html"):
+    for name in _HTML_TABLE_FIELDS:
         frag = fill.get(name) or ""
         n_tbl, n_src = frag.count("<table"), frag.count('class="source"')
         if n_tbl and n_src < n_tbl:
@@ -385,8 +408,7 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
 def _check_internal_codes(fill: dict, warns: list) -> None:
     """框架内部代号泄漏检查：正文引用只准用章节编号/名称（L1/L3/L4/1D 代号禁入正文）。"""
     # "L1:L3" 占比记法是分型声明的合法写法，先剥离再检查
-    for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html", "l4_html",
-                 "valuation_html", "gap_html", "peers_html", "dash_html", "position_html", "review_html"):
+    for name in _HTML_FIELDS:
         txt = _plain_text(fill.get(name) or "").replace("L1:L3", "")
         hits = sorted(set(re.findall(r"(?<![A-Za-z0-9])(?:L[134]|1D)(?![A-Za-z0-9])", txt)))
         if hits:
@@ -432,9 +454,7 @@ def _check_prev_fields(fill: dict, warns: list) -> None:
                 warns.append(f"prev.{k} 缺失：回测对比条该行将显示缺省值，请补全上版锚点")
         # 复盘高亮校验：评分变化/被证伪假设/新增变量应挂 .rev（全文 <3 处说明漏标）
         rev_n = sum((fill.get(name) or "").count('class="rev"')
-                    for name in ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html",
-                                 "l4_html", "valuation_html", "gap_html", "peers_html",
-                                 "dash_html", "position_html", "review_html"))
+                    for name in _HTML_FIELDS)
         if rev_n < 3:
             warns.append(f"回测模式下 .rev 高亮过少（全文仅 {rev_n} 处 < 3）："
                          f"评分变化/被证伪假设/新增变量应标注（fill-schema 的 .rev 规则）")
@@ -573,16 +593,7 @@ def _check_peers_orientation(fill: dict, warns: list) -> None:
     """v4.9.1 补充修订二：同业两表公司强制行标题——目标公司蓝色加粗应标在行首格；
     蓝 style 落在 <th> 表头 = 误写成「公司=列」旧方向 → 告警。"""
     peers = fill.get("peers_html") or ""
-    if re.search(r"<th[^>]*style\s*=\s*[\"'][^\"']*color\s*:\s*#4a6fa5", peers, flags=re.I):
-        warns.append("peers_html 目标公司蓝色加粗落在 <th> 表头（写成了公司=列旧方向）："
-                     "当前指标表与趋势表应公司=行标题，目标公司蓝色加粗标在行首格（fill-schema peers 规则）")
-
-
-def _check_peers_orientation(fill: dict, warns: list) -> None:
-    """v4.9.1 补充修订二：同业两表公司强制行标题——目标公司蓝色加粗应标在行首格；
-    蓝 style 落在 <th> 表头 = 误写成「公司=列」旧方向 → 告警。"""
-    peers = fill.get("peers_html") or ""
-    if re.search(r"<th[^>]*style\s*=\s*[\"'][^\"']*color\s*:\s*#4a6fa5", peers, flags=re.I):
+    if re.search(r"<th[^>]*style\s*=\s*[\"'][^\"']*color\s*:\s*" + re.escape(_C_BLUE), peers, flags=re.I):
         warns.append("peers_html 目标公司蓝色加粗落在 <th> 表头（写成了公司=列旧方向）："
                      "当前指标表与趋势表应公司=行标题，目标公司蓝色加粗标在行首格（fill-schema peers 规则）")
 
@@ -633,6 +644,19 @@ def _check_l4_form(fill: dict) -> None:
               file=sys.stderr)
 
 
+def _check_cn_placeholder(fill: dict) -> None:
+    """fill 正文字段中文占位符硬校验（与渲染后 _check_leftover 同口径的前置版，v4.10.2）：
+    【待填】类残留提前到校验期拦截——--check 与 render 对 fill 问题拦截面一致，
+    不再出现「check 退出 0 但 render 才炸」。黄灯类别标注（【b 行业与政策环境】这类
+    以单个 a-d 字母开头的）是合法引用，不算占位符；fill 里的字面 {{KEY}} 合法
+    （渲染时实体化显示），不在此查。"""
+    for name in _HTML_FIELDS:
+        hits = [x for x in re.findall(r"【[^】]{0,40}】", fill.get(name) or "")
+                if not re.match(r"【[a-dA-D][ 、\s]", x)]
+        if hits:
+            raise ValueError(f"{name} 残留中文占位符: {sorted(set(hits))}——请填写实际内容后重渲")
+
+
 def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
     """复盘「未命中」判定缺诊断方向告警（v4.9，backtest.md 6.6 复盘纪律）：
     review_html 含「未命中」但未提「规律/反例」——未命中的旧假设必须写明是规律失效还是
@@ -662,6 +686,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_thesis_consistency(fill, calc)
     _check_content_floor(fill)
     _check_l4_form(fill)
+    _check_cn_placeholder(fill)
 
     warns = []
     _check_missing_required_warns(fill, warns)
@@ -686,63 +711,3 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_optional_charts(fill, warns)
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)
-
-
-def _tag_timing_table(html: str) -> str:
-    """11 时机判定小表（表体含 技术面/筹码面 行的表）自动补 class="timing-table"——
-    模板 CSS 对该表除末列（依据长文）外强制不换行，防止"技术面/筹码面/时机分"折行。
-    末行文本含「合计/时机分」时给该 <tr> 补 class="total"（合计行加粗+浅底，与明细行区分）。"""
-    def repl_table(m):
-        tbl = m.group(0)
-        if "技术面" not in tbl or "筹码面" not in tbl or "timing-table" in tbl:
-            return tbl
-        open_m = re.match(r"<table\b([^>]*)>", tbl, re.I)
-        attrs = open_m.group(1)
-        cm = re.search(r'class\s*=\s*(["\'])([^"\']*)\1', attrs, re.I)
-        if cm:
-            new_attrs = (attrs[:cm.start()] + f'class={cm.group(1)}{cm.group(2)} timing-table{cm.group(1)}'
-                         + attrs[cm.end():])
-        else:
-            new_attrs = attrs.rstrip() + ' class="timing-table"'
-        tagged = f"<table{new_attrs}>" + tbl[open_m.end():]
-        # 合计行标记：只看末个 <tr>，文本含「合计」或「时机分」才补 total 类（无明文合计行不误标）
-        trs = list(re.finditer(r"<tr\b[^>]*>", tagged, re.I))
-        if trs:
-            last = trs[-1]
-            row_txt = re.sub(r"<[^>]+>", "", tagged[last.end():])
-            if ("合计" in row_txt or "时机分" in row_txt) and "class" not in last.group(0):
-                tagged = (tagged[:last.start()] + last.group(0)[:-1].rstrip()
-                          + ' class="total">' + tagged[last.end():])
-        return tagged
-    return re.sub(r"<table\b[^>]*>.*?</table>", repl_table, html, flags=re.I | re.S)
-
-
-def _check_l4_order(l4_html: str) -> None:
-    """黄灯四类须固定 a→b→c→d 顺序（SKILL.md L4 规范）；检出乱序则告警，由模型修正后重渲。
-    不做自动重排——四类内容块结构多变（有/无命中、合并段落），程序重排太脆。
-    v4.10：除 `<strong>(a` 行内形态外，同时识别扣分表形态 `<td>a 交易与股东行为</td>`
-    （工行报告用表格绕过了原正则；v4.10 起表格为唯一正典，行内形态仅作单条引用）。"""
-    seq = [a or b for a, b in re.findall(
-        r"<strong>\s*[（(]?\s*([abcd])\s*[)）]?|<td>\s*([abcd])[\s　]", l4_html or "")]
-    if seq and seq != sorted(seq):
-        print(f"⚠️ L4 黄灯扣分四类顺序应为 a→b→c→d，当前为 {'→'.join(seq)}；"
-              f"请调整 l4_html 顺序后重新渲染", file=sys.stderr)
-
-
-def build_prev_strip(prev: dict, quality: float, valuation: float, timing, target_range: str) -> str:
-    """回测模式的 Hero 对比条：基于上版日期 + 质量分/估值分/时机分/目标价 旧→新。
-    分数差值脚本计算，模型只在 prev 里给上版锚点数据。prev 为空 → 返回空串（非回测模式）。
-    旧版 prev 键 research 自动映射到 quality（兼容旧回测数据）。"""
-    if not prev:
-        return ""
-    items = []
-    for r in _prev_track_rows(prev, quality, valuation, timing):
-        # v4.9：分数差是评价语义（升=好），用 good/bad 而非 up/down（后者 v4.9 起为股价方向色）
-        cls = "good" if r["d"] >= 0 else "bad"
-        items.append(f'{r["label"]} {r["old"]:.2f}→{r["new"]:.2f} <span class="{cls}">({r["d"]:+.2f})</span>')
-    if prev.get("target_range"):
-        items.append(f'目标价 {_esc(str(prev["target_range"]))} → {_esc(str(target_range))}')
-    body = ' ｜ '.join(items)
-    return (f'<div class="prev-strip"><span class="prev-tag">复盘更新</span>'
-            f'基于 {_esc(str(prev.get("date", "?")))} 版' + (f' ｜ {body}' if body else '') + '</div>')
-

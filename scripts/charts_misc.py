@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """charts_misc.py — 其余图族（v4.9 从 charts.py 拆出）：4.1 利润增长图（build_growth_plot，含 4 章锚点注入 _inject_l3_charts）/ 11 股东户数趋势（build_holders_plot）/ 12 回测哑铃（build_review_dumbbell）。依赖 charts_base 与 scoring。"""
 
-import sys
-
 from scoring import _num, _fmt, _esc
 from charts_base import *
 
@@ -45,23 +43,13 @@ def build_growth_plot(fill: dict) -> str:
     parts = ['<span class="section-tag">利润增长：历史 → 本文预测 vs 卖方一致</span>',
              _svg_open(W, H, "利润增长")]
     # 图例（左上，单行）
-    lx = L
-    for glyph, txt, c in ("rect", "收入增速（实际）", _C_SAND), ("rect", "净利增速（实际）", _C_BLUE):
-        parts.append(f'<rect x="{lx}" y="8" width="13" height="9" rx="2.5" fill="{c}"/>')
-        parts.append(f'<text x="{lx + 18}" y="16" font-size="11" fill="{_C_LABEL}">{txt}</text>')
-        lx += 18 + _text_w(txt, 11) + 22
-    parts.append(f'<rect x="{lx}" y="8" width="13" height="9" rx="2.5" fill="{_C_BLUE}" fill-opacity="0.3" '
-                 f'stroke="{_C_BLUE}" stroke-width="1"/>')
-    parts.append(f'<text x="{lx + 18}" y="16" font-size="11" fill="{_C_LABEL}">本文净利预测区间</text>')
-    lx += 18 + _text_w("本文净利预测区间", 11) + 22
+    lx = _legend_row(parts, [("收入增速（实际）", _C_SAND), ("净利增速（实际）", _C_BLUE)], L)
+    lx = _legend_row(parts, [("本文净利预测区间", _C_BLUE,
+                              f'fill-opacity="0.3" stroke="{_C_BLUE}" stroke-width="1"')], lx)
     parts.append(f'<polygon points="{lx + 6},8 {lx + 12},13 {lx + 6},18 {lx},13" fill="{_C_BLACK}"/>')
     parts.append(f'<text x="{lx + 18}" y="16" font-size="11" fill="{_C_LABEL}">卖方一致预期</text>')
     # 横网格 + y 轴刻度 + 零基线
-    for t in _ticks(lo_d, hi_d, 5):
-        gy = Y(t)
-        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="{_C_GRID}" stroke-width="1"/>')
-        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" '
-                     f'fill="{_C_LABEL}">{_fmt(t)}%</text>')
+    _hgrid_ticks(parts, Y, _ticks(lo_d, hi_d, 5), L, W - R, L - 8, "%")
     parts.append(f'<line x1="{L}" y1="{y0:.1f}" x2="{W - R}" y2="{y0:.1f}" stroke="{_C_AXIS}" stroke-width="1.4"/>')
     # 实际/预测分区虚线 + 区标签
     sep_x = L + len(hist) * slot
@@ -213,16 +201,13 @@ def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) 
 
 
 def _inject_l3_charts(l3_html: str, fill: dict) -> str:
-    """4.1 利润增长图锚点注入（v4.9）：l3_html 里的 <!--GROWTH--> 注释替换为脚本图；
+    """4.1 利润增长图锚点注入（v4.9；v4.10.2 收编进 charts_base _inject_chart_anchors，与第 3 章
+    _inject_l1_charts 同一注入机）：l3_html 里的 <!--GROWTH--> 注释替换为脚本图；
     锚点缺失但字段已填 → 图追加第 4 章末尾 + 告警；字段未填（如未盈利分型豁免）→ 锚点静默清除。"""
-    for anchor, html, field in (("<!--GROWTH-->", build_growth_plot(fill), "growth_plot"),):
-        if anchor in l3_html:
-            l3_html = l3_html.replace(anchor, html)
-        elif html:
-            l3_html += "\n" + html
-            print(f"⚠️ l3_html 缺 {anchor} 锚点：{field} 图已追加到第 4 章末尾"
-                  f"（建议把锚点放到 4.1 利润增长维度块首）", file=sys.stderr)
-    return l3_html
+    return _inject_chart_anchors(
+        l3_html,
+        (("<!--GROWTH-->", build_growth_plot(fill), "growth_plot"),),
+        "l3_html", "第 4 章末尾", "建议把锚点放到 4.1 利润增长维度块首")
 
 
 _TRIG_STATUS = {"hit": ("已兑现", "hit"), "miss": ("未兑现", "miss"), "pending": ("待验证", "pending")}

@@ -21,6 +21,12 @@
 
 ## 渲染纪律
 
+- Hero 三轨分下只写定性判词（好公司/中上/一般/回避；深度安全边际/合理偏便宜/合理无安全边际/贵），
+  不写计算式 → v4.10.2 用户反馈：「本质 85% + 预期 15% − 黄灯 1.0」「四件套加权」是两句废话，
+  公式明细已在 6/7 章展开，Hero 位只回答「这分数算好不好」（v4.10.2 起 s-sub 改判词占位符）。
+- 防伪比对字段（price/pe_ttm/valuation_inputs）必须是纯数字，夹带文字即拒渲染 → v4.10.2 审计：
+  「18.6（H股口径）」曾借 `_num` 宽松解析通过 1% 比对——防伪强度不应由解析层决定
+  （v4.10.2 起 fill 侧改 `_strict_num` 严格解析，口径注写进 .source 说明）。
 - 不用 Edit 逐段写 HTML，走 fill→render → 国电南瑞实证：18 次 Edit 消耗 2.2M input token，占全程 73%。
 - 渲染报错后禁止手写全文 HTML 绕行（修 fill 重渲是唯一合法路径） → 巨石 2026-08-23 绕行实证。
 - class 单引号归一由渲染器自动完成，fill 不必手工归一 → 万华 2026-08-26 实证：258 处单引号（v4.4 起自动归一）。
@@ -61,6 +67,46 @@
 ---
 
 ## 版本历史
+
+### V4.10.2（2026-09-12）— Hero 分数定性化 + v4.10.1 账本落账（代码批/测试批）
+
+> 触发：用户反馈 Hero 质量/估值分下两行计算式文案是废话（应为分数定性）；同轮落账
+> v4.10.1 全量审计的待修订账本代码批 7 项 + 测试批 5 项。取数管道批（8 项）按账本原议
+> 继续单独立项（动运行时行为须单独版本 + 全量回归）。
+
+- **Hero 分数定性化**：质量分/估值分下的计算式副标（「本质 70% + 预期 30% − 黄灯」/
+  「四件套加权」）改为判词占位符 `{{QUALITY_WORD}}/{{VALUATION_WORD}}`，复用
+  scoring.py 既有 `_quality_verdict`/`_valuation_verdict` 唯一口径；时机分行不动。
+- **代码批落账**：`_preflight` 单流水线（--check 与 render 双路径合并，补齐 check 漏
+  必填校验的漂移，估值错误消息收为一份）；validate 重复定义 `_check_peers_orientation`
+  删除；魔法字符串常量化（「不建议参与」档位文案 → `_LABEL_REFUSE` 生产消费同源、
+  `#4a6fa5` → `_C_BLUE`、HTML 字段元组三份收编、`_plain_text` 上移 scoring 唯一权威）；
+  估值轨归位 scoring.py（compute_valuation + 四阈值表 + _map_* + compute_valuation_score，
+  render_report 909→573 行）；表格对齐机独立 align_fix.py（含 validate 三件套归位：
+  _tag_timing_table→align_fix、_check_l4_order/build_prev_strip→render_report）；
+  `_position_steps` 三上浮分支收敛为 try_up 闭包；诊断 print 统一 stderr；防伪比对
+  fill 侧改 `_strict_num` 严格解析（夹带文字即拒）；RENDERER_VERSION 精度对齐 tag。
+- **测试批落账**：golden 快照 1→3（新增 full_fill 全功能——10/12 章+segments/chain/
+  peers_plot/龙卷风/triggers/PE 历史带/发丝图/回测哑铃；mcap_fill 市值口径）；
+  pytest 收集盲区收编（test_mcap_mode 加 pytest 入口（`__main__` 直跑保留）、
+  test_em_fetch 12 区 / test_calibration 3 区包为 def test_*——原 import 时执行，
+  pytest 下零收集）；test_render_core 1272 行拆三文件（gate 24→26 / charts 15 /
+  e2e 7）+ conftest.py 收编 14 份渲染样板/10 份 capture 闭包/19 处行内 import；
+  图表三处对称复制收编 charts_base（_hgrid_ticks/_legend_row/_inject_chart_anchors）；
+  死代码四件（_fmt_price 零调用删除/测试再导出垫片删除——测试改真身模块导入/模板
+  .verdict 死 CSS 删除/em_fetch 注释补 score_calibration 消费方）。
+- **热核审计修补（修订完成后四路并行审计）**：try_up 归一化顺带统一了赔率上浮分支
+  文案（`）→` → `） →`，1 字节）——穷举 70272 组合实证其余零差异，认下为有意归一
+  并在 test_render_gate 逐字钉死三上浮路径文案（该分支此前零断言零快照覆盖）；
+  fill 中文占位符【待填】类硬校验前置进 validate_content（--check 与 render 拦截面
+  补齐——审计实证 check 曾退出 0 而 render 才炸）；hero 判词分档边界 12 点断言；
+  golden mutation 自证参数化到三份快照；`_SCENARIO_NAMES` 消费方改从 scoring 直导
+  （charts_base 再导出残片删除）；死 import 清（render_report._num/validate._esc）；
+  fill-schema 删 .verdict 引用同步、文档数字/表述纠偏。
+- 回归：pytest 统一入口 78 项全绿（原 58 + 收编 16 + 新快照 2 + 审计新增 2）；
+  全程 golden 零漂移为准绳，有意输出变化共五处：hero 判词两行、.verdict 死 CSS 一行、
+  版本标记一行（快照归一化豁免）、try_up 文案归一 1 字节（本版申报）；行为收紧两处：
+  防伪字段严格解析、--check 拦截面补齐（fill 必填 + 中文占位符）。
 
 ### V4.10.1（2026-09-11）— 1C 三硬约束 + 同步性检验三通道 + 竞争压力测试 + 周期股剪刀差归因
 

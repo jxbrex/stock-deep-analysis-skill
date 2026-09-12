@@ -149,10 +149,7 @@ def build_price_history(fill: dict) -> str:
         parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" stroke="{_C_BLUE}" stroke-width="1.6"/>')
         parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴）</text>')
     # 左轴（股价）网格与刻度
-    for v in _ticks(lo_c, hi_c, 5):
-        gy = Yc(v)
-        parts.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="{_C_GRID}" stroke-width="1"/>')
-        parts.append(f'<text x="{L - 8}" y="{gy + 4:.1f}" text-anchor="end" font-size="11" fill="{_C_LABEL}">{_fmt(v)}</text>')
+    _hgrid_ticks(parts, Yc, _ticks(lo_c, hi_c, 5), L, W - R, L - 8)
     # 右轴（PE）刻度
     if has_pe:
         for v in _ticks(lo_p, hi_p, 5):

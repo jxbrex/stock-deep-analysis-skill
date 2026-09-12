@@ -342,7 +342,7 @@ def _ttm_cutoff(today: date = None) -> str:
     return ((today or date.today()) - timedelta(days=365)).strftime("%Y%m%d")
 
 # ---------------- 取数函数族 re-export（em_data.py） ----------------
-# 从子模块 re-export 供宿主函数体与 test_em_fetch（import em_fetch as em 按名访问）
+# 从子模块 re-export 供宿主函数体与 test_em_fetch / score_calibration（import em_fetch as em 按名访问）
 # 实际消费的名字，历史上面向"全量门面"的纯挂名已收窄；
 # ts_call/get 绝不在此覆盖（宿主版本是测试 rebind 的目标）。
 from em_data import (  # noqa: E402,F401

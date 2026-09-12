@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 """charts_l1.py — 第 3 章（公司本质）图族（v4.9 从 charts.py 拆出）：3.1 业务构成（build_segments_plot）/ 3.2 产业链位置（build_chain_plot）/ 3.4 财务五年趋势图墙（build_fin_trend）+ 3 章锚点注入（_inject_l1_charts）。依赖 charts_base 与 scoring。"""
 
-import sys
-
 from scoring import _num, _fmt, _esc
 from charts_base import *
 
@@ -54,10 +52,9 @@ def build_segments_plot(fill: dict) -> str:
     parts = [f'<span class="section-tag">{tag}</span>',
              _svg_open(W, H, "业务构成")]
     # 图例（左上）
-    parts.append(f'<rect x="{ML}" y="8" width="14" height="10" rx="3" fill="{_C_SAND}"/>')
-    parts.append(f'<text x="{ML + 20}" y="17" font-size="11" fill="{_C_STONE}">收入占比</text>')
+    lx2 = _legend_row(parts, [("收入占比", _C_SAND)], ML, sw=14, sh=10, rx=3, dx=20, gap=24,
+                      tcolor=_C_STONE)
     if has_gm:
-        lx2 = ML + 20 + _text_w("收入占比", 11) + 24
         parts.append(f'<circle cx="{lx2 + 5:.0f}" cy="13" r="4.5" fill="{_C_BLUE}"/>')
         parts.append(f'<text x="{lx2 + 14:.0f}" y="17" font-size="11" fill="{_C_BLUE}">毛利率（同一 % 轴）</text>')
     # % 轴网格（0-100 定域）+ 顶部刻度 + 右列「毛利率」列头
@@ -265,23 +262,17 @@ def build_fin_trend(fill: dict) -> str:
         halo = f' stroke="{HALO}" stroke-width="3" paint-order="stroke"'
         svg = [f'<svg viewBox="0 0 {W} {H}">']
         # 轴刻度：左（柱）带浅网格+刻度字，右（线）只出刻度字；纯线面板网格随线域、不出左刻度字
-        for t in (_ticks(blo, bhi, 3) if has_bars else _ticks(llo, lhi, 3)):
-            gy = (YB if has_bars else YL)(t)
-            svg.append(f'<line x1="{L}" y1="{gy:.1f}" x2="{W - R}" y2="{gy:.1f}" stroke="{_C_GRID}" stroke-width="1"/>')
-            if has_bars:
-                svg.append(f'<text x="{L - 4}" y="{gy + 3:.1f}" text-anchor="end" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
+        _hgrid_ticks(svg, (YB if has_bars else YL), (_ticks(blo, bhi, 3) if has_bars else _ticks(llo, lhi, 3)),
+                     L, W - R, L - 4, fs=8, dy=3, labels=has_bars)
         if has_lines:
             for t in _ticks(llo, lhi, 3):
                 svg.append(f'<text x="{W - R + 4}" y="{YL(t) + 3:.1f}" font-size="8" fill="{_C_LABEL}">{_fmt(t)}</text>')
         svg.append(f'<line x1="{L}" y1="{y0:.1f}" x2="{W - R}" y2="{y0:.1f}" stroke="{_C_AXIS}" stroke-width="1.2"/>')
         # 图例（顶部单行）
-        lx = L
         bar_colors = [_C_SAND, _C_BLUE]   # 柱色只表系列归属：第一条沙、第二条钢蓝
-        for bi, b in enumerate(p["bars"]):
-            blab = f'{b["name"]}（{b["unit"]}，左轴）'
-            svg.append(f'<rect x="{lx}" y="6" width="11" height="8" rx="2" fill="{bar_colors[bi]}"/>')
-            svg.append(f'<text x="{lx + 15}" y="13" font-size="9" fill="{_C_LABEL}">{_esc(blab)}</text>')
-            lx += 15 + _text_w(blab, 9) + 14
+        lx = _legend_row(svg, [(f'{b["name"]}（{b["unit"]}，左轴）', bar_colors[bi])
+                               for bi, b in enumerate(p["bars"])], L,
+                         y=6, fs=9, sw=11, sh=8, rx=2, dx=15, gap=14)
         for li, ln in enumerate(p["lines"]):
             c = line_colors[li]
             dash = ' stroke-dasharray="3 2"' if li == 1 else ""
@@ -359,18 +350,15 @@ def build_fin_trend(fill: dict) -> str:
 
 
 def _inject_l1_charts(l1_html: str, fill: dict) -> str:
-    """3.1/3.2/3.4 图锚点注入（v4.8 起，v4.9 加 FIN_TREND）：l1_html 里的 <!--SEGMENTS--> / <!--CHAIN--> /
-    <!--FIN_TREND--> 注释替换为对应脚本图；锚点缺失但字段已填 → 图追加第 3 章末尾 + 告警；
-    字段未填 → 锚点静默清除。（与第 10 章 {{PE_BAND_HTML}} 裸占位符同款思路：避开模板条件块
-    不支持嵌套的限制，又让模型保留图在维度块内的位置控制权。）"""
-    for anchor, html, field in (("<!--SEGMENTS-->", build_segments_plot(fill), "segments"),
-                                ("<!--CHAIN-->", build_chain_plot(fill), "industry_chain"),
-                                ("<!--FIN_TREND-->", build_fin_trend(fill), "fin_trend")):
-        if anchor in l1_html:
-            l1_html = l1_html.replace(anchor, html)
-        elif html:
-            l1_html += "\n" + html
-            print(f"⚠️ l1_html 缺 {anchor} 锚点：{field} 图已追加到第 3 章末尾"
-                  f"（建议把锚点放到对应维度块内，3.1=业务构成 / 3.2=产业链位置 / 3.4=财务趋势图墙）",
-                  file=sys.stderr)
-    return l1_html
+    """3.1/3.2/3.4 图锚点注入（v4.8 起，v4.9 加 FIN_TREND；v4.10.2 收编进 charts_base
+    _inject_chart_anchors，与第 4 章 _inject_l3_charts 同一注入机）：l1_html 里的
+    <!--SEGMENTS--> / <!--CHAIN--> / <!--FIN_TREND--> 注释替换为对应脚本图；锚点缺失但字段已填 →
+    图追加第 3 章末尾 + 告警；字段未填 → 锚点静默清除。（与第 10 章 {{PE_BAND_HTML}} 裸占位符
+    同款思路：避开模板条件块不支持嵌套的限制，又让模型保留图在维度块内的位置控制权。）"""
+    return _inject_chart_anchors(
+        l1_html,
+        (("<!--SEGMENTS-->", build_segments_plot(fill), "segments"),
+         ("<!--CHAIN-->", build_chain_plot(fill), "industry_chain"),
+         ("<!--FIN_TREND-->", build_fin_trend(fill), "fin_trend")),
+        "l1_html", "第 3 章末尾",
+        "建议把锚点放到对应维度块内，3.1=业务构成 / 3.2=产业链位置 / 3.4=财务趋势图墙")

@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>测试股份（600000）深度分析报告 — 2026-08-27</title>
+<!--
+  本模板由 scripts/render_report.py 渲染，占位符为双花括号唯一键（形如 COMPANY、DATE）。
+  章节正文的 HTML 结构骨架见 references/fill-schema.md（dim-block/table/deduction/badge 等写法）。
+  条件章节：IF:CYCLE_HTML / IF:REVIEW_HTML 包裹的块在对应键为空时整块删除。
+  三轨制：质量分（L1 六维 + L3）/ 估值分（独立价格轨）/ 时机分（微调）。
+-->
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  /* v4.10 栈首朱雀仿宋（F1 引用式接入，OFL，本机需自装 TrionesType/zhuque）；
+     未装终端走 fallback 即原系统黑体栈，显示与此前一致。
+     当前发行版注册家族名实为「朱雀仿宋（预览测试版）」（2026-09-11 本机实证），
+     必须放栈首；无前缀名保留以兼容未来正式版与英文系统名 */
+  font-family: "朱雀仿宋（预览测试版）", "Zhuque Fangsong", "朱雀仿宋", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  font-size: 14px; line-height: 1.7; color: #3a362e;
+  background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
+}
+.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+/* 方向色：红涨绿跌（A 股惯例；v4.9 自国际惯例绿涨红跌翻转）。
+   文字/徽章统一用加深系（pastel 仅留给 SVG 大面积填充）：白字/小字对比度达 WCAG AA */
+.up { color: #b84a4a; }
+.down { color: #4d804d; }
+.mid { color: #96691a; }
+/* 评价色：绿好红坏——评分/赔率/有利不利等好坏语义用这对，与方向色解耦 */
+.good { color: #4d804d; }
+.bad { color: #b84a4a; }
+.plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; overflow-x: auto; }
+.plot-wrap svg { max-width: 1000px; margin: 0 auto; }
+.hero { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
+.hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
+.hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; justify-content: center; }
+.hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
+.hero h1 { font-size: 26px; font-weight: 700; color: #2b2620; margin: 0 0 4px; }
+.hero .subtitle { font-size: 12.5px; color: #6f695e; }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: #57524a; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
+/* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
+.hero-tracks { display: flex; gap: 16px; align-items: stretch; flex-shrink: 0; }
+.hero-track { text-align: center; border: 1px solid #e0d7c3; border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
+.hero-track.quality { background: #f2eddd; }
+.hero-track.valuation { background: #fffdf9; }
+.hero-track .s-label { font-size: 12px; color: #6f695e; letter-spacing: 1.2px; margin-bottom: 4px; }
+.hero-track .s-value { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.hero-track.quality .s-value { color: #4a6fa5; }
+.hero-track.valuation .s-value.score-good { color: #4d804d; }
+.hero-track.valuation .s-value.score-mid { color: #96691a; }
+.hero-track.valuation .s-value.score-bad { color: #b84a4a; }
+.hero-track .s-sub { font-size: 12px; color: #6f695e; margin-top: 3px; }
+/* 时机分：一行灰字，弱化但可读（不偷感） */
+.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #6f695e; letter-spacing: 0.3px; text-align: center; }
+.hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
+.hero-data-strip { display: flex; border-top: 1px solid #ece7db; padding-top: 10px; }
+.hero-data-strip .d-item { flex: 1; min-width: 0; text-align: center; }
+.hero-data-strip .d-item + .d-item { border-left: 1px solid #ece7db; padding-left: 18px; margin-left: 18px; }
+.hero-data-strip .d-label { font-size: 11px; color: #6f695e; margin-bottom: 3px; }
+.hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #6f695e; }
+.hero-data-strip .d-sub { font-size: 11px; color: #6f695e; margin-top: 3px; }
+.metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
+.metric-card { flex: 1; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 16px 18px; text-align: center; }
+.metric-card .label { font-size: 11px; color: #6f695e; margin-bottom: 4px; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #6f695e; }
+.metric-card .sub { font-size: 11px; color: #6f695e; margin-top: 4px; }
+/* 三指标卡 value 着色（优先级高于 .metric-card .value 的默认色） */
+.metric-card .value.up { color: #b84a4a; }
+.metric-card .value.down { color: #4d804d; }
+.metric-card .value.mid { color: #96691a; }
+.metric-card .value.good { color: #4d804d; }
+.metric-card .value.bad { color: #b84a4a; }
+.section { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #ece7db; background: #f7f2e7; }
+.section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #efe9db; border-radius: 4px; padding: 2px 8px; }
+.section-title { font-size: 15px; font-weight: 600; color: #2b2620; }
+.section-meta { margin-left: auto; font-size: 11px; color: #6f695e; }
+.section-body { padding: 20px 24px; }
+.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+.badge-green { background: #4d804d; }
+.badge-orange { background: #96691a; }
+.badge-red { background: #b84a4a; }
+.badge-blue { background: #4a6fa5; }
+.badge-gray { background: #7a715e; }
+.badge-lg { font-size: 15px; padding: 3px 10px; }
+/* block + fit-content：标签独占一行，防手写正文直接跟在 span 后粘连（v4.7.1） */
+.section-tag { display: block; width: fit-content; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.score-line { margin: 4px 0 12px; }
+.muted { color: #6f695e; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+/* v4.10：tbody 内 th（行标题写法，如同业表公司名列）归一为 td 同式——否则 th 底色米黄穿透
+   斑马纹、首列条带断裂（工行 09-11 同业两表实证）；thead 表头样式不受影响 */
+tbody th { background: transparent; color: #3a362e; font-size: 13px; font-weight: 600; letter-spacing: 0; border-bottom: 1px solid #ece7db; }
+td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
+tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background: #f7f2e7; }
+tr:hover td, tr:hover th { background: #f2eddd; }
+td.num, th.num { text-align: right; }
+td.center, th.center { text-align: center; }
+.freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fffdf9; z-index: 2; box-shadow: 1px 0 0 #ece7db; }
+.freeze-first thead th:first-child { background: #f1ebdd; z-index: 3; }
+.freeze-first tbody tr:nth-child(even) td:first-child, .freeze-first tbody tr:nth-child(even) th:first-child { background: #f7f2e7; }
+.freeze-first tbody tr:hover td:first-child, .freeze-first tbody tr:hover th:first-child { background: #f2eddd; }
+/* v4.9.2 同业对比当前指标表最优/最差标注：取消染底（与隔行斑马纹叠加显花，
+   甘李 4 行 12 处高亮实证），改纯文字——best 红加粗（红=强，A 股惯例）、worst 黑加粗；
+   斑马/hover 只动背景，不与文字色冲突，选择器随之简化 */
+td.cell-best { color: #b84a4a; font-weight: 700; }
+td.cell-worst { color: #2b2620; font-weight: 700; }
+.source { display: block; font-size: 11px; color: #6f695e; margin: 4px 0 12px; }
+/* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 3.4 维度块）：两列网格双轴组合图 */
+.mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 8px; }
+.mini-cell { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 8px 8px 2px; }
+.mini-cell .m-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; margin-bottom: 2px; }
+.mini-cell .m-name { color: #57524a; font-weight: 600; }
+.mini-cell .m-val { font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
+.mini-cell .m-yoy { font-size: 10px; font-weight: 400; color: #6f695e; }
+/* v4.9 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
+/* v4.9.1 补充修订四 卡片化重排：HTML 结构（dot/cond/mt/status 四 span）不变，纯 CSS order 重排——
+   标题居中独占行（允许两行）、dot+状态居中徽章行、论据独占行左对齐；
+   桌面 3 列（5 块=3+2、6 条=3+3），≤1024px 2 列，≤768px 单列（媒体查询块内）；
+   v4.9.2：恰 2/4 张时桌面改 2 列取整分排（4=2+2、2=1+1，见下方 :has 规则） */
+.trig-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 10px; }
+/* v4.9.2 双数取整（甘李 3.3 护城河 4 卡 3+1 失衡实证）；:has 优先级高于下方 ≤1024px 媒体查询，
+   故包在 min-width:1025px 内互斥；旧浏览器无 :has 回退 3 列（优雅降级） */
+@media (min-width: 1025px) {
+  .trig-strip:has(> .trig:nth-child(2):last-child),
+  .trig-strip:has(> .trig:nth-child(4):last-child) { grid-template-columns: repeat(2, 1fr); }
+}
+/* v4.9.2：align-content 默认 stretch 会把短内容卡片的多余空间摊进各行线盒、标题被居中下推
+   （甘李 3.5「股权与控制权」行内下沉实证）——改贴顶排布，同行标题/徽章/论据起点恒对齐 */
+.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: flex-start; gap: 3px 6px; font-size: 12.5px; padding: 12px 14px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; text-align: center; }
+.trig-dot { order: 2; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.trig-dot.hit { background: #4d804d; }
+.trig-dot.miss { background: #b84a4a; }
+.trig-dot.pending { background: #7a715e; }
+/* mt 灰字内 strong 深色加粗承载关键事实（金额/时间窗/比例） */
+.trig-cond { order: 1; flex: 0 0 100%; font-weight: 600; color: #2b2620; font-size: 13px; text-align: center; }
+.trig-mt { order: 4; flex: 0 0 100%; color: #6f695e; font-size: 11.5px; text-align: left; margin-top: 3px; }
+.trig-mt strong { color: #2b2620; font-weight: 700; }
+.trig-status { order: 3; font-size: 11px; font-weight: 700; flex-shrink: 0; }
+.trig-status.hit { color: #4d804d; }
+.trig-status.miss { color: #b84a4a; }
+.trig-status.pending { color: #7a715e; }
+@media (max-width: 1024px) { .trig-strip { grid-template-columns: repeat(2, 1fr); } }
+/* v4.9.1 补充修订二：5 章红灯检查 hero 三卡（l4_html 章首手写）；pass=通过（绿）/fail=不通过（红） */
+.flag-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
+.flag-hero-card { border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 16px; text-align: center; background: #fffdf9; }
+.flag-hero-card .fh-name { font-size: 12px; color: #6f695e; margin-bottom: 4px; }
+.flag-hero-card .fh-verdict { font-size: 26px; font-weight: 700; }
+.flag-hero-card .fh-desc { font-size: 11px; color: #6f695e; margin-top: 4px; }
+.flag-hero-card.pass { background: #f0f5ec; border-color: #cfdcc6; }
+.flag-hero-card.pass .fh-verdict { color: #4d804d; }
+.flag-hero-card.fail { background: #f9eeea; border-color: #e3c3bb; }
+.flag-hero-card.fail .fh-verdict { color: #b84a4a; }
+.mini-cell svg { width: 100%; height: auto; display: block; font-family: inherit; }
+.conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
+.warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.danger-card { background: #f9eeea; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+/* v4.10 损失预演三联卡（l4_html 固定骨架）：三卡=最可能的亏损故事/与红黄灯清单重合度/
+   清单外新风险，与 scoring.md 损失预演强制三步一一对应；danger 家族红色语义 */
+.pm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0 14px; }
+.pm-card { background: #f9eeea; border-left: 3px solid #c75b5b; border-radius: 0 6px 6px 0; padding: 12px 14px; font-size: 13px; }
+.pm-head { font-size: 12px; font-weight: 700; color: #b84a4a; margin-bottom: 5px; }
+.info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.deduction { color: #b84a4a; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
+.deduction + br { display: none; }
+.scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
+.timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
+/* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分 */
+.timing-table tr.total td { font-weight: 700; background: #f2eddd; }
+/* v4.9.1 跟踪与触发合并单表（13 章 dash_html）：指标/当前值/触发阈值列防折行，
+   触发后操作/数据来源长文列小字允许换行，行高不再被长文撑飞 */
+.dash-table th:nth-child(-n+3), .dash-table td:nth-child(-n+3) { white-space: nowrap; }
+.dash-table td:nth-child(4), .dash-table td:nth-child(5) { font-size: 12px; }
+.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ece7db; font-size: 12px; color: #66604f; }
+.prev-tag { display: inline-block; background: #efe9db; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
+.rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
+td.rev, th.rev { padding: 8px 12px; }
+.scenario-pess { color: #b84a4a; }
+.scenario-base { color: #96691a; }
+.scenario-opt { color: #4d804d; }
+.flag-ok { color: #4d804d; font-weight: 600; }
+.flag-bad { color: #b84a4a; font-weight: 600; }
+.flag-na { color: #96691a; font-weight: 600; }
+.matrix-table th, .matrix-table td { text-align: center; font-size: 12px; padding: 14px 10px; }
+.matrix-table .target { background: #efe9db; font-weight: 700; color: #4a6fa5; }
+.layer-summary { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+.dim-block { margin-bottom: 20px; }
+.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #ece7db; }
+.dim-name { font-size: 14px; font-weight: 600; color: #3a362e; }
+.dim-weight { font-size: 11px; color: #6f695e; }
+/* 10 三轨评分三行公式（精简汇总） */
+.track-summary { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
+.ts-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
+.ts-row + .ts-row { border-top: 1px solid #ece7db; }
+.ts-label { min-width: 48px; color: #6f695e; font-size: 12px; }
+.ts-formula { color: #66604f; font-variant-numeric: tabular-nums; }
+.decision-bar { background: #f2eddd; border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
+.disclaimer { color: #6f695e; font-size: 11px; padding-top: 16px; margin-top: 24px; }
+.table-scroll { overflow-x: auto; }
+/* v4.8 版式修复：段落间距（此前 p 零间距导致核心结论四段粘合）/ 侧栏目录（固定右缘，宽屏显示） */
+.section-body p + p { margin-top: 10px; }
+.section-body p + ul, .section-body ul + p { margin-top: 8px; }
+/* v4.9.1 补充修订二：1 核心结论 2×2 结论卡网格（四卡固定序：关键优势/关键弱点/当前市场认知/
+   核心投资逻辑；卡尾 concl-ref「详见 X 章」锚索引，浓缩要点+章节索引替代四段长文） */
+.concl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 2px 0 12px; }
+.concl-card { border: 1px solid #e0d7c3; border-radius: 6px; background: #f7f2e7; padding: 12px 16px; font-size: 13px; line-height: 1.7; }
+.concl-card .concl-head { font-weight: 700; color: #3a362e; margin-bottom: 4px; }
+.concl-card .concl-ref { font-size: 11px; color: #6f695e; margin-top: 6px; }
+.concl-card .concl-ref a { color: #4a6fa5; text-decoration: none; }
+/* v4.9.1 补充修订四 ①关键优势卡特许 <ul> 三条壁垒短语（≤12 字/条、不带数据——数据论证留 s3）：
+   去 bullet、加粗深色、钢蓝色点前缀，让三条短语在卡内视觉突出 */
+.concl-card ul { list-style: none; padding-left: 0; margin: 4px 0; }
+.concl-card ul li { font-weight: 600; color: #2b2620; padding: 2px 0; }
+.concl-card ul li::before { content: "▪ "; color: #4a6fa5; }
+.section { scroll-margin-top: 10px; }
+html { scroll-behavior: smooth; }
+.toc-side { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 50; }
+.toc-side a { font-size: 11px; color: #6f695e; text-decoration: none; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
+.toc-side a:hover { background: #f2eddd; color: #2b2620; opacity: 1; }
+@media (max-width: 1279px) { .toc-side { display: none; } }
+@media (max-width: 768px) {
+  body { padding: 12px 8px; }
+  .metric-row { flex-wrap: wrap; }
+  .mini-grid { grid-template-columns: 1fr; }
+  .metric-card { min-width: calc(50% - 6px); }
+  .hero { padding: 20px; }
+  .hero-top { flex-direction: column; gap: 14px; }
+  .hero-tracks { align-self: stretch; justify-content: space-around; gap: 12px; }
+  .hero-track { flex: 1; min-width: 0; }
+  .hero-track .s-value { font-size: 30px; }
+  .hero-data-strip { flex-wrap: wrap; }
+  .hero-data-strip .d-item { flex: 1 1 calc(50% - 12px); margin-top: 10px; }
+  .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
+  .section-body { padding: 14px 16px; }
+  .concl-grid { grid-template-columns: 1fr; }
+  .pm-grid { grid-template-columns: 1fr; }
+  .flag-hero { grid-template-columns: 1fr; }
+  /* v4.9.1 补充修订四：trig-strip 单列（治理分块/触发条件条卡片纵向排列） */
+  .trig-strip { grid-template-columns: 1fr; }
+  /* v4.9.1 补充修订四 dash-table 移动卡片化：列序固定六列（指标/当前值/触发阈值/触发后操作/数据来源/更新频率），
+     行转卡片 + td::before 列名标签，免横向滚动；手写 dash_html 结构不变 */
+  .dash-table, .dash-table tbody, .dash-table tr, .dash-table td { display: block; width: 100%; }
+  /* 表头手写为 <tr><th>（无 thead 包裹，浏览器自动归入 tbody）：整行隐藏靠 tr:has(th) */
+  .dash-table thead, .dash-table tr:has(th) { display: none; }
+  .dash-table tr { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; margin: 0 0 10px; padding: 4px 0; }
+  .dash-table tbody tr:nth-child(even) td { background: transparent; }
+  .dash-table td { border-bottom: none; padding: 3px 12px; }
+  .dash-table td:nth-child(-n+3) { white-space: normal; }
+  .dash-table td:first-child { position: static; box-shadow: none; font-weight: 600; }
+  .dash-table td.num { text-align: left; }
+  .dash-table td::before { display: block; font-size: 10.5px; font-weight: 400; color: #6f695e; }
+  .dash-table td:nth-child(1)::before { content: "指标"; }
+  .dash-table td:nth-child(2)::before { content: "当前值"; }
+  .dash-table td:nth-child(3)::before { content: "触发阈值"; }
+  .dash-table td:nth-child(4)::before { content: "触发后操作"; }
+  .dash-table td:nth-child(5)::before { content: "数据来源"; }
+  .dash-table td:nth-child(6)::before { content: "更新频率"; }
+}
+@media print {
+  body { background: #fff; padding: 12px; }
+  .section, .hero, .metric-card { border: 1px solid #ccc; }
+  th { background: #e8e8e8; }
+  .toc-side { display: none; }
+}
+</style>
+</head>
+<body>
+
+
+<!-- Hero：三轨（质量分 + 估值分 双主分，时机分弱化） -->
+<div class="hero">
+  <div class="hero-top">
+    <div class="hero-id">
+      <h1>测试股份（600000）</h1>
+      <div class="subtitle">测试行业 · 测试定位｜报告日期：2026-08-27</div>
+      <div class="thesis">
+        测试论点与关键证据。三情景目标价 <span class="scenario-pess">7.2</span>/<span class="scenario-base">11</span>/<span class="scenario-opt">15.6</span> 元，结论：观察。
+      </div>
+    </div>
+    <div class="hero-scores-col">
+      <div class="hero-tracks">
+        <div class="hero-track quality">
+          <div class="s-label">质量分</div>
+          <div class="s-value">7.00</div>
+          <div class="s-sub">好公司</div>
+        </div>
+        <div class="hero-track valuation">
+          <div class="s-label">估值分</div>
+          <div class="s-value score-mid">5.5</div>
+          <div class="s-sub">合理无安全边际</div>
+        </div>
+      </div>
+      <div class="hero-timing-mini">时机分 <span class="tv">5.00</span> · 微调 ±1 档</div>
+    </div>
+  </div>
+  <div class="hero-data-strip">
+    <div class="d-item">
+      <div class="d-label">当前股价（2026-08-27 收盘）</div>
+      <div class="d-value">10<span class="unit"> 元</span></div>
+      <div class="d-sub">—</div>
+    </div>
+    <div class="d-item">
+      <div class="d-label">总市值</div>
+      <div class="d-value">1,000<span class="unit"> 亿</span></div>
+      <div class="d-sub">—</div>
+    </div>
+    <div class="d-item">
+      <div class="d-label">PE(TTM)</div>
+      <div class="d-value">11<span class="unit"> 倍</span></div>
+      <div class="d-sub">—</div>
+    </div>
+    <div class="d-item">
+      <div class="d-label">目标价区间（12个月）</div>
+      <div class="d-value">10-12<span class="unit"> 元</span></div>
+      <div class="d-sub">—</div>
+    </div>
+  </div>
+  
+  <div class="prev-strip"><span class="prev-tag">复盘更新</span>基于 2026-08-08 版 ｜ 质量分 6.40→7.00 <span class="good">(+0.60)</span> ｜ 估值分 5.00→5.50 <span class="good">(+0.50)</span> ｜ 时机分 4.80→5.00 <span class="good">(+0.20)</span> ｜ 目标价 9-11 → 10-12</div>
+  
+</div>
+
+<!-- 锚点目录（脚本按条件章节实际存在性生成） -->
+<nav class="toc-side"><a href="#s1" title="1 核心结论">结论</a><a href="#s2" title="2 关键利润驱动">驱动</a><a href="#s3" title="3 公司本质">本质</a><a href="#s4" title="4 未来预期">预期</a><a href="#s5" title="5 风险评估">风险</a><a href="#s6" title="6 质量分汇总">评分</a><a href="#s7" title="7 估值与安全边际">估值</a><a href="#s8" title="8 市场预期差">分歧</a><a href="#s9" title="9 同业对比">同业</a><a href="#s10" title="10 周期规律">周期</a><a href="#s11" title="11 仓位与时机决策">仓位</a><a href="#s12" title="12 回测复盘">复盘</a><a href="#s13" title="13 跟踪仪表盘">跟踪</a></nav>
+
+<!-- 1 核心结论 -->
+<div class="section" id="s1">
+  <div class="section-header">
+    <span class="section-num">1</span>
+    <span class="section-title">核心结论</span>
+    <span class="section-meta">质量分 7.00 ｜ 估值分 5.5 ｜ 时机分 5.00</span>
+  </div>
+  <div class="section-body">
+    
+    <div class="concl-grid"><div class="concl-card"><div class="concl-head">关键优势</div>优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。优势证据。<div class="concl-ref">详见 <a href="#s3">3 公司本质</a></div></div><div class="concl-card"><div class="concl-head">关键弱点</div>弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。弱点证据。<div class="concl-ref">详见 <a href="#s5">5 风险评估</a></div></div><div class="concl-card"><div class="concl-head">当前市场认知</div>卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。卖方假设。<div class="concl-ref">详见 <a href="#s8">8 市场预期差</a></div></div><div class="concl-card"><div class="concl-head">核心投资逻辑</div>论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。论点证伪。<div class="concl-ref">详见 <a href="#s7">7 估值与安全边际</a></div></div></div>
+  </div>
+</div>
+
+<!-- 2 关键利润驱动 -->
+<div class="section" id="s2">
+  <div class="section-header">
+    <span class="section-num">2</span>
+    <span class="section-title">关键利润驱动识别</span>
+  </div>
+  <div class="section-body">
+    <p>关键驱动分析。</p>
+    
+    <span class="section-tag">敏感性排序</span><div class="plot-wrap"><svg viewBox="0 0 1000 156" role="img" aria-label="敏感性龙卷风" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="600.0" y1="24" x2="600.0" y2="122" stroke="#ece7db" stroke-width="1"/><line x1="600.0" y1="24" x2="600.0" y2="122" stroke="#ece7db" stroke-width="1"/><text x="600.0" y="138" text-anchor="middle" font-size="11" fill="#6f695e">0</text><line x1="450.0" y1="24" x2="450.0" y2="122" stroke="#ece7db" stroke-width="1"/><text x="450.0" y="138" text-anchor="middle" font-size="11" fill="#6f695e">−10%</text><line x1="750.0" y1="24" x2="750.0" y2="122" stroke="#ece7db" stroke-width="1"/><text x="750.0" y="138" text-anchor="middle" font-size="11" fill="#6f695e">+10%</text><line x1="300.0" y1="24" x2="300.0" y2="122" stroke="#ece7db" stroke-width="1"/><text x="300.0" y="138" text-anchor="middle" font-size="11" fill="#6f695e">−20%</text><line x1="900.0" y1="24" x2="900.0" y2="122" stroke="#ece7db" stroke-width="1"/><text x="900.0" y="138" text-anchor="middle" font-size="11" fill="#6f695e">+20%</text><line x1="600" y1="24" x2="600" y2="122" stroke="#b3ab93" stroke-width="1.2"/><text x="230.0" y="49.0" text-anchor="end" font-size="13" font-weight="700" fill="#2b2620">金价（第一变量）</text><text x="230.0" y="64.0" text-anchor="end" font-size="11" font-weight="400" fill="#6f695e">±10% → 净利约±9-10亿元</text><rect x="300.0" y="43.5" width="300.0" height="17" fill="#c75b5b"/><rect x="600.0" y="43.5" width="300.0" height="17" fill="#6ba86b"/><text x="292.0" y="56.5" text-anchor="end" font-size="12" font-weight="700" fill="#c75b5b">−20%</text><text x="908.0" y="56.5" font-size="12" font-weight="700" fill="#6ba86b">+20%</text><text x="230.0" y="100.5" text-anchor="end" font-size="13" font-weight="400" fill="#3a362e">产量</text><rect x="405.0" y="87.5" width="195.0" height="17" fill="#c75b5b"/><rect x="600.0" y="87.5" width="195.0" height="17" fill="#6ba86b"/><text x="397.0" y="100.5" text-anchor="end" font-size="12" font-weight="700" fill="#c75b5b">−13%</text><text x="803.0" y="100.5" font-size="12" font-weight="700" fill="#6ba86b">+13%</text></svg></div><span class="source">敏感性龙卷风（脚本按 sensitivity 字段生成）：条长=变量变动对归母净利的影响幅度（估算绝对值），红=不利方向、绿=有利方向，左列=变动幅度与金额影响，排序=弹性大小（首行=第一变量）；填了本字段，P0 不必再写敏感性表</span>
+    
+  </div>
+</div>
+
+<!-- 3 公司本质 -->
+<div class="section" id="s3">
+  <div class="section-header">
+    <span class="section-num">3</span>
+    <span class="section-title">公司本质 — 什么成色</span>
+    <span class="section-meta"><span class="badge badge-blue badge-lg">7.00</span> 占质量分 70%</span>
+  </div>
+  <div class="section-body">
+    <div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><span class="section-tag">业务构成（2025年报·按产品）</span><div class="plot-wrap"><svg viewBox="0 0 1000 226" role="img" aria-label="业务构成" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><rect x="16" y="8" width="14" height="10" rx="3" fill="#b3ab93"/><text x="36" y="17" font-size="11" fill="#57524a">收入占比</text><circle cx="109" cy="13" r="4.5" fill="#4a6fa5"/><text x="118" y="17" font-size="11" fill="#4a6fa5">毛利率（同一 % 轴）</text><line x1="86.0" y1="44" x2="86.0" y2="202" stroke="#ece7db" stroke-width="1"/><text x="86.0" y="36" text-anchor="middle" font-size="11" fill="#6f695e">0%</text><line x1="296.5" y1="44" x2="296.5" y2="202" stroke="#ece7db" stroke-width="1"/><text x="296.5" y="36" text-anchor="middle" font-size="11" fill="#6f695e">25%</text><line x1="507.0" y1="44" x2="507.0" y2="202" stroke="#ece7db" stroke-width="1"/><text x="507.0" y="36" text-anchor="middle" font-size="11" fill="#6f695e">50%</text><line x1="717.5" y1="44" x2="717.5" y2="202" stroke="#ece7db" stroke-width="1"/><text x="717.5" y="36" text-anchor="middle" font-size="11" fill="#6f695e">75%</text><line x1="928.0" y1="44" x2="928.0" y2="202" stroke="#ece7db" stroke-width="1"/><text x="928.0" y="36" text-anchor="middle" font-size="11" fill="#6f695e">100%</text><text x="984" y="36" text-anchor="end" font-size="11" font-weight="600" fill="#4a6fa5">毛利率</text><line x1="86.0" y1="202" x2="928.0" y2="202" stroke="#e0d7c3" stroke-width="1.2"/><text x="74.0" y="74.5" text-anchor="end" font-size="12" font-weight="700" fill="#2b2620">烯烃产品</text><rect x="86.0" y="62.0" width="405.0" height="16" rx="5" fill="#4a6fa5"/><text x="483.0" y="74.5" text-anchor="end" font-size="12" font-weight="700" fill="#fffdf9">48.1%</text><text x="86.0" y="94.0" font-size="10.5" fill="#6f695e">收入 156.2亿 ｜ 毛利 56.8亿（占 62%）</text><circle cx="392.5" cy="70.0" r="4.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="1.5"/><text x="984" y="74.5" text-anchor="end" font-size="12" font-weight="700" fill="#4a6fa5">36.4%</text><text x="74.0" y="120.5" text-anchor="end" font-size="12" font-weight="400" fill="#3a362e">焦化产品</text><rect x="86.0" y="108.0" width="255.1" height="16" rx="5" fill="#b3ab93"/><text x="333.1" y="120.5" text-anchor="end" font-size="12" font-weight="700" fill="#3a362e">30.3%</text><text x="86.0" y="140.0" font-size="10.5" fill="#6f695e">收入 98.5亿 ｜ 毛利 21.8亿（占 23.8%）</text><circle cx="272.1" cy="116.0" r="4.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="1.5"/><text x="984" y="120.5" text-anchor="end" font-size="12" font-weight="700" fill="#4a6fa5">22.1%</text><text x="74.0" y="166.5" text-anchor="end" font-size="12" font-weight="400" fill="#3a362e">其他</text><rect x="86.0" y="154.0" width="181.9" height="16" rx="5" fill="#b3ab93"/><text x="259.9" y="166.5" text-anchor="end" font-size="12" font-weight="700" fill="#3a362e">21.6%</text><text x="86.0" y="186.0" font-size="10.5" fill="#6f695e">收入 70亿 ｜ 毛利 13亿（占 14.2%）</text><circle cx="241.8" cy="162.0" r="4.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="1.5"/><text x="984" y="166.5" text-anchor="end" font-size="12" font-weight="700" fill="#4a6fa5">18.5%</text></svg></div><span class="source">业务构成（脚本按 segments 字段生成，数据来自 em_fetch E6/年报）：横条=收入占比（0-100% 定域），首行=第一大业务，钢蓝圆点=毛利率（同一 % 轴），右列=毛利率数值；条下=收入/毛利额；<strong>利润口径为毛利——分部净利润无公开披露</strong></span><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><span class="section-tag">产业链位置</span><div class="plot-wrap"><svg viewBox="0 0 1000 206" role="img" aria-label="产业链位置" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><text x="155" y="26" text-anchor="middle" font-size="12" font-weight="600" fill="#6f695e">上游 · 供给端</text><text x="500" y="26" text-anchor="middle" font-size="12" font-weight="600" fill="#6f695e">本公司</text><text x="845" y="26" text-anchor="middle" font-size="12" font-weight="600" fill="#6f695e">下游 · 需求端</text><rect x="30" y="46.0" width="250" height="34" rx="8" fill="#efe9db" stroke="#e0d7c3"/><text x="155" y="68" text-anchor="middle" font-size="12" fill="#3a362e">煤炭开采</text><path d="M280,63.0 C335.0,63.0 335.0,118.0 390,118.0" stroke="#b3ab93" stroke-width="1.2" fill="none"/><rect x="30" y="142.0" width="250" height="34" rx="8" fill="#efe9db" stroke="#e0d7c3"/><text x="155" y="164" text-anchor="middle" font-size="12" fill="#3a362e">电力</text><path d="M280,159.0 C335.0,159.0 335.0,118.0 390,118.0" stroke="#b3ab93" stroke-width="1.2" fill="none"/><rect x="720" y="46.0" width="250" height="34" rx="8" fill="#efe9db" stroke="#e0d7c3"/><text x="845" y="68" text-anchor="middle" font-size="12" fill="#3a362e">聚烯烃加工</text><path d="M610,118.0 C665.0,118.0 665.0,63.0 720,63.0" stroke="#b3ab93" stroke-width="1.2" fill="none"/><rect x="720" y="94.0" width="250" height="34" rx="8" fill="#efe9db" stroke="#e0d7c3"/><text x="845" y="116" text-anchor="middle" font-size="12" fill="#3a362e">包装</text><path d="M610,118.0 C665.0,118.0 665.0,111.0 720,111.0" stroke="#b3ab93" stroke-width="1.2" fill="none"/><rect x="720" y="142.0" width="250" height="34" rx="8" fill="#efe9db" stroke="#e0d7c3"/><text x="845" y="164" text-anchor="middle" font-size="12" fill="#3a362e">家电</text><path d="M610,118.0 C665.0,118.0 665.0,159.0 720,159.0" stroke="#b3ab93" stroke-width="1.2" fill="none"/><rect x="390" y="86.0" width="220" height="64" rx="10" fill="#4a6fa5"/><text x="500" y="122.5" text-anchor="middle" font-size="13" font-weight="700" fill="#fffdf9">测试股份</text><text x="500" y="168.0" text-anchor="middle" font-size="11" fill="#6f695e">煤制烯烃一体化</text></svg></div><span class="source">产业链位置（脚本按 industry_chain 字段生成，内容来自年报/定性检索）：左=上游行业，右=下游行业，两栏各自在总高内均分（条数不同则间距不同），曲线=供需关系，卡下=本公司定位注；只列行业不列企业，不代表全部玩家</span><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><span class="section-tag">财务五年趋势（2021–2025）</span><div class="mini-grid"><div class="mini-cell"><div class="m-head"><span class="m-name">营收 × 毛利率</span><span class="m-val">130亿 <span class="m-yoy">+4.0%</span> ｜ 34%</span></div><svg viewBox="0 0 480 158"><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#ece7db" stroke-width="1"/><text x="34" y="143.0" text-anchor="end" font-size="8" fill="#6f695e">0</text><line x1="38" y1="63.7" x2="442" y2="63.7" stroke="#ece7db" stroke-width="1"/><text x="34" y="66.7" text-anchor="end" font-size="8" fill="#6f695e">100</text><text x="446" y="124.0" font-size="8" fill="#6f695e">30</text><text x="446" y="29.0" font-size="8" fill="#6f695e">35</text><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#e0d7c3" stroke-width="1.2"/><rect x="38" y="6" width="11" height="8" rx="2" fill="#b3ab93"/><text x="53" y="13" font-size="9" fill="#6f695e">营收（亿，左轴）</text><line x1="139.0" y1="10" x2="153.0" y2="10" stroke="#4a6fa5" stroke-width="2"/><text x="157.0" y="13" font-size="9" fill="#6f695e">毛利率（%，右轴）</text><rect x="63.4" y="63.7" width="30.0" height="76.3" rx="2.5" fill="#b3ab93"/><text x="78.4" y="60.7" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">100</text><rect x="144.2" y="56.1" width="30.0" height="83.9" rx="2.5" fill="#b3ab93"/><text x="159.2" y="53.1" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">110</text><rect x="225.0" y="48.5" width="30.0" height="91.5" rx="2.5" fill="#b3ab93"/><text x="240.0" y="45.5" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">120</text><rect x="305.8" y="44.7" width="30.0" height="95.3" rx="2.5" fill="#b3ab93"/><text x="320.8" y="41.7" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">125</text><rect x="386.6" y="40.9" width="30.0" height="99.1" rx="2.5" fill="#b3ab93"/><text x="401.6" y="37.9" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">130</text><polyline points="78.4,121.0 159.2,102.0 240.0,83.0 320.8,64.0 401.6,45.0" fill="none" stroke="#4a6fa5" stroke-width="1.8"/><circle cx="78.4" cy="121.0" r="1.8" fill="#4a6fa5"/><text x="78.4" y="116.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">30%</text><circle cx="159.2" cy="102.0" r="1.8" fill="#4a6fa5"/><circle cx="240.0" cy="83.0" r="1.8" fill="#4a6fa5"/><circle cx="320.8" cy="64.0" r="1.8" fill="#4a6fa5"/><circle cx="401.6" cy="45.0" r="2.5" fill="#4a6fa5"/><text x="401.6" y="40.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">34%</text><text x="78.4" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">21</text><text x="159.2" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">22</text><text x="240.0" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">23</text><text x="320.8" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">24</text><text x="401.6" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">25</text></svg></div><div class="mini-cell"><div class="m-head"><span class="m-name">归母净利+扣非净利 × 净利率 × ROE</span><span class="m-val">11亿 / 10.5亿 <span class="m-yoy">+4.8%</span> ｜ 10% / 14%</span></div><svg viewBox="0 0 480 158"><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#ece7db" stroke-width="1"/><text x="34" y="143.0" text-anchor="end" font-size="8" fill="#6f695e">0</text><line x1="38" y1="49.9" x2="442" y2="49.9" stroke="#ece7db" stroke-width="1"/><text x="34" y="52.9" text-anchor="end" font-size="8" fill="#6f695e">10</text><text x="446" y="98.7" font-size="8" fill="#6f695e">10</text><text x="446" y="35.3" font-size="8" fill="#6f695e">15</text><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#e0d7c3" stroke-width="1.2"/><rect x="38" y="6" width="11" height="8" rx="2" fill="#b3ab93"/><text x="53" y="13" font-size="9" fill="#6f695e">归母净利（亿，左轴）</text><rect x="157.0" y="6" width="11" height="8" rx="2" fill="#4a6fa5"/><text x="172.0" y="13" font-size="9" fill="#6f695e">扣非净利（亿，左轴）</text><line x1="276.0" y1="10" x2="290.0" y2="10" stroke="#4a6fa5" stroke-width="2"/><text x="294.0" y="13" font-size="9" fill="#6f695e">净利率（%，右轴）</text><line x1="385.04" y1="10" x2="399.04" y2="10" stroke="#57524a" stroke-width="2" stroke-dasharray="3 2"/><text x="403.04" y="13" font-size="9" fill="#6f695e">ROE（%，右轴）</text><rect x="51.0" y="67.9" width="25.9" height="72.1" rx="2.5" fill="#b3ab93"/><text x="64.0" y="64.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">8</text><rect x="131.8" y="58.9" width="25.9" height="81.1" rx="2.5" fill="#b3ab93"/><text x="144.8" y="55.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">9</text><rect x="212.6" y="49.9" width="25.9" height="90.1" rx="2.5" fill="#b3ab93"/><text x="225.6" y="46.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">10</text><rect x="293.4" y="45.4" width="25.9" height="94.6" rx="2.5" fill="#b3ab93"/><text x="306.4" y="42.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">10.5</text><rect x="374.2" y="40.9" width="25.9" height="99.1" rx="2.5" fill="#b3ab93"/><text x="387.2" y="37.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">11</text><rect x="79.9" y="72.4" width="25.9" height="67.6" rx="2.5" fill="#4a6fa5"/><text x="92.8" y="69.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">7.5</text><rect x="160.7" y="63.4" width="25.9" height="76.6" rx="2.5" fill="#4a6fa5"/><text x="173.6" y="60.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">8.5</text><rect x="241.5" y="54.4" width="25.9" height="85.6" rx="2.5" fill="#4a6fa5"/><text x="254.4" y="51.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">9.5</text><rect x="322.3" y="49.9" width="25.9" height="90.1" rx="2.5" fill="#4a6fa5"/><text x="335.2" y="46.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">10</text><rect x="403.1" y="45.4" width="25.9" height="94.6" rx="2.5" fill="#4a6fa5"/><text x="416.0" y="42.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">10.5</text><polyline points="78.4,121.0 159.2,114.7 240.0,108.3 320.8,102.0 401.6,95.7" fill="none" stroke="#4a6fa5" stroke-width="1.8"/><circle cx="78.4" cy="121.0" r="1.8" fill="#4a6fa5"/><text x="78.4" y="116.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">8%</text><circle cx="159.2" cy="114.7" r="1.8" fill="#4a6fa5"/><circle cx="240.0" cy="108.3" r="1.8" fill="#4a6fa5"/><circle cx="320.8" cy="102.0" r="1.8" fill="#4a6fa5"/><circle cx="401.6" cy="95.7" r="2.5" fill="#4a6fa5"/><text x="401.6" y="90.7" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">10%</text><polyline points="78.4,70.3 159.2,57.7 240.0,45.0 320.8,45.0 401.6,45.0" fill="none" stroke="#57524a" stroke-width="1.8" stroke-dasharray="4 3"/><circle cx="78.4" cy="70.3" r="1.8" fill="#57524a"/><text x="78.4" y="65.3" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#57524a">12%</text><circle cx="159.2" cy="57.7" r="1.8" fill="#57524a"/><circle cx="240.0" cy="45.0" r="1.8" fill="#57524a"/><circle cx="320.8" cy="45.0" r="1.8" fill="#57524a"/><circle cx="401.6" cy="45.0" r="2.5" fill="#57524a"/><text x="401.6" y="40.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#57524a">14%</text><text x="78.4" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">21</text><text x="159.2" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">22</text><text x="240.0" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">23</text><text x="320.8" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">24</text><text x="401.6" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">25</text></svg></div><div class="mini-cell"><div class="m-head"><span class="m-name">经营现金流+自由现金流 × 现金含量</span><span class="m-val">13亿 / 10亿 <span class="m-yoy">+8.3%</span> ｜ 1.1</span></div><svg viewBox="0 0 480 158"><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#ece7db" stroke-width="1"/><text x="34" y="143.0" text-anchor="end" font-size="8" fill="#6f695e">0</text><line x1="38" y1="63.7" x2="442" y2="63.7" stroke="#ece7db" stroke-width="1"/><text x="34" y="66.7" text-anchor="end" font-size="8" fill="#6f695e">10</text><text x="446" y="78.4" font-size="8" fill="#6f695e">1</text><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#e0d7c3" stroke-width="1.2"/><rect x="38" y="6" width="11" height="8" rx="2" fill="#b3ab93"/><text x="53" y="13" font-size="9" fill="#6f695e">经营现金流（亿，左轴）</text><rect x="166.0" y="6" width="11" height="8" rx="2" fill="#4a6fa5"/><text x="181.0" y="13" font-size="9" fill="#6f695e">自由现金流（亿，左轴）</text><line x1="294.0" y1="10" x2="308.0" y2="10" stroke="#4a6fa5" stroke-width="2"/><text x="312.0" y="13" font-size="9" fill="#6f695e">现金含量（右轴）</text><line x1="38" y1="121.0" x2="442" y2="121.0" stroke="#c75b5b" stroke-width="1" stroke-dasharray="3 3"/><text x="446" y="118.0" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#c75b5b">0.7</text><rect x="51.0" y="63.7" width="25.9" height="76.3" rx="2.5" fill="#b3ab93"/><text x="64.0" y="60.7" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">10</text><rect x="131.8" y="56.1" width="25.9" height="83.9" rx="2.5" fill="#b3ab93"/><text x="144.8" y="53.1" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">11</text><rect x="212.6" y="48.5" width="25.9" height="91.5" rx="2.5" fill="#b3ab93"/><text x="225.6" y="45.5" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">12</text><rect x="293.4" y="48.5" width="25.9" height="91.5" rx="2.5" fill="#b3ab93"/><text x="306.4" y="45.5" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">12</text><rect x="374.2" y="40.9" width="25.9" height="99.1" rx="2.5" fill="#b3ab93"/><text x="387.2" y="37.9" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#6f695e">13</text><rect x="79.9" y="86.6" width="25.9" height="53.4" rx="2.5" fill="#4a6fa5"/><text x="92.8" y="83.6" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">7</text><rect x="160.7" y="79.0" width="25.9" height="61.0" rx="2.5" fill="#4a6fa5"/><text x="173.6" y="76.0" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">8</text><rect x="241.5" y="71.4" width="25.9" height="68.6" rx="2.5" fill="#4a6fa5"/><text x="254.4" y="68.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">9</text><rect x="322.3" y="71.4" width="25.9" height="68.6" rx="2.5" fill="#4a6fa5"/><text x="335.2" y="68.4" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">9</text><rect x="403.1" y="63.7" width="25.9" height="76.3" rx="2.5" fill="#4a6fa5"/><text x="416.0" y="60.7" text-anchor="middle" font-size="8" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">10</text><polyline points="78.4,45.0 159.2,60.2 240.0,75.4 320.8,67.8 401.6,60.2" fill="none" stroke="#4a6fa5" stroke-width="1.8"/><circle cx="78.4" cy="45.0" r="1.8" fill="#4a6fa5"/><text x="78.4" y="40.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">1.2</text><circle cx="159.2" cy="60.2" r="1.8" fill="#4a6fa5"/><circle cx="240.0" cy="75.4" r="1.8" fill="#4a6fa5"/><circle cx="320.8" cy="67.8" r="1.8" fill="#4a6fa5"/><circle cx="401.6" cy="60.2" r="2.5" fill="#4a6fa5"/><text x="401.6" y="55.2" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">1.1</text><text x="78.4" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">21</text><text x="159.2" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">22</text><text x="240.0" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">23</text><text x="320.8" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">24</text><text x="401.6" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">25</text></svg></div><div class="mini-cell"><div class="m-head"><span class="m-name">运营资金周转天数</span><span class="m-val">60 / 120</span></div><svg viewBox="0 0 480 158"><line x1="38" y1="67.6" x2="442" y2="67.6" stroke="#ece7db" stroke-width="1"/><text x="446" y="70.6" font-size="8" fill="#6f695e">100</text><line x1="38" y1="140.0" x2="442" y2="140.0" stroke="#e0d7c3" stroke-width="1.2"/><line x1="38" y1="10" x2="52" y2="10" stroke="#4a6fa5" stroke-width="2"/><text x="56" y="13" font-size="9" fill="#6f695e">应收账款周转天数（右轴）</text><line x1="178.0" y1="10" x2="192.0" y2="10" stroke="#57524a" stroke-width="2" stroke-dasharray="3 2"/><text x="196.0" y="13" font-size="9" fill="#6f695e">存货周转天数（右轴）</text><polyline points="78.4,103.5 159.2,121.0 240.0,106.6 320.8,95.3 401.6,108.7" fill="none" stroke="#4a6fa5" stroke-width="1.8"/><circle cx="78.4" cy="103.5" r="1.8" fill="#4a6fa5"/><text x="78.4" y="98.5" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">65</text><circle cx="159.2" cy="121.0" r="1.8" fill="#4a6fa5"/><circle cx="240.0" cy="106.6" r="1.8" fill="#4a6fa5"/><circle cx="320.8" cy="95.3" r="1.8" fill="#4a6fa5"/><circle cx="401.6" cy="108.7" r="2.5" fill="#4a6fa5"/><text x="401.6" y="103.7" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#4a6fa5">60</text><polyline points="78.4,45.0 159.2,69.6 240.0,71.7 320.8,70.7 401.6,47.1" fill="none" stroke="#57524a" stroke-width="1.8" stroke-dasharray="4 3"/><circle cx="78.4" cy="45.0" r="1.8" fill="#57524a"/><text x="78.4" y="40.0" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#57524a">122</text><circle cx="159.2" cy="69.6" r="1.8" fill="#57524a"/><circle cx="240.0" cy="71.7" r="1.8" fill="#57524a"/><circle cx="320.8" cy="70.7" r="1.8" fill="#57524a"/><circle cx="401.6" cy="47.1" r="2.5" fill="#57524a"/><text x="401.6" y="42.1" text-anchor="middle" font-size="8.5" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#57524a">120</text><text x="78.4" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">21</text><text x="159.2" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">22</text><text x="240.0" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">23</text><text x="320.8" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">24</text><text x="401.6" y="154.0" text-anchor="middle" font-size="8" fill="#6f695e">25</text></svg></div></div><span class="source">财务五年趋势（脚本按 fin_trend 字段生成，数据照抄 em_fetch E3 年表）：组合图双轴——柱=金额（左轴 亿；沙=第一系列/钢蓝=第二系列），线=比率（右轴 %/倍，钢蓝实线=第一条、灰虚线=第二条），红虚线=阈值（如现金含量 0.7 盈利质量线）；图为概览，异常年份归因见本块正文与红旗四项卡</span><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><div class="dim-block"><div class="dim-header"><span class="dim-name">3.5 治理与资本配置</span><span class="dim-weight">7%</span><span class="score-line" style="margin-left:auto;margin-bottom:0;"><span class="badge badge-green">7.5</span></span></div><p><strong>判词：</strong>股权集中、激励覆盖充分，近三年资本运作记录干净，无质押风险。</p><div class="trig-strip"><div class="trig"><span class="trig-dot hit"></span><span class="trig-cond">股权与控制权</span><span class="trig-mt">控股股东持股 34.2%，无质押冻结</span><span class="trig-status hit">正面</span></div><div class="trig"><span class="trig-dot hit"></span><span class="trig-cond">管理层与激励</span><span class="trig-mt">2024 限制性股票覆盖核心技术人员 312 人</span><span class="trig-status hit">正面</span></div><div class="trig"><span class="trig-dot miss"></span><span class="trig-cond">风险点</span><span class="trig-mt">关联交易占比 6.8%（高于同业 3% 均值）</span><span class="trig-status miss">关注</span></div></div><p><strong>评分：</strong>7.5——基准 7.0，股权/激励两项正面 +0.5；关联交易关注项不扣分但列入 13 章跟踪。</p></div>
+  </div>
+</div>
+
+<!-- 4 未来预期 -->
+<div class="section" id="s4">
+  <div class="section-header">
+    <span class="section-num">4</span>
+    <span class="section-title">未来预期 — 利润往哪走</span>
+    <span class="section-meta"><span class="badge badge-blue badge-lg">7.00</span> 占质量分 30%</span>
+  </div>
+  <div class="section-body">
+    <div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><span class="section-tag">利润增长：历史 → 本文预测 vs 卖方一致</span><div class="plot-wrap"><svg viewBox="0 0 1000 288" role="img" aria-label="利润增长" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><rect x="56" y="8" width="13" height="9" rx="2.5" fill="#b3ab93"/><text x="74" y="16" font-size="11" fill="#6f695e">收入增速（实际）</text><rect x="184.0" y="8" width="13" height="9" rx="2.5" fill="#4a6fa5"/><text x="202.0" y="16" font-size="11" fill="#6f695e">净利增速（实际）</text><rect x="312.0" y="8" width="13" height="9" rx="2.5" fill="#4a6fa5" fill-opacity="0.3" stroke="#4a6fa5" stroke-width="1"/><text x="330.0" y="16" font-size="11" fill="#6f695e">本文净利预测区间</text><polygon points="446.0,8 452.0,13 446.0,18 440.0,13" fill="#2b2620"/><text x="458.0" y="16" font-size="11" fill="#6f695e">卖方一致预期</text><line x1="56" y1="215.8" x2="980" y2="215.8" stroke="#ece7db" stroke-width="1"/><text x="48" y="219.8" text-anchor="end" font-size="11" fill="#6f695e">0%</text><line x1="56" y1="151.2" x2="980" y2="151.2" stroke="#ece7db" stroke-width="1"/><text x="48" y="155.2" text-anchor="end" font-size="11" fill="#6f695e">5%</text><line x1="56" y1="86.5" x2="980" y2="86.5" stroke="#ece7db" stroke-width="1"/><text x="48" y="90.5" text-anchor="end" font-size="11" fill="#6f695e">10%</text><line x1="56" y1="215.8" x2="980" y2="215.8" stroke="#e0d7c3" stroke-width="1.4"/><line x1="795.2" y1="30" x2="795.2" y2="240" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="5 4"/><text x="787.2" y="42" text-anchor="end" font-size="10.5" fill="#6f695e">实际</text><text x="803.2" y="42" font-size="10.5" fill="#6f695e">预测</text><rect x="112.4" y="86.5" width="34.0" height="129.2" rx="3" fill="#b3ab93"/><text x="129.4" y="82.5" text-anchor="middle" font-size="10" fill="#6f695e">+10%</text><rect x="150.4" y="54.2" width="34.0" height="161.5" rx="3" fill="#4a6fa5"/><text x="167.4" y="50.2" text-anchor="middle" font-size="10" fill="#3a362e">+12.5%</text><text x="148.4" y="256" text-anchor="middle" font-size="11" fill="#6f695e">2022</text><rect x="297.2" y="98.2" width="34.0" height="117.6" rx="3" fill="#b3ab93"/><text x="314.2" y="94.2" text-anchor="middle" font-size="10" fill="#6f695e">+9.1%</text><rect x="335.2" y="72.3" width="34.0" height="143.4" rx="3" fill="#4a6fa5"/><text x="352.2" y="68.3" text-anchor="middle" font-size="10" fill="#3a362e">+11.1%</text><text x="333.2" y="256" text-anchor="middle" font-size="11" fill="#6f695e">2023</text><rect x="482.0" y="161.5" width="34.0" height="54.3" rx="3" fill="#b3ab93"/><text x="499.0" y="157.5" text-anchor="middle" font-size="10" fill="#6f695e">+4.2%</text><rect x="520.0" y="151.2" width="34.0" height="64.6" rx="3" fill="#4a6fa5"/><text x="537.0" y="147.2" text-anchor="middle" font-size="10" fill="#3a362e">+5%</text><text x="518.0" y="256" text-anchor="middle" font-size="11" fill="#6f695e">2024</text><rect x="666.8" y="164.1" width="34.0" height="51.7" rx="3" fill="#b3ab93"/><text x="683.8" y="160.1" text-anchor="middle" font-size="10" fill="#6f695e">+4%</text><rect x="704.8" y="153.7" width="34.0" height="62.0" rx="3" fill="#4a6fa5"/><text x="721.8" y="149.7" text-anchor="middle" font-size="10" fill="#3a362e">+4.8%</text><text x="702.8" y="256" text-anchor="middle" font-size="11" fill="#6f695e">2025</text><rect x="868.6" y="112.4" width="38.0" height="51.7" rx="4" fill="#4a6fa5" fill-opacity="0.3" stroke="#4a6fa5" stroke-width="1.2"/><text x="887.6" y="107.4" text-anchor="middle" font-size="10" fill="#4a6fa5">+8%</text><text x="887.6" y="176.1" text-anchor="middle" font-size="10" fill="#4a6fa5">+4%</text><polygon points="887.6,131.2 894.6,138.2 887.6,145.2 880.6,138.2" fill="#2b2620"/><text x="897.6" y="129.2" font-size="10" stroke="#f7f2e7" stroke-width="3" paint-order="stroke" fill="#2b2620">一致 +6%</text><text x="887.6" y="256" text-anchor="middle" font-size="11" font-weight="600" fill="#3a362e">2026E</text><text x="887.6" y="271" text-anchor="middle" font-size="10" fill="#57524a">差 +0.0pct</text></svg></div><span class="source">利润增长（脚本按 growth_plot 字段生成）：柱=历史增速（沙=收入、钢蓝=归母净利，取 E3 年表同比），区间竖条=本文净利增速预测区间，◆=卖方一致预期（E5 研报汇总）；预期差（本文中枢−一致预期）：2026E +0.0pct；全图为中性色，红涨绿跌仅用于股价方向</span><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div><div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。</p></div>
+  </div>
+</div>
+
+<!-- 5 风险评估（质量轨门禁） -->
+<div class="section" id="s5">
+  <div class="section-header">
+    <span class="section-num">5</span>
+    <span class="section-title">风险评估（红/黄灯）— 质量轨门禁</span>
+    <span class="section-meta"><span class="badge badge-red">扣 0.0 分</span></span>
+  </div>
+  <div class="section-body">
+    <div class="flag-hero"><div class="flag-hero-card pass"><div class="fh-name">a 财务造假与极高杠杆</div><div class="fh-verdict">通过</div><div class="fh-desc">审计标准无保留；商誉/净资产 3.2%；控股股东无质押；非 ST</div></div><div class="flag-hero-card pass"><div class="fh-name">b 立案调查与重大违规</div><div class="fh-verdict">通过</div><div class="fh-desc">近三年无立案调查/重大违规披露（公告检索）</div></div><div class="flag-hero-card pass"><div class="fh-name">c 主营不可逆衰退</div><div class="fh-verdict">通过</div><div class="fh-desc">核心产品收入连续增长，无被禁/被主要市场抛弃迹象</div></div></div><p>黄灯扣分：无——四类（a 交易与股东行为 / b 行业与政策环境 / c 盈利与财务质量 / d 经营与公司治理）逐项核查无扣分。</p><p><strong>损失预演（假设两年后这笔投资亏损 30%）：</strong></p><div class="pm-grid"><div class="pm-card"><div class="pm-head">最可能的亏损故事</div><p>商品价格深跌叠加产能释放不及预期，利润腰斩后估值随之下杀。</p></div><div class="pm-card"><div class="pm-head">与红黄灯清单的重合度</div><p>与黄灯 b 类（行业周期）高度重合，是同一回事的概率高。</p></div><div class="pm-card"><div class="pm-head">清单外新风险</div><p>未识别出清单外新风险：资产负债表干净，无重大单一客户依赖。</p></div></div>
+  </div>
+</div>
+
+<!-- 6 质量分汇总（脚本生成，模型不写） -->
+<div class="section" id="s6">
+  <div class="section-header">
+    <span class="section-num">6</span>
+    <span class="section-title">质量分汇总</span>
+    <span class="section-meta">质量分 7.00</span>
+  </div>
+  <div class="section-body">
+    <span class="section-tag">评分分布</span><div class="plot-wrap"><svg viewBox="0 0 1000 384" role="img" aria-label="九维评分分布" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="210.0" y1="26" x2="210.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="210.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">0</text><line x1="332.0" y1="26" x2="332.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="332.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">2</text><line x1="454.0" y1="26" x2="454.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="454.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">4</text><line x1="576.0" y1="26" x2="576.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="576.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">6</text><line x1="698.0" y1="26" x2="698.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="698.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">8</text><line x1="820.0" y1="26" x2="820.0" y2="354" stroke="#ece7db" stroke-width="1"/><text x="820.0" y="370" text-anchor="middle" font-size="11" fill="#6f695e">10</text><line x1="637.0" y1="26" x2="637.0" y2="354" stroke="#c9bfa8" stroke-width="1.2" stroke-dasharray="5 4"/><text x="637.0" y="20" text-anchor="middle" font-size="10.5" fill="#6f695e">良好线 7.0</text><text x="0" y="26" font-size="11" font-weight="600" fill="#6f695e">公司本质 · 占质量分 70%</text><rect x="210" y="36" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="36" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="49.5" text-anchor="end" font-size="12" fill="#3a362e">3.1 赛道与宏观</text><text x="645.0" y="49.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="49.5" text-anchor="end" font-size="11" fill="#6f695e">12% · 0.84</text><rect x="210" y="68" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="68" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="81.5" text-anchor="end" font-size="12" fill="#3a362e">3.2 产业链位置</text><text x="645.0" y="81.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="81.5" text-anchor="end" font-size="11" fill="#6f695e">12% · 0.84</text><rect x="210" y="100" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="100" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="113.5" text-anchor="end" font-size="12" fill="#3a362e">3.3 商业模式与护城河</text><text x="645.0" y="113.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="113.5" text-anchor="end" font-size="11" fill="#6f695e">20% · 1.40</text><rect x="210" y="132" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="132" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="145.5" text-anchor="end" font-size="12" fill="#3a362e">3.4 财务健康</text><text x="645.0" y="145.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="145.5" text-anchor="end" font-size="11" fill="#6f695e">16% · 1.12</text><rect x="210" y="164" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="164" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="177.5" text-anchor="end" font-size="12" fill="#3a362e">3.5 治理与资本配置</text><text x="645.0" y="177.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="177.5" text-anchor="end" font-size="11" fill="#6f695e">20% · 1.40</text><rect x="210" y="196" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="196" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="209.5" text-anchor="end" font-size="12" fill="#3a362e">3.6 资本回报质量</text><text x="645.0" y="209.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="209.5" text-anchor="end" font-size="11" fill="#6f695e">20% · 1.40</text><text x="0" y="244" font-size="11" font-weight="600" fill="#6f695e">未来预期 · 占质量分 30%</text><rect x="210" y="254" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="254" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="267.5" text-anchor="end" font-size="12" fill="#3a362e">4.1 利润增长</text><text x="645.0" y="267.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="267.5" text-anchor="end" font-size="11" fill="#6f695e">40% · 2.80</text><rect x="210" y="286" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="286" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="299.5" text-anchor="end" font-size="12" fill="#3a362e">4.2 项目确定性</text><text x="645.0" y="299.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="299.5" text-anchor="end" font-size="11" fill="#6f695e">35% · 2.45</text><rect x="210" y="318" width="610" height="18" rx="5" fill="#efe9db"/><rect x="210" y="318" width="427.0" height="18" rx="5" fill="#4d804d"/><text x="190" y="331.5" text-anchor="end" font-size="12" fill="#3a362e">4.3 催化剂</text><text x="645.0" y="331.5" font-size="12" font-weight="700" fill="#4d804d">7.0 良好</text><text x="965" y="331.5" text-anchor="end" font-size="11" fill="#6f695e">25% · 1.75</text></svg></div><span class="source">评分分布（脚本按 scores/weights 生成）：条长=维度得分（0-10 定域），条色=徽章档（≥7 绿 / 4-6.9 橙 / &lt;4 红），条端=得分与判词，右列=层内权重 · 加权得分，虚线=7.0 良好线</span>
+    <div class="layer-summary">质量分 = 公司本质 7.00 × 70% + 未来预期 7.00 × 30% = <span class="badge badge-green badge-lg">7.00</span> <strong>好公司</strong></div>
+  </div>
+</div>
+
+<!-- 7 估值与安全边际（估值轨，原 05） -->
+<div class="section" id="s7">
+  <div class="section-header">
+    <span class="section-num">7</span>
+    <span class="section-title">估值与安全边际（PE历史时段匹配法）</span>
+    <span class="section-meta"><span class="badge badge-orange badge-lg">估值分 5.5</span> ｜ 周期股</span>
+  </div>
+  <div class="section-body">
+    
+    <div class="plot-wrap"><svg viewBox="0 0 1000 236" role="img" aria-label="目标价走廊" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="435.5" y1="24" x2="435.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="435.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">10</text><line x1="799.5" y1="24" x2="799.5" y2="196" stroke="#ece7db" stroke-width="1"/><text x="799.5" y="213" text-anchor="middle" font-size="11" fill="#6f695e">15</text><line x1="128" y1="196" x2="976" y2="196" stroke="#e0d7c3" stroke-width="1.2"/><text x="4" y="213" font-size="11" fill="#6f695e">单位：元</text><rect x="362.7" y="24" width="291.2" height="172.0" fill="#6f695e" fill-opacity="0.13"/><text x="508.3" y="228" text-anchor="middle" font-size="10.5" fill="#6f695e">卖方目标价 9.00–13</text><line x1="435.5" y1="22" x2="435.5" y2="196" stroke="#4a6fa5" stroke-width="1.5" stroke-dasharray="5 4"/><text x="435.5" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">现价 10</text><text x="116" y="57.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">悲观</text><text x="116" y="71.0" text-anchor="end" font-size="10.5" fill="#6f695e">6.40–8.00</text><rect x="173.4" y="46.0" width="116.5" height="28" rx="8" fill="#c75b5b"/><line x1="231.7" y1="51.0" x2="231.7" y2="69.0" stroke="#fffdf9" stroke-width="3"/><text x="231.7" y="40.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c75b5b">7.20（-28.0%）</text><text x="116" y="109.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">基础</text><text x="116" y="123.0" text-anchor="end" font-size="10.5" fill="#6f695e">10–12</text><rect x="435.5" y="98.0" width="145.6" height="28" rx="8" fill="#c08a2e"/><line x1="508.3" y1="103.0" x2="508.3" y2="121.0" stroke="#fffdf9" stroke-width="3"/><text x="508.3" y="92.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#c08a2e">11（+10.0%）</text><text x="116" y="161.0" text-anchor="end" font-size="13" font-weight="600" fill="#3a362e">乐观</text><text x="116" y="175.0" text-anchor="end" font-size="10.5" fill="#6f695e">14–17</text><rect x="755.8" y="150.0" width="174.7" height="28" rx="8" fill="#6ba86b"/><line x1="843.2" y1="155.0" x2="843.2" y2="173.0" stroke="#fffdf9" stroke-width="3"/><text x="843.2" y="144.0" text-anchor="middle" font-size="12.5" font-weight="700" fill="#6ba86b">16（+56.0%）</text></svg></div><span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅；灰带=卖方一致目标价区间（E5 研报）</span>
+    
+    
+    <div class="table-scroll"><table class="scenario-table"><thead><tr><th>指标</th><th class="num">悲观情景</th><th class="num">基础情景</th><th class="num">乐观情景</th></tr></thead><tbody><tr><td>时间维度</td><td class="num">12个月</td><td class="num">12个月</td><td class="num">12个月</td></tr><tr><td>触发条件</td><td class="num">下行</td><td class="num">中性</td><td class="num">上行</td></tr><tr><td>归母净利</td><td class="num">80 亿</td><td class="num">100 亿</td><td class="num">120 亿</td></tr><tr><td>EPS</td><td class="num">0.80</td><td class="num">1.00</td><td class="num">1.20</td></tr><tr><td>PE</td><td class="num">8-10x</td><td class="num">10-12x</td><td class="num">12-14x</td></tr><tr><td>目标价</td><td class="num">6.40-8.00 元</td><td class="num">10-12 元</td><td class="num">14-17 元</td></tr><tr><td>较现价</td><td class="num"><span class="down">-28.0%</span>（中值7.20）</td><td class="num"><span class="up">+10.0%</span>（中值11）</td><td class="num"><span class="up">+56.0%</span>（中值16）</td></tr></tbody></table></div><div class="metric-row"><div class="metric-card"><div class="label">年化中枢期望收益</div><div class="value up">+10.0%</div><div class="sub">基础中值 11 ÷ 现价 10 − 1（12个月）</div></div><div class="metric-card"><div class="label">赔率（上行/下行）</div><div class="value bad">0.28</div><div class="sub">(基础中值−现价)÷(现价−悲观下限)；>1.5 为良好不对称</div></div><div class="metric-card"><div class="label">情景离散度</div><div class="value mid">84.0%</div><div class="sub">（乐观中值−悲观中值）÷ 现价；中不确定</div></div></div>
+    
+    <p>估值方法说明。</p>
+    <span class="section-tag">估值分计算</span><div class="table-scroll"><table><thead><tr><th>套件</th><th>输入值</th><th class="center">映射得分</th><th class="num">权重</th><th class="num">加权</th></tr></thead><tbody><tr><td>中枢分</td><td>年化中枢 +10.0%（12个月）</td><td class="center score-cell"><span class="badge badge-green">7.0</span></td><td class="num">×40%</td><td class="num">2.80</td></tr><tr><td>赔率分</td><td>赔率 0.28</td><td class="center score-cell"><span class="badge badge-red">3.5</span></td><td class="num">×25%</td><td class="num">0.88</td></tr><tr><td>合理倍数分</td><td>PE(TTM) 11x vs 合理带 10-12x</td><td class="center score-cell"><span class="badge badge-orange">5.0</span></td><td class="num">×25%</td><td class="num">1.25</td></tr><tr><td>股息分</td><td>股息率 2% − 无风险 1.7% = +0.3pct</td><td class="center score-cell"><span class="badge badge-orange">6.0</span></td><td class="num">×10%</td><td class="num">0.60</td></tr><tr><td colspan="2"><strong>估值分 = 2.80 + 0.88 + 1.25 + 0.60 = 5.5</strong></td><td class="center score-cell"><span class="badge badge-orange badge-lg">5.5</span></td><td colspan="2"><strong>合理无安全边际</strong></td></tr></tbody></table></div><span class="source">估值分档位：≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理无安全边际 / &lt;4 贵</span>
+  </div>
+</div>
+
+<!-- 8 市场预期差拆解 -->
+<div class="section" id="s8">
+  <div class="section-header">
+    <span class="section-num">8</span>
+    <span class="section-title">市场预期差拆解</span>
+    <span class="section-meta">档位 B</span>
+  </div>
+  <div class="section-body">
+    <p>预期差。</p>
+  </div>
+</div>
+
+<!-- 9 同业横向对比 -->
+<div class="section" id="s9">
+  <div class="section-header">
+    <span class="section-num">9</span>
+    <span class="section-title">同业横向对比</span>
+    <span class="section-meta">—</span>
+  </div>
+  <div class="section-body">
+    
+    <div class="plot-wrap"><svg viewBox="0 0 1000 460" role="img" aria-label="估值-质量散点图" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><rect x="64" y="34" width="291.2" height="126.7" fill="#6ba86b" fill-opacity="0.12"/><rect x="894.5" y="371.8" width="75.5" height="36.2" fill="#c75b5b" fill-opacity="0.12"/><text x="72" y="50" font-size="11" fill="#6f695e">高质量 · 低估值</text><text x="962" y="50" text-anchor="end" font-size="11" fill="#6f695e">高质量 · 高估值</text><text x="72" y="400" font-size="11" fill="#6f695e">低质量 · 低估值</text><text x="962" y="400" text-anchor="end" font-size="11" fill="#6f695e">低质量 · 高估值</text><line x1="355.2" y1="34" x2="355.2" y2="408" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/><line x1="894.5" y1="34" x2="894.5" y2="408" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/><line x1="64" y1="371.8" x2="970" y2="371.8" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/><line x1="64" y1="160.7" x2="970" y2="160.7" stroke="#ddd3bd" stroke-width="1" stroke-dasharray="4 4"/><line x1="64" y1="408" x2="970" y2="408" stroke="#e0d7c3" stroke-width="1.2"/><line x1="64" y1="34" x2="64" y2="408" stroke="#e0d7c3" stroke-width="1.2"/><text x="85.6" y="426" text-anchor="middle" font-size="11" fill="#6f695e">10x</text><text x="355.2" y="426" text-anchor="middle" font-size="11" fill="#6f695e">15x</text><text x="624.9" y="426" text-anchor="middle" font-size="11" fill="#6f695e">20x</text><text x="894.5" y="426" text-anchor="middle" font-size="11" fill="#6f695e">25x</text><text x="56" y="315.5" text-anchor="end" font-size="11" fill="#6f695e">10%</text><text x="56" y="164.7" text-anchor="end" font-size="11" fill="#6f695e">15%</text><text x="970" y="452" text-anchor="end" font-size="11" fill="#6f695e">PE(TTM)</text><text x="64" y="22" font-size="11" fill="#6f695e">ROE</text><circle cx="139.5" cy="190.8" r="8.0" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2"><title>测试股份 14%/11x</title></circle><text x="139.5" y="174.8" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">测试股份 14%/11x</text><circle cx="894.5" cy="341.6" r="6.0" fill="#66604f"><title>同业甲 9%/25x</title></circle><text x="878.5" y="345.6" text-anchor="end" font-size="12" fill="#57524a">同业甲 9%/25x</text><circle cx="409.1" cy="70.2" r="6.0" fill="#66604f"><title>同业乙 18%/16x</title></circle><text x="425.1" y="74.2" text-anchor="start" font-size="12" fill="#57524a">同业乙 18%/16x</text></svg></div><span class="source">估值-质量散点图（脚本按 peers_plot 字段生成）：横轴 PE(TTM)、纵轴 ROE，虚线为低/中/高分带；左上绿底=优质低估区，右下红底=低质高估区；目标公司与同业须同口径（A/H 股、IFRS/经调整），混排须在 peers_meta 注明</span>
+    
+    <div class="table-scroll"><table class="freeze-first"><tr><th>公司</th><th class="num">PE(TTM)</th><th class="num">ROE</th></tr><tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td><td class="cell-best num">11</td><td class="num">14%</td></tr><tr><td>同业甲</td><td class="cell-worst num">25</td><td class="num">9%</td></tr></table></div><span class="source">数据来源：测试</span>
+  </div>
+</div>
+
+
+<!-- 10 周期规律（条件章节）：历史带图垫在手写时段拆解前（概览→明细；条件块嵌套不支持，
+     PE_BAND_HTML 空串时占位符替换为空、无残留） -->
+<div class="section" id="s10">
+  <div class="section-header">
+    <span class="section-num">10</span>
+    <span class="section-title">周期规律</span>
+    <span class="section-meta"></span>
+  </div>
+  <div class="section-body">
+    <span class="section-tag">PE(TTM) 历史带</span><div class="plot-wrap"><svg viewBox="0 0 1000 196" role="img" aria-label="PE(TTM)历史带" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="230.1" y1="38" x2="230.1" y2="140" stroke="#ece7db" stroke-width="1"/><text x="230.1" y="156" text-anchor="middle" font-size="11" fill="#6f695e">20x</text><line x1="497.7" y1="38" x2="497.7" y2="140" stroke="#ece7db" stroke-width="1"/><text x="497.7" y="156" text-anchor="middle" font-size="11" fill="#6f695e">40x</text><line x1="765.2" y1="38" x2="765.2" y2="140" stroke="#ece7db" stroke-width="1"/><text x="765.2" y="156" text-anchor="middle" font-size="11" fill="#6f695e">60x</text><line x1="64" y1="140" x2="936" y2="140" stroke="#e0d7c3" stroke-width="1.2"/><rect x="145.8" y="100" width="790.2" height="30" rx="8" fill="#efe9db" stroke="#e0d7c3"/><line x1="936.0" y1="100" x2="936.0" y2="130" stroke="#b3ab93" stroke-width="1.2" stroke-dasharray="3 3"/><text x="928.0" y="119.0" text-anchor="end" font-size="11" font-weight="700" fill="#6f695e">峰值 83.2x →</text><text x="145.8" y="60" font-size="11" fill="#6f695e">近5年 PE(TTM) 区间 13.7–83.2x</text><rect x="96.3" y="100" width="26.8" height="30" rx="8" fill="#4a6fa5"/><text x="109.7" y="170" text-anchor="middle" font-size="11" fill="#4a6fa5">合理带 10–12x</text><line x1="109.7" y1="88" x2="109.7" y2="142" stroke="#2b2620" stroke-width="3"/><circle cx="109.7" cy="115.0" r="5" fill="#2b2620"/><text x="109.7" y="80" text-anchor="middle" font-size="12" font-weight="700" fill="#2b2620">当前 11x</text><line x1="145.8" y1="94.0" x2="145.8" y2="136.0" stroke="#6f695e" stroke-width="1.2" stroke-dasharray="3 3"/><text x="145.8" y="42" text-anchor="middle" font-size="10.5" fill="#57524a">2023Q2 13.7x</text><line x1="590.0" y1="94.0" x2="590.0" y2="136.0" stroke="#6f695e" stroke-width="1.2" stroke-dasharray="3 3"/><text x="590.0" y="24" text-anchor="middle" font-size="10.5" fill="#57524a">2021H1 46.9x</text></svg></div><span class="source">PE(TTM) 历史带（脚本按 pe_history + valuation_inputs 生成）：浅带=近5年区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点 PE；三者同一口径；右缘「峰值→」=区间上沿超出显示域的截断标注（全量见带上方文字）</span><span class="section-tag">股价与 PE(TTM) 历史（近3年）</span><div class="plot-wrap"><svg viewBox="0 0 1000 240" role="img" aria-label="股价与PE历史走势" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="56" y1="22" x2="82" y2="22" stroke="#3a362e" stroke-width="1.6"/><text x="88" y="26" font-size="11" fill="#3a362e">股价（左轴，元）</text><line x1="200" y1="22" x2="226" y2="22" stroke="#4a6fa5" stroke-width="1.6"/><text x="232" y="26" font-size="11" fill="#4a6fa5">PE(TTM)（右轴）</text><line x1="56" y1="195.1" x2="936" y2="195.1" stroke="#ece7db" stroke-width="1"/><text x="48" y="199.1" text-anchor="end" font-size="11" fill="#6f695e">10</text><line x1="56" y1="137.7" x2="936" y2="137.7" stroke="#ece7db" stroke-width="1"/><text x="48" y="141.7" text-anchor="end" font-size="11" fill="#6f695e">12</text><line x1="56" y1="80.2" x2="936" y2="80.2" stroke="#ece7db" stroke-width="1"/><text x="48" y="84.2" text-anchor="end" font-size="11" fill="#6f695e">14</text><text x="944" y="165.2" font-size="11" fill="#4a6fa5">13</text><text x="944" y="120.8" font-size="11" fill="#4a6fa5">14</text><text x="944" y="76.4" font-size="11" fill="#4a6fa5">15</text><line x1="56.0" y1="34" x2="56.0" y2="204" stroke="#f0ebdf" stroke-width="1"/><text x="56.0" y="230" text-anchor="middle" font-size="11" fill="#6f695e">2023</text><line x1="357.7" y1="34" x2="357.7" y2="204" stroke="#f0ebdf" stroke-width="1"/><text x="357.7" y="230" text-anchor="middle" font-size="11" fill="#6f695e">2024</text><line x1="659.4" y1="34" x2="659.4" y2="204" stroke="#f0ebdf" stroke-width="1"/><text x="659.4" y="230" text-anchor="middle" font-size="11" fill="#6f695e">2025</text><line x1="56" y1="204" x2="936" y2="204" stroke="#e0d7c3" stroke-width="1.2"/><path d="M56.0,192.3 L81.1,189.4 L106.3,186.5 L131.4,183.7 L156.6,180.8 L181.7,177.9 L206.9,175.0 L232.0,172.2 L257.1,169.3 L282.3,166.4 L307.4,163.5 L332.6,160.7 L357.7,134.8 L382.9,131.9 L408.0,129.1 L433.1,126.2 L458.3,123.3 L483.4,120.4 L508.6,117.6 L533.7,114.7 L558.9,111.8 L584.0,108.9 L609.1,106.1 L634.3,103.2 L659.4,77.3 L684.6,74.5 L709.7,71.6 L734.9,68.7 L760.0,65.8 L785.1,63.0 L810.3,60.1 L835.4,57.2 L860.6,54.3 L885.7,51.5 L910.9,48.6 L936.0,45.7 L936.0,204 L56,204 Z" fill="#efe9db" stroke="none"/><path d="M56.0,192.3 L81.1,189.4 L106.3,186.5 L131.4,183.7 L156.6,180.8 L181.7,177.9 L206.9,175.0 L232.0,172.2 L257.1,169.3 L282.3,166.4 L307.4,163.5 L332.6,160.7 L357.7,134.8 L382.9,131.9 L408.0,129.1 L433.1,126.2 L458.3,123.3 L483.4,120.4 L508.6,117.6 L533.7,114.7 L558.9,111.8 L584.0,108.9 L609.1,106.1 L634.3,103.2 L659.4,77.3 L684.6,74.5 L709.7,71.6 L734.9,68.7 L760.0,65.8 L785.1,63.0 L810.3,60.1 L835.4,57.2 L860.6,54.3 L885.7,51.5 L910.9,48.6 L936.0,45.7" fill="none" stroke="#3a362e" stroke-width="1.8"/><path d="M56.0,192.3 L81.1,179.0 L106.3,165.6 L131.4,152.3 L156.6,139.0 L181.7,125.7 L206.9,112.3 L232.0,99.0 L257.1,85.7 L282.3,72.4 L307.4,59.0 L332.6,45.7 L357.7,192.3 L382.9,179.0 L408.0,165.6 L433.1,152.3 L458.3,139.0 L483.4,125.7 L508.6,112.3 L533.7,99.0 L558.9,85.7 L584.0,72.4 L609.1,59.0 L634.3,45.7 L659.4,192.3 L684.6,179.0 L709.7,165.6 L734.9,152.3 L760.0,139.0 L785.1,125.7 L810.3,112.3 L835.4,99.0 L860.6,85.7 L885.7,72.4 L910.9,59.0 L936.0,45.7" fill="none" stroke="#4a6fa5" stroke-width="1.8"/><circle cx="936.0" cy="45.7" r="3" fill="#3a362e"/><rect x="895.4" y="25.7" width="38.6" height="16" rx="8" fill="#fffdf9" stroke="#e0d7c3"/><text x="930.0" y="37.7" text-anchor="end" font-size="11" font-weight="700" fill="#3a362e">15.2</text><rect x="889.2" y="49.7" width="44.8" height="16" rx="8" fill="#fffdf9" stroke="#e0d7c3"/><text x="930.0" y="61.7" text-anchor="end" font-size="11" font-weight="700" fill="#4a6fa5">15.6x</text></svg></div><span class="source">股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）；双轴各自定标，读交叉不读绝对高度；判读：价涨 PE 平=业绩驱动，价平 PE 跳=估值重定价（财报日 TTM 净利跳变所致）</span>
+    <table><thead><tr><th>阶段</th><th class="num">时间</th><th class="num">PE</th><th>驱动</th></tr></thead><tbody><tr><td>景气顶</td><td class="num">2021H1</td><td class="num">46.9x</td><td>商品价格见顶</td></tr></tbody></table><span class="source">阶段拆解：E2 月线 + 当年 EPS 估算 PE</span><div class="conclusion-box"><strong>可复用规律：</strong>低分位≠便宜。</div>
+  </div>
+</div>
+
+
+<!-- 11 仓位与时机决策 -->
+<div class="section" id="s11">
+  <div class="section-header">
+    <span class="section-num">11</span>
+    <span class="section-title">仓位与时机决策</span>
+    <span class="section-meta">质量分 7.00 × 估值分 5.5 ｜ 时机分 5.00 微调</span>
+  </div>
+  <div class="section-body">
+    <span class="section-tag">股东户数趋势</span><div class="plot-wrap"><svg viewBox="0 0 1000 260" role="img" aria-label="股东户数趋势" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="60" y1="216" x2="980" y2="216" stroke="#e0d7c3" stroke-width="1.2"/><rect x="139.0" y="66.8" width="72.0" height="149.2" rx="4" fill="#b3ab93"/><text x="175.0" y="60.8" text-anchor="middle" font-size="11" font-weight="400" fill="#57524a">188,153</text><text x="175.0" y="232" text-anchor="middle" font-size="10.5" fill="#6f695e">25-03</text><rect x="369.0" y="77.1" width="72.0" height="138.9" rx="4" fill="#b3ab93"/><text x="405.0" y="71.1" text-anchor="middle" font-size="11" font-weight="400" fill="#57524a">175,200</text><text x="405.0" y="232" text-anchor="middle" font-size="10.5" fill="#6f695e">25-06</text><text x="405.0" y="247" text-anchor="middle" font-size="10.5" fill="#6ba86b">-6.9%</text><rect x="599.0" y="88.5" width="72.0" height="127.5" rx="4" fill="#b3ab93"/><text x="635.0" y="82.5" text-anchor="middle" font-size="11" font-weight="400" fill="#57524a">160,800</text><text x="635.0" y="232" text-anchor="middle" font-size="10.5" fill="#6f695e">25-09</text><text x="635.0" y="247" text-anchor="middle" font-size="10.5" fill="#6ba86b">-8.2%</text><rect x="829.0" y="95.3" width="72.0" height="120.7" rx="4" fill="#4a6fa5"/><text x="865.0" y="89.3" text-anchor="middle" font-size="11" font-weight="700" fill="#4a6fa5">152,300</text><text x="865.0" y="232" text-anchor="middle" font-size="10.5" fill="#6f695e">25-12</text><text x="865.0" y="247" text-anchor="middle" font-size="10.5" fill="#6ba86b">-5.3%</text></svg></div><span class="source">股东户数趋势（脚本按 holders 字段生成，数据来自 em_fetch E4）：柱=期末股东户数，柱下=截止日与环比；<strong>户数增=筹码分散（红），户数减=集中（绿）</strong>，钢蓝柱=最新一期</span><p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。<p>时机判定与决策逻辑。</p>
+    <span class="section-tag">三轨判定与仓位结论</span><div class="metric-row"><div class="metric-card"><div class="label">质量分</div><div class="value">7.00</div><div class="sub">好公司（≥7 好公司 / 5.5-6.9 中上 / 4-5.4 一般 / &lt;4 回避）</div></div><div class="metric-card"><div class="label">估值分</div><div class="value">5.5</div><div class="sub">合理无安全边际（≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理 / &lt;4 贵）</div></div><div class="metric-card"><div class="label">时机分</div><div class="value">5.00</div><div class="sub">中性（≥6 好时机 / 4-5.9 中性 / &lt;4 差时机）</div></div></div><div class="track-summary"><div class="ts-row"><span class="ts-formula">矩阵落位直接生效，无调节项触发</span></div></div><div class="decision-bar"><strong>最终仓位结论：</strong><span class="muted">矩阵落位：质量 7.00 × 估值 5.5 → 好公司·合理无安全边际 → 轻仓 ≤5% ｜ </span><span class="badge badge-orange badge-lg">轻仓 ≤5%</span></div>
+  </div>
+</div>
+
+
+<!-- 12 回测复盘（条件章节；v4.8.1 起提前：先复盘旧指标，后定新跟踪指标） -->
+<div class="section" id="s12">
+  <div class="section-header">
+    <span class="section-num">12</span>
+    <span class="section-title">回测复盘</span>
+    <span class="section-meta">基于 2026-08-08 版报告</span>
+  </div>
+  <div class="section-body">
+    <span class="section-tag">三轨分新旧对比</span><div class="plot-wrap"><svg viewBox="0 0 1000 216" role="img" aria-label="三轨分新旧对比" style="width:100%;min-width:760px;height:auto;display:block;font-family:inherit;"><line x1="140.0" y1="24" x2="140.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="140.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">0</text><line x1="290.0" y1="24" x2="290.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="290.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">2</text><line x1="440.0" y1="24" x2="440.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="440.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">4</text><line x1="590.0" y1="24" x2="590.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="590.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">6</text><line x1="740.0" y1="24" x2="740.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="740.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">8</text><line x1="890.0" y1="24" x2="890.0" y2="186" stroke="#ece7db" stroke-width="1"/><text x="890.0" y="202" text-anchor="middle" font-size="11" fill="#6f695e">10</text><line x1="620.0" y1="49.0" x2="646.0" y2="49.0" stroke="#6ba86b" stroke-width="3"/><polygon points="655.0,49.0 646.0,43.5 646.0,54.5" fill="#6ba86b"/><circle cx="620.0" cy="49.0" r="6" fill="#b3ab93"/><circle cx="665.0" cy="49.0" r="7.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2"/><text x="110" y="53.5" text-anchor="end" font-size="12.5" fill="#3a362e">质量分</text><text x="620.0" y="73.0" text-anchor="middle" font-size="11" fill="#6f695e">6.4</text><text x="665.0" y="35.0" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">7</text><text x="900" y="53.5" font-size="12" font-weight="700" fill="#6ba86b">+0.60</text><line x1="515.0" y1="99.0" x2="533.5" y2="99.0" stroke="#6ba86b" stroke-width="3"/><polygon points="542.5,99.0 533.5,93.5 533.5,104.5" fill="#6ba86b"/><circle cx="515.0" cy="99.0" r="6" fill="#b3ab93"/><circle cx="552.5" cy="99.0" r="7.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2"/><text x="110" y="103.5" text-anchor="end" font-size="12.5" fill="#3a362e">估值分</text><text x="515.0" y="123.0" text-anchor="middle" font-size="11" fill="#6f695e">5</text><text x="552.5" y="85.0" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">5.5</text><text x="900" y="103.5" font-size="12" font-weight="700" fill="#6ba86b">+0.50</text><line x1="500.0" y1="149.0" x2="515.0" y2="149.0" stroke="#6ba86b" stroke-width="3"/><circle cx="500.0" cy="149.0" r="6" fill="#b3ab93"/><circle cx="515.0" cy="149.0" r="7.5" fill="#4a6fa5" stroke="#fffdf9" stroke-width="2"/><text x="110" y="153.5" text-anchor="end" font-size="12.5" fill="#3a362e">时机分</text><text x="500.0" y="173.0" text-anchor="middle" font-size="11" fill="#6f695e">4.8</text><text x="515.0" y="135.0" text-anchor="middle" font-size="12" font-weight="700" fill="#4a6fa5">5</text><text x="900" y="153.5" font-size="12" font-weight="700" fill="#6ba86b">+0.20</text></svg></div><span class="source">三轨分新旧对比（脚本按 prev 字段生成）：灰点=2026-08-08 上版，蓝点=本版；连线箭头指向上版→本版方向（绿=上调、红=下调）；右列=分差；0-10 定域</span>
+    <table><tr><td>假设变更对比</td></tr></table><span class="source">数据来源：测试</span><span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>
+  </div>
+</div>
+
+
+<!-- 13 跟踪仪表盘 -->
+<div class="section" id="s13">
+  <div class="section-header">
+    <span class="section-num">13</span>
+    <span class="section-title">跟踪仪表盘</span>
+    <span class="section-meta">下次审查：2026-11-27</span>
+  </div>
+  <div class="section-body">
+    <span class="section-tag">触发条件状态</span><div class="trig-strip"><div class="trig"><span class="trig-dot hit"></span><span class="trig-cond">提价兑现</span><span class="trig-mt">26H2 毛利率 ≥46%</span><span class="trig-status hit">已兑现</span></div><div class="trig"><span class="trig-dot pending"></span><span class="trig-cond">销量转正</span><span class="trig-status pending">待验证</span></div><div class="trig"><span class="trig-dot miss"></span><span class="trig-cond">成本回落</span><span class="trig-status miss">未兑现</span></div></div><span class="source">触发条件状态（脚本按 triggers 字段生成）：绿=已兑现、红=未兑现、灰=待验证（评价色，与涨跌红绿无关）；status 由填写方按最新数据核对后标注</span>
+    <div class="table-scroll"><table class="dash-table freeze-first"><tr><th>指标</th><th class="num">当前值</th><th>触发阈值</th><th>触发后操作</th><th>数据来源</th><th>更新频率</th></tr><tr><td>毛利率</td><td class="num">34%</td><td>≥36%</td><td>加仓至标配（需要一段足够长的操作说明文字来验证长文列换行样式）</td><td>E3 年表</td><td>季度</td></tr></table></div><span class="source">数据来源：测试</span>
+  </div>
+</div>
+
+<!-- Disclaimer -->
+<div class="disclaimer">
+  本报告为AI生成的研究笔记（三轨制），不构成投资建议。所有数据和结论基于公开信息，可能存在偏差和错误。
+  生成时间：2026-08-27 · 
+</div>
+
+<!-- generated by render_report.py v* -->
+</body>
+</html>

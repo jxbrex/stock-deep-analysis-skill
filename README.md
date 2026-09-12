@@ -64,9 +64,12 @@ python "<技能目录>/scripts/render_report.py" "_fill_600989.json"
 
 ```bash
 python "<技能目录>/scripts/extract_review.py" --find 600989
+python "<技能目录>/scripts/extract_review.py" --find 600989.SH --dir "D:\个股深度分析"
 ```
 
-脚本扫描工作目录：文件名匹配 + 渲染器生成标记验证 + 取日期最新——找到旧报告即进入
+脚本递归扫描 `--dir` 目录（默认当前目录）：代码自动归一（`600989` / `600989.SH` / `600989.BJ` /
+`sh600989` / `bj920982` 等价）；
+文件名匹配 + 渲染器生成标记验证 + 取日期最新——找到旧报告即进入
 回测模式（先独立取数打分、再读旧报告、全量重写、最后新旧对比），并直接输出 prev
 锚点与旧三情景假设。手写绕行的 HTML 无生成标记，不会误触发。
 
@@ -95,7 +98,11 @@ stock-deep-analysis/
 │   └── industry-internet.md    # 平台型互联网口径：SOTP 估值（平台互联网必读）
 ├── scripts/
 │   ├── em_fetch.py             # 一键取数（A股/港股，tushare 优先 + 东财兜底，429 硬停）
-│   ├── em_data.py              # 东财/tushare 取数函数族：E1-E6 全部 fetch_*（em_fetch 拆分模块）
+│   ├── em_core.py              # 传输/缓存/映射/格式化核心层：ts_call/get + 取数窗口 + 跨块共享 helper
+│   ├── em_market.py            # E1 行情 / E2 月线 / PE-PB 分位带 / 时机素材（取数块，只依赖 em_core）
+│   ├── em_finance.py           # E3 财务年表与季度指标 + 审计/无风险利率/股息率/有息负债 + 盈利质量红旗
+│   ├── em_owner.py             # E4 股东户数 / E5 一致预期 / E6 主营构成
+│   ├── em_misc.py              # 业绩预告快报 / 治理包 / 披露计划
 │   ├── em_cache.py             # 磁盘缓存原语 + TTL 分档常量（em_fetch 拆分模块）
 │   ├── render_report.py        # fill JSON → 最终 HTML（评分计算+图形生成+校验+自动命名）
 │   ├── align_fix.py            # 表格对齐自动修正机（渲染末道 transform）+ 时机小表自动补类

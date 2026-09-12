@@ -22,7 +22,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import extract_review as E
-from extract_review import parse_report_name  # 文件名解析唯一 owner（合并口径）
+from extract_review import parse_report_name, norm_code  # 文件名解析/代码归一唯一 owner（合并口径）
 import em_fetch as em
 
 for _s in (sys.stdout, sys.stderr):
@@ -60,6 +60,8 @@ def collect_reports(directory: str) -> list:
             continue
         info = parse_report_name(fn)
         if not info:
+            if E._looks_like_report(fn):   # 「像报告但解析失败」不静默丢（与回测触发同口径）
+                print(f"[跳过: 文件名无法解析 {fn}]", file=sys.stderr)
             continue
         code, rep_date = info["code"], info["date"]
         path = os.path.join(directory, fn)
@@ -70,7 +72,7 @@ def collect_reports(directory: str) -> list:
             continue
         prev = ext.get("prev") or {}
         q, v = prev.get("quality"), prev.get("valuation")
-        code = (ext.get("code") or code).split(".")[0]  # 归一：剥掉 .SH/.SZ 后缀
+        code = norm_code(ext.get("code") or code)  # 归一：剥 .SH/.SZ 后缀，口径见 extract_review
         if q is None and v is None:
             # 旧版单轨报告（pre-v4.0）：无三轨分——取文件名首分作质量分近似
             # （_ 分隔格式那是综合分，- 分隔双分格式第一个是质量分），入明细但不入桶

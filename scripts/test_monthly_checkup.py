@@ -3,8 +3,8 @@
 """test_monthly_checkup.py — monthly_checkup 离线回归测试（无网络，直接 python 运行）
 
 覆盖：合并解析口径后的 scan_reports（复盘版/旧 _ 命名/港股 5 位均识别、同代码取最新）、
---disclosure 的 ts_code 市场映射（rebind em_fetch.ts_call 拦截：6 位→.SH/.SZ、
-北交所 92 段→.BJ、港股 5 位跳过不发查询；em_data 转发 stub 运行时解析宿主，rebind 传导）。
+--disclosure 的 ts_code 市场映射（rebind em_core.ts_call 拦截：6 位→.SH/.SZ、
+北交所 92 段→.BJ、港股 5 位跳过不发查询；取数块经 `_C.ts_call` 迟绑定解析，rebind 传导）。
 """
 import contextlib
 import io
@@ -14,7 +14,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monthly_checkup as mc
-import em_fetch as em
+import em_core
 
 
 def _write(d, name, content):
@@ -48,13 +48,13 @@ def test_scan_reports_merged_caliber():
 def test_disclosure_ts_code_mapping():
     """--disclosure：ts_code 后缀走 to_ts_code 市场映射；港股跳过。全程 mock，禁网络。"""
     captured = []
-    real_ts_call = em.ts_call
+    real_ts_call = em_core.ts_call
 
     def fake_ts_call(api_name, params=None, fields=""):
         captured.append((api_name, (params or {}).get("ts_code")))
         return [{"end_date": "20261231", "pre_date": "2026-10-30", "actual_date": None}]
 
-    em.ts_call = fake_ts_call
+    em_core.ts_call = fake_ts_call
     argv = sys.argv
     buf = io.StringIO()
     try:
@@ -69,7 +69,7 @@ def test_disclosure_ts_code_mapping():
                 mc.main()
         out = buf.getvalue()
     finally:
-        em.ts_call = real_ts_call
+        em_core.ts_call = real_ts_call
         sys.argv = argv
     got = sorted(ts for api, ts in captured if api == "disclosure_date")
     assert got == ["000063.SZ", "600989.SH", "920982.BJ"], f"ts_code 市场映射错误: {got}"

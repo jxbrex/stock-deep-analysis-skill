@@ -53,7 +53,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.10.2"
+RENDERER_VERSION = "v4.10.3"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -236,8 +236,15 @@ def _check_backtest_flags(fill: dict):
     if review_html and not prev:
         print("⚠️ 有 review_html 但未填 prev：文件名与 Hero 不会标记「复盘」，请补 prev 字段", file=sys.stderr)
     # v4.9.1：旧触发条件核对表（backtest.md 老规则的手写四列表）废止，核对结果改由 triggers 状态条承载
-    if prev and not fill.get("triggers"):
-        print("⚠️ 回测模式（prev 已填）但 triggers 未填：旧触发条件核对结果应由 triggers 状态条承载"
+    # v4.10.3：全 pending 视同未核对——回测模式填了 triggers 但一条没核对（状态条也不渲染，
+    # 见 charts_misc.build_triggers_strip 条件渲染），等于未填，同样必须告警
+    trg = fill.get("triggers") or []
+    all_pending = bool(trg) and all(
+        str((t or {}).get("status") or "pending").strip().lower() not in ("hit", "miss")
+        for t in trg if isinstance(t, dict))
+    if prev and (not trg or all_pending):
+        tail = "全部为 pending（视同未核对）" if all_pending else "未填"
+        print(f"⚠️ 回测模式（prev 已填）但 triggers {tail}：旧触发条件核对结果应由 triggers 状态条承载"
               "（status=hit/miss/pending，metric 行写「阈值｜实际值」；v4.9.1 起 dash_html 不再手写旧核对表）",
               file=sys.stderr)
     return prev, review_html

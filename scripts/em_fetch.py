@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-em_fetch.py — 批量取数脚本（stock-deep-analysis skill 专用，v4.8.3 起拆分为三模块）
+em_fetch.py — 批量取数脚本（stock-deep-analysis skill 专用，v4.8.3 起拆分为多模块）
 
 模块分工：
-    em_fetch.py  宿主：传输/缓存层（tushare ts_call / 东财 get + 磁盘缓存状态与统计）、
-                 市场映射、格式化工具、E7 搜索与输出组装（_sec_*/summarize/main/CLI）。
-                 从 em_data.py re-export 取数函数族供测试与输出组装按名访问。
-    em_data.py   东财/tushare 取数函数族（fetch_*/_em_*/_ts_*）+ _em_dc + 序列缓存容器。
-                 经转发 stub 动态解析宿主 ts_call/get（test_em_fetch 按 em_fetch 命名空间
-                 rebind 传输函数须传导；边界理由见该文件 docstring）。
+    em_fetch.py   宿主：E7 定性站内搜索与输出组装（search_e7/red_flags/_sec_*/summarize/main/CLI）。
+                 传输/缓存/映射/格式化由 em_core.py 提供，取数函数族从四个取数块 re-export
+                 供宿主函数体与测试按名访问（em_fetch 是取数能力的唯一汇总出口）。
+    em_core.py   传输/缓存/映射/格式化核心层（ts_call/get + 磁盘缓存状态与统计、代码映射、
+                 格式化与取数窗口工具、跨块共享 helper）。测试按 em_core 命名空间 rebind
+                 传输函数与缓存配置。
+    em_market.py E1 行情 / E2 月线 / PE-PB 分位带 / 时机素材（日线序列缓存随块持有）。
+    em_finance.py E3 财务年表与季度指标（F10 缓存随块持有）+ 审计意见 / 无风险利率 / TTM 股息率
+                 / 有息负债 + 盈利质量红旗 forensic。
+    em_owner.py  E4 股东户数 / E5 一致预期 / E6 主营构成。
+    em_misc.py   业绩预告快报 / 治理包 / 披露计划。
     em_cache.py  磁盘缓存参数化原语（原子写/TTL/键路径）与 TTL/tier 常量。
+    （四个取数块只依赖 em_core.py，彼此不 import；传输层一律以 `em_core.X` 模块属性形式调用）
 
 数据源优先级：tushare（官方API，口径规范，会员限流保护）优先，东方财富公开接口兜底。
 tushare token 自动发现：环境变量 TUSHARE_TOKEN > ZCode config.json 的 mcp.servers.tushare.url。
@@ -29,23 +35,23 @@ tushare 不可用时自动回落东财野生端点（curl 传输，防 TLS 指�
       / 有息负债（tushare balancesheet）
 """
 import json
-import os
-import subprocess
 import sys
-import tempfile
-import threading
-import time
-import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
-from functools import lru_cache
+from datetime import date
 
-# 兼容两种加载：`python em_fetch.py`（主脚本，模块名 __main__）与 `import em_fetch`（测试/被调用）。
-# 主脚本模式下把自身注册为 sys.modules["em_fetch"]，否则模块中部 `from em_data import ...` 触发
-# em_data 顶层 `import em_fetch` 时会二次从磁盘加载本文件 → 循环 ImportError。
-if __name__ == "__main__":
-    sys.modules.setdefault("em_fetch", sys.modules[__name__])
+import em_core as _C
+# 兼容性 re-export：外部按 em_fetch.X 按名访问（score_calibration / monthly_checkup / 测试），
+# 均为本模块原有的模块级名字；内部调用一律走 _C.<name>，此处名字不参与内部解析。
+from em_core import (  # noqa: F401
+    UA, CURL_UA, TIMEOUT, TS_API,
+    RateLimitError, HttpStatusError,
+    _MKT_MAP, _MKT_SZ, _MKT_HK, _mkt_of, secid_of, to_ts_code,
+    _tushare_token,
+    _TS_CACHE, _TS_LOCKS, _TS_DEBUG, _STATS, _STATS_LOCK, _stat, _CACHE_DIR, _NO_CACHE,
+    ts_call, _fin_rng, _get_via_curl, _get_via_urllib, get,
+    yi, _r2, pct, _yoy, yoy_text, _fmt_date, _ttm_cutoff,
+)
 
 # Windows 控制台默认 GBK 编码，打印中文/货币符号会 UnicodeEncodeError —— 强制 UTF-8
 for _s in (sys.stdout, sys.stderr):
@@ -54,318 +60,39 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-UA = {"User-Agent": "Mozilla/5.0"}
-CURL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-TIMEOUT = 15
-TS_API = "https://api.tushare.pro"
-
 # E1 落盘捕获：_sec_e1 成功路径填充，main() 的 --out 把它写成 JSON（现价防伪通道的源头）
 _E1_CAPTURE: dict = {}
 
 
-class RateLimitError(RuntimeError):
-    """HTTP 429/5xx：触发限流或服务端错误，硬停——禁止同 URL 原样重试。"""
-
-
-class HttpStatusError(RuntimeError):
-    """其他 HTTP 4xx 错误响应（属服务端明确拒绝，非网络层错误，不重试）。"""
-
-
-# 代码→市场映射表（secid_of / to_ts_code 共用，保证两边口径一致）：
-# 前缀 → (tushare 后缀, 东财 secid 前缀, 是否港股)
-# 注意顺序：北交所两位前缀必须先于沪B的单字符 "9" 判定（92 开头是北交所，不是沪B）
-# 北交所东财 secid 前缀 0. 已实测验证（920982 全链路通过，2026-08-30）；
-# 83/43 等旧代码 2025-10 起已切换 920 段，东财返回零值陈旧档，由 _em_quote 拦截报错
-_MKT_MAP = [
-    (("43", "83", "87", "88", "92"), "BJ", "0", False),   # 北交所
-    (("60", "68", "9"), "SH", "1", False),                # 沪市主板/科创板/沪B
-]
-_MKT_SZ = ("SZ", "0", False)   # 其余 6 位默认深市（00/30 深主板/创业板、20 深B）
-_MKT_HK = ("HK", "116", True)  # 5 位纯数字 = 港股
-
-
-def _mkt_of(code: str):
-    """纯数字代码 → (tushare后缀, 东财secid前缀, 是否港股)。
-    只接受 6 位（A股/北交所/B股）或 5 位（港股）纯数字，其他直接报错，不静默按深市处理。"""
-    if not code.isdigit() or len(code) not in (5, 6):
-        raise ValueError(f"无法识别的证券代码 {code!r}：期望 6 位纯数字（A股/北交所/B股）"
-                         f"或 5 位纯数字（港股），可带 .SH/.SZ/.BJ/.HK 后缀")
-    if len(code) == 5:
-        return _MKT_HK
-    for prefixes, sfx, sec, hk in _MKT_MAP:
-        if code.startswith(prefixes):
-            return sfx, sec, hk
-    return _MKT_SZ
-
-
-def secid_of(code: str):
-    """返回 (secid, secucode, is_hk)。港股：5位数字（如 06082/01880）→ 116. 前缀"""
-    code = code.strip().upper().replace(".SH", "").replace(".SZ", "").replace(".BJ", "").replace(".HK", "")
-    sfx, sec, hk = _mkt_of(code)
-    return f"{sec}.{code}", f"{code}.{sfx}", hk
-
-
-def to_ts_code(code: str) -> str:
-    """tushare 代码：600989→600989.SH，000528→000528.SZ，06082→06082.HK"""
-    code = code.strip().upper()
-    if "." in code:
-        return code
-    sfx, _, _ = _mkt_of(code)
-    return code + "." + sfx
-
-
-# ---------------- tushare 传输层 ----------------
-
-@lru_cache(maxsize=1)
-def _tushare_token():
-    """token 自动发现：环境变量 TUSHARE_TOKEN 优先，其次 ZCode MCP 配置（不落盘不打印）。
-    lru_cache：此前每次请求都重新读文件+解析 JSON（20 请求 = 20 次重复发现）。"""
-    tok = os.environ.get("TUSHARE_TOKEN")
-    if tok:
-        return tok.strip()
-    cfg = os.path.expanduser(os.path.join("~", ".zcode", "cli", "config.json"))
-    try:
-        with open(cfg, encoding="utf-8") as f:
-            url = json.load(f)["mcp"]["servers"]["tushare"]["url"]
-        qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        tok = (qs.get("token") or [None])[0]
-        return tok.strip() if tok else None
-    except Exception:
-        return None
-
-
-# tushare 透明缓存：同一进程内相同 (api, 归一化参数) 只发一次网络请求（会员限流保护）
-_TS_CACHE: dict = {}
-_TS_LOCKS: dict = {}  # per-key 锁：线程池并发下同冷键只发一次（不同键仍并行）
-_TS_DEBUG = os.environ.get("EM_FETCH_DEBUG") == "1"
-
-# 运行统计（EM_FETCH_DEBUG=1 时 main 末尾打一行汇总）：请求数/缓存命中/重试等待。
-# 线程池并发自增用锁保护（值只增不减，开销可忽略）。
-_STATS = {"ts_net": 0, "ts_mem": 0, "ts_disk": 0, "em_net": 0, "em_disk": 0, "wait": 0}
-_STATS_LOCK = threading.Lock()
-
-
-def _stat(name: str) -> None:
-    with _STATS_LOCK:
-        _STATS[name] += 1
-
-# ---------------- 磁盘缓存（跨进程，P0-B） ----------------
-# 每份报告是一个新进程、每股 15-20 请求，同日重跑/check 修复循环/peers 批量全量重发，
-# 痛点是 tushare 限流额度消耗（report_rc 等接口 1次/分钟）与东财野生端点封禁风险。
-# TTL 分档与 IO 原语（原子写/TTL 判定/键路径）在 em_cache.py（参数化纯函数）；本模块持有
-# 两个可 rebind 的配置状态（test_em_fetch 按 em_fetch 命名空间直接赋值），经参数传入原语。
-_CACHE_DIR = os.path.join(tempfile.gettempdir(), "em_fetch_cache")
-_NO_CACHE = os.environ.get("EM_FETCH_NO_CACHE") == "1"
-from em_cache import (dc_path, dc_read, dc_write,
-                      _TTL_QUOTE, _TTL_FIN, _TTL_GOV, _TS_TIER_QUOTE, _TS_TIER_GOV)
-
-
-def ts_call(api_name: str, params: dict = None, fields: str = "") -> list:
-    """tushare HTTP API。返回 list[dict]（fields↔items 对齐）。失败抛异常由调用方兜底。
-    缓存键归一化：params 里的 "fields" 是 no-op（tushare 只认 payload 顶层 fields），剔除后参与键。
-    线程安全：per-key 锁保证同冷键（内存 miss + 磁盘 miss）只发一次网络；锁只覆盖单键，
-    不同键在 4 worker 线程池下仍并行；第二线程等锁后命中先行者写入的内存缓存直接返回。"""
-    norm = dict(params or {})
-    norm.pop("fields", None)
-    key = (api_name, tuple(sorted(norm.items())), fields)
-    if key in _TS_CACHE:
-        _stat("ts_mem")
-        if _TS_DEBUG:
-            print(f"[cache-hit] {api_name} {dict(norm)}", file=sys.stderr)
-        return _TS_CACHE[key]
-    with _TS_LOCKS.setdefault(key, threading.Lock()):
-        if key in _TS_CACHE:  # 等锁期间同键已被其他线程拉取
-            _stat("ts_mem")
-            if _TS_DEBUG:
-                print(f"[cache-hit] {api_name} {dict(norm)}", file=sys.stderr)
-            return _TS_CACHE[key]
-        # 磁盘缓存（跨进程）：行情 2h / 财务 12h / 治理 24h
-        tier = (_TTL_QUOTE if api_name in _TS_TIER_QUOTE
-                else _TTL_GOV if api_name in _TS_TIER_GOV else _TTL_FIN)
-        dp = dc_path(_CACHE_DIR, "ts", repr(key))
-        cached = dc_read(dp, tier, _NO_CACHE)
-        if cached is not None:
-            _TS_CACHE[key] = cached
-            _stat("ts_disk")
-            if _TS_DEBUG:
-                print(f"[disk-hit] {api_name} {dict(norm)}", file=sys.stderr)
-            return cached
-        tok = _tushare_token()
-        if not tok:
-            raise RuntimeError("tushare token 未配置（TUSHARE_TOKEN 环境变量或 ZCode mcp 配置）")
-        payload = {"api_name": api_name, "token": tok, "params": params or {}, "fields": fields}
-        req = urllib.request.Request(
-            TS_API, data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", **UA}, method="POST")
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            d = json.loads(r.read().decode("utf-8"))
-        if d.get("code") != 0:
-            raise RuntimeError(f"tushare {api_name}: {d.get('msg')}")
-        data = d.get("data") or {}
-        flds = data.get("fields") or []
-        rows = [dict(zip(flds, row)) for row in (data.get("items") or [])]
-        _TS_CACHE[key] = rows
-        dc_write(dp, rows, _NO_CACHE, _CACHE_DIR)
-        _stat("ts_net")
-        if _TS_DEBUG:
-            print(f"[net] {api_name} {dict(norm)} -> {len(rows)} rows", file=sys.stderr)
-        return rows
-
-
-def _fin_rng() -> dict:
-    """财务三表/指标的统一取数窗口（当年-7 起，覆盖 forensic 7 年/年表 5 年/最新季度 2 年三处需求），
-    配合 ts_call 缓存：income/cashflow/balancesheet/fina_indicator 每股只发 1 次请求。"""
-    return {"start_date": f"{date.today().year - 7}0101",
-            "end_date": date.today().strftime("%Y%m%d")}
-
-
-# ---------------- 东财传输层（兜底） ----------------
-
-def _get_via_curl(url: str) -> bytes:
-    """curl 传输：push2 域对 Python urllib 的 TLS 指纹间歇限流，curl 不受限（实测验证）。
-    -w 捕获 HTTP 状态码：429/5xx → RateLimitError（限流硬停）；其他 4xx → HttpStatusError。"""
-    r = subprocess.run(
-        ["curl", "-s", "--max-time", str(TIMEOUT), "-H", f"User-Agent: {CURL_UA}",
-         "-w", "\n%{http_code}", url],
-        capture_output=True, timeout=TIMEOUT + 5,
-    )
-    if r.returncode != 0 or not r.stdout:
-        raise ConnectionError(f"curl rc={r.returncode} {r.stderr[:100]!r}")
-    body, _, status = r.stdout.rpartition(b"\n")
-    code = int(status) if status.isdigit() else 0
-    if code == 429 or code >= 500:
-        raise RateLimitError(f"HTTP {code}（限流/服务端错误，硬停不重试）: {url[:80]}")
-    if code >= 400:
-        raise HttpStatusError(f"HTTP {code}: {url[:80]}")
-    return body
-
-
-def _get_via_urllib(url: str) -> bytes:
-    req = urllib.request.Request(url, headers=UA)
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return r.read()
-    except urllib.error.HTTPError as e:
-        if e.code == 429 or e.code >= 500:
-            raise RateLimitError(f"HTTP {e.code}（限流/服务端错误，硬停不重试）: {url[:80]}") from e
-        raise HttpStatusError(f"HTTP {e.code}: {url[:80]}") from e
-
-
-def get(url: str, retries: int = 1) -> dict:
-    """curl 优先、urllib 兜底（TLS 指纹规避），失败重试 1 次。返回解析后的 JSON dict。
-    重试仅限网络层错误（超时/连接失败/异常响应体）；HTTP 错误响应（4xx/5xx）不重试、
-    不换传输层重打，429/5xx 抛 RateLimitError 由 main 限流硬停。
-    磁盘缓存：push2/push2his 行情 2h、datacenter 数据 12h（跨进程去重），其余 URL 不缓存。"""
-    tier = _TTL_QUOTE if "push2" in url else _TTL_FIN if "datacenter" in url else 0
-    dp = dc_path(_CACHE_DIR, "em", url) if tier else None
-    if dp:
-        cached = dc_read(dp, tier, _NO_CACHE)
-        if cached is not None:
-            _stat("em_disk")
-            return cached
-    last_err = None
-    for attempt in range(retries + 1):
-        for transport in (_get_via_curl, _get_via_urllib):
-            try:
-                raw = transport(url)
-                d = json.loads(raw.decode("utf-8"))
-                if dp:
-                    dc_write(dp, d, _NO_CACHE, _CACHE_DIR)
-                _stat("em_net")
-                return d
-            except (RateLimitError, HttpStatusError):
-                raise  # HTTP 错误响应：原样抛出，不重试
-            except Exception as e:
-                last_err = e
-        if attempt < retries:
-            _stat("wait")
-            time.sleep(1.5)
-    raise last_err
-
-
-
-
-def yi(x, digits=1):
-    """元 -> 亿（≥1000 带千位符）"""
-    if x is None:
-        return "—"
-    try:
-        return f"{float(x) / 1e8:,.{digits}f}"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _r2(x):
-    """两位小数格式化（None 安全），用于 PE/PB/换手率等比率"""
-    return round(x, 2) if isinstance(x, (int, float)) else None
-
-
-def pct(x, digits=1):
-    if x is None:
-        return "—"
-    try:
-        return f"{float(x):.{digits}f}%"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _yoy(cur, pre):
-    """同比%：分母 pre≤0 时百分比失真，按符号组合返回文字（扭亏/转亏/减亏/增亏）。
-    pre>0 且 cur<0 → 转亏；pre<0 且 cur>0 → 扭亏；cur/pre 任一缺失 → None。"""
-    if cur is None or pre is None:
-        return None
-    if pre > 0:
-        return "转亏" if cur < 0 else (cur / pre - 1) * 100
-    if pre < 0:
-        if cur > 0:
-            return "扭亏"
-        return "减亏" if cur > pre else "增亏"
-    return None  # pre == 0：基数为零，同比无意义
-
-
-def yoy_text(v):
-    """同比显示：数值→百分比，文字（扭亏/转亏…）→原样，None→—"""
-    return v if isinstance(v, str) else pct(v)
-
-
-def _fmt_date(yyyymmdd: str) -> str:
-    """YYYYMMDD -> YYYY-MM-DD"""
-    s = str(yyyymmdd or "")
-    return f"{s[:4]}-{s[4:6]}-{s[6:]}" if len(s) == 8 else s
-
-
-# 注：E1-E6 取数函数族与东财端点工具 _em_dc 已拆分至 em_data.py（见下 import）；
-# 本模块保留传输/缓存/映射/格式化/输出组装，职责边界见 em_data.py 头部 docstring。
-def _ttm_cutoff(today: date = None) -> str:
-    """近 12 个月窗口起点（YYYYMMDD）。用 today-365 天而非 replace(year-1)，
-    避免今天恰好是 2/29 时 replace 崩溃（闰日）。"""
-    return ((today or date.today()) - timedelta(days=365)).strftime("%Y%m%d")
-
-# ---------------- 取数函数族 re-export（em_data.py） ----------------
-# 从子模块 re-export 供宿主函数体与 test_em_fetch / score_calibration（import em_fetch as em 按名访问）
-# 实际消费的名字，历史上面向"全量门面"的纯挂名已收窄；
-# ts_call/get 绝不在此覆盖（宿主版本是测试 rebind 的目标）。
-from em_data import (  # noqa: E402,F401
-    _em_quote, _em_kline_url, _em_f10,
-    _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows,
-    fetch_pe_pb_band, fetch_forecast_express, fetch_forensic, fetch_governance,
-    fetch_disclosure, fetch_quote, fetch_kline_monthly, fetch_holders, fetch_consensus,
-    fetch_mainop, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_timing_material,
-    fetch_debt,
+# ---------------- 取数函数族 re-export（四个取数块，v4.10.3 Step 3 起） ----------------
+# 从取数块 re-export 供宿主函数体与 score_calibration（import em_fetch as em 按名访问）
+# 实际消费的名字，历史上面向"全量门面"的纯挂名已收窄；em_fetch 是唯一汇总出口。
+# 传输函数不是内部解析路径：宿主一律走 _C.<name>（迟绑定），em_fetch.ts_call 只是 em_core
+# 的兼容别名——rebind 目标是 em_core 命名空间（约定见 em_core.py 文件头）。
+from em_market import (  # noqa: E402,F401
+    _em_quote, _em_kline_url,
+    fetch_pe_pb_band, fetch_quote, fetch_kline_monthly, fetch_timing_material,
+)
+from em_finance import (  # noqa: E402,F401
+    _em_f10, _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows,
+    fetch_annual_rows, fetch_latest_quarter,
+    fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt,
+)
+from em_owner import (  # noqa: E402,F401
+    fetch_holders, fetch_consensus, fetch_mainop,
+)
+from em_misc import (  # noqa: E402,F401
+    fetch_forecast_express, fetch_governance, fetch_disclosure,
 )
 
 
-
-
-
-
-
-
-# ---------------- E7 定性站内搜索（东财，保持不动） ----------------
+# ---------------- E7 定性站内搜索（东财，走 em_core.get 统一管线） ----------------
 
 def search_e7(keyword: str, types: list = None, page_size: int = 8) -> dict:
     """E7 东方财富站内搜索。types: cmsArticleWebOld(新闻), cmsResearchWeb(研报) 等。
-    返回 {'ok': bool, 'raw_head': str, 'items': [...]}。失败时 raw_head 含原始返回前 500 字符。"""
+    返回 {'ok': bool, 'raw_head': str, 'items': [...]}。失败时 raw_head 含原始返回前 500 字符。
+    传输走 em_core.get(url, raw=True)（jsonp 需原始文本）：重试/429 硬停/_stat/磁盘判定与
+    其余取数同规；RateLimitError 原样上抛（由 main 限流硬停），其他传输/解析失败转 ok=False。"""
     if types is None:
         types = ["cmsArticleWebOld"]
     p = {"uid": "", "keyword": keyword, "type": types,
@@ -376,10 +103,9 @@ def search_e7(keyword: str, types: list = None, page_size: int = 8) -> dict:
     url = ("https://search-api-web.eastmoney.com/search/jsonp?cb=cb&param="
            + urllib.parse.quote(json.dumps(p, ensure_ascii=False)))
     try:
-        try:
-            raw = _get_via_curl(url).decode("utf-8", errors="replace")
-        except Exception:
-            raw = _get_via_urllib(url).decode("utf-8", errors="replace")
+        raw = _C.get(url, raw=True)
+    except RateLimitError:
+        raise  # 429/5xx 硬停纪律：E7 不再把限流降级成 ok=False
     except Exception as e:
         return {"ok": False, "raw_head": f"[curl/urllib均失败: {e}]", "items": []}
     # 剥 jsonp 外壳
@@ -550,28 +276,20 @@ def _sec_e3_hk(pure: str) -> list:
         out.append("有息负债: [港股分支跳过（tushare balancesheet 不覆盖港股），"
                    "请降级：东财F10资产负债表]\n")
     except Exception as e:
-        out.append(f"## E3 财务年表\n[tushare 港股无 hk_income 权限。**优先：妙想 MCP "
-                   f"mx_hk_finance_data 直查**（模型直调，实测可用）；次兜底：data-sources.md "
-                   f"港股手册 curl RPT_HKF10_FN_MAININDICATOR（字段映射见手册）。tushare 报错: {e}]\n")
+        out.append(f"## E3 财务年表\n[未获取到港股财务年表（tushare 无 hk_income 权限: {e}），"
+                   f"请降级：**优先妙想 MCP mx_hk_finance_data 直查**（模型直调，实测可用）；"
+                   f"次兜底：data-sources.md 港股手册 curl RPT_HKF10_FN_MAININDICATOR"
+                   f"（字段映射见手册）]\n")
     return out
 
 
 def _sec_e3(pure: str, secucode: str) -> tuple:
-    """E3 财务年表段（A股分支）：年表、最新报告期、capex、有息负债；返回 (out, annual)。"""
+    """E3 财务年表段（A股分支）：年表、最新报告期、capex、有息负债；返回 (out, annual)。
+    两条降级链（tushare 年报序列 / 最新季度 → 东财 F10）已下沉数据层 fetch_annual_rows /
+    fetch_latest_quarter（v4.10.3 Step 4），本段只消费返回值。"""
     out = []
-    try:
-        annual = _ts_annual_rows(pure, secucode=secucode)
-        if not annual:
-            raise RuntimeError("tushare 年报序列为空")
-    except Exception:
-        annual = _em_f10(secucode, size=5, annual_only=True)
-    try:
-        q1 = _ts_latest_quarter(pure, secucode=secucode) or {}
-    except Exception:
-        q1 = {}
-    if not q1:
-        f10 = _em_f10(secucode, size=4)
-        q1 = f10[0] if f10 else {}
+    annual = fetch_annual_rows(pure, secucode)
+    q1 = fetch_latest_quarter(pure, secucode)
     if not annual:
         out.append("## E3 财务年表\n[tushare 与东财均失败，按降级链走妙想 mx_ashare_finance_data 直查]\n")
     else:
@@ -823,8 +541,10 @@ def _sec_e6(secucode: str, is_hk: bool) -> list:
         else:
             out.append("## E6 主营构成\n[未获取到主营构成数据，请降级：妙想 MCP 直查或年报定性搜索；"
                        "1B/1C 评分缺核心输入]\n")
-    except Exception:
-        pass
+    except Exception as e:
+        if not any(l.startswith("## E6") for l in out):
+            out.append("## E6 主营构成")
+        out.append(f"[失败: {e}]\n")
     return out
 
 
@@ -908,7 +628,7 @@ def main():
     if not args:
         print(__doc__)
         sys.exit(1)
-    if not _tushare_token():
+    if not _C._tushare_token():
         # 硬告警不硬停（东财兜底仍可出报告）：token 缺失时 ts_call 的 RuntimeError 曾被
         # 各 fetch 的裸 except 静默吞掉 → 治理/审计全部输出「未获取到」，agent 白走降级链
         print("⚠️ 硬告警：tushare token 未配置（TUSHARE_TOKEN 环境变量与 ZCode mcp 配置均无）"

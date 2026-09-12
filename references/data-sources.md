@@ -9,7 +9,7 @@ tushare 实测权限矩阵（当前会员包）：A股全接口可用，含 `rep
 `stk_holdernumber`（股东户数）、`adj_factor`（复权因子）；**无权限**：`news`（新闻快讯）、
 `hk_income`/`hk_fina_indicator`（港股财务）。脚本对港股 E3 采取**尝试调用 + 失败自动降级**策略：
 先试 tushare 港股接口，无权限/失败时自动 curl 东财 `RPT_HKF10_FN_MAININDICATOR` 兜底
-（`em_data.py::_em_hkf10_annual_rows`），再不可得才提示模型走妙想 MCP；
+（`em_finance.py::_em_hkf10_annual_rows`），再不可得才提示模型走妙想 MCP；
 **`hk_daily` 限流 1次/小时**（2026-09-06 复测口径，"1 次/分钟"旧记录作废） → 脚本已做单次拉全量+缓存复用（E1/E2 共用），手工调用注意间隔。
 
 **妙想 MCP（mx-ds-mcp-stdio，模型直调层，2026-08-07 接入实测）**：东财官方免费 AI 数据服务
@@ -202,6 +202,14 @@ https://datacenter.eastmoney.com/securities/api/data/v1/get?reportName=RPT_F10_F
 
 注：tushare `fina_mainbz` 偶发同源改名重复条目（「烯烃产品」与「烯烃」两行收入/成本完全一致，
 2026-09-02 宝丰实证）——脚本已按（收入,成本）签名去重，留先发行。
+**同源还会额外返回一行维度合计行**（`bz_item`=维度名「产品/行业/地区」；2026-09-12 香农芯创
+300475 实证：含该行时全部占比腰斩，46.8% 实为 93.7%）——**v4.10.3 起取数层自动剔除**
+（`em_owner.fetch_mainop`），且**剔除后分母取该合计行**（=营业收入，经 `income.total_revenue`
+交叉验证精确到分；扁平 payload 它恰为其余行之和，但层级 payload 用明细和当分母会重复计数——
+东方电气 1.86x / 工商银行 3.66x / 山东黄金 1.13x 实证）。
+**层级 payload 的父子小计行仍会重复列示**（展示层另案——tushare 未提供层级字段，无法区分
+「能源装备制造」这类父级小计与真实分部）。
+东财 `RPT_F10_FN_MAINOP` 实测无此合计行（600519/000858/002594/601088 抽查），故东财兜底分支不剔除。
 
 **覆盖清单项**：业务分部收入占比（Checklist #3）
 

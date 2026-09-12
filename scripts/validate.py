@@ -491,7 +491,8 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
         s = sum(_num(it.get("rev_pct")) or 0 for it in items)
         if abs(s - 100) > 5:
             warns.append(f"segments 收入占比合计 {s:.1f}% 偏离 100%：请核对是否漏列分部"
-                         f"（E6 各分部占比之和应≈100%，若有「其他」项请补列）")
+                         f"（E6 各分部占比之和应≈100%，若有「其他」项请补列）；"
+                         f"若 E6 含按产品/地区双维数据，占比减半多为未剔合计行所致，请回 E6 原文核对")
     # v4.9：period 只放短时段标签（青啤实证把整段口径清洗说明塞进 period，图标题变 70 字怪物）
     period = str(seg.get("period") or "")
     if len(period) > 8:
@@ -609,6 +610,47 @@ def _check_peers_bestworst(fill: dict, warns: list) -> None:
                      "规则见 fill-schema「表格」节")
 
 
+def _check_peers_column_support(fill: dict, warns: list) -> None:
+    """v4.10.3：peers 趋势表「无对比支撑」列告警——承接 fill-schema「无引用=删列」硬规则
+    （长久只写在文档里、无校验执行）：某列超半数单元格为「—」（或空）且该列名未在同业结论框
+    （.conclusion-box）中被提及 → 该列撑不起对比，应补 peers 数据或在结论框引用，否则删列。
+    字符串级实现（正则切表/切格，不引解析库）；无 <table> 或该表不足 2 行时跳过。"""
+    peers = fill.get("peers_html") or ""
+    if "<table" not in peers:
+        return
+    boxes = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", " ".join(
+        re.findall(r'<div class="conclusion-box".*?</div>', peers, flags=re.I | re.S)))
+    for ti, tbl in enumerate(re.findall(r'<table\b[^>]*>.*?</table>', peers, flags=re.I | re.S), 1):
+        trs = re.findall(r'<tr\b[^>]*>(.*?)</tr>', tbl, flags=re.I | re.S)
+        if len(trs) < 2:
+            continue
+        heads = [_plain_text(h).strip() for h in
+                 re.findall(r'<t[hd]\b[^>]*>(.*?)</t[hd]>', trs[0], flags=re.I | re.S)]
+        if len(heads) < 2:
+            continue
+        rows = [re.findall(r'<t[hd]\b[^>]*>(.*?)</t[hd]>', tr, flags=re.I | re.S) for tr in trs[1:]]
+        for j in range(1, len(heads)):   # 首列=公司名，不查
+            vals = [(_plain_text(r[j]).strip() if j < len(r) else "") for r in rows]
+            if not vals:
+                continue
+            miss = sum(1 for v in vals if not v or v.startswith("—"))
+            if miss * 2 <= len(vals):
+                continue   # 可得数据 ≥ 半数，正常列
+            key = _peers_col_key(heads[j])
+            if key and key in boxes:
+                continue   # 已在结论框引用
+            warns.append(f"peers_html 趋势表「{heads[j]}」列 {miss}/{len(vals)} 格为「—」"
+                         f"且未在同业结论框引用（表{ti} 第{j + 1}列）：该列无对比支撑——"
+                         f"补 peers 数据或在结论框引用，否则删列（fill-schema 趋势表硬要求）")
+
+
+def _peers_col_key(s: str) -> str:
+    """趋势表列名归一（供列-引用比对）：去括号注与「3 年」类期限、只留中英文数字核。"""
+    s = re.sub(r"[（(][^）)]*[）)]", "", s or "")
+    s = re.sub(r"\d+\s*年?|年", "", s)
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", s)
+
+
 def _check_price_history_pe(fill: dict, warns: list) -> None:
     """v4.10：price_history 的 pe 过半缺失 → 图只画股价线而标题仍挂 PE(TTM)（图文不符）。
     A 股 E2 月线自带月末 PE(TTM) 序列应照抄——工行 09-11 报告 12 个点 pe 全缺实证。"""
@@ -703,6 +745,7 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_governance_strip(fill, warns)
     _check_peers_orientation(fill, warns)
     _check_peers_bestworst(fill, warns)
+    _check_peers_column_support(fill, warns)
     _check_price_history_pe(fill, warns)
     _check_prev_fields(fill, warns)
     _check_review_miss_diagnostics(fill, warns)

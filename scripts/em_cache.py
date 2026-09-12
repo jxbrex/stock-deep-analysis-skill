@@ -5,9 +5,9 @@ em_cache.py — 磁盘缓存原语与分档常量（em_fetch 拆分子模块之�
 
 职责：跨进程磁盘缓存的通用 IO（原子写、TTL 判定、键→路径），以及缓存 TTL 分档与
 tushare 接口 tier 归类常量。全部原语为纯函数（cache_dir / no_cache 由调用方显式传入），
-不持有模块级可变状态——缓存状态（_CACHE_DIR/_NO_CACHE 等）归属宿主 em_fetch.py：
-test_em_fetch 按 em_fetch 命名空间 rebind 这些配置须实时生效，故 ts_call/get（读取者）
-也留在宿主，仅在调用本模块原语时把当前配置作为参数传入。
+不持有模块级可变状态——缓存状态（_CACHE_DIR/_NO_CACHE 等）归属 em_core.py
+（v4.10.3 起；test_em_fetch 按 em_core 命名空间 rebind 这些配置须实时生效，
+ts_call/get 作为读取者也留在 em_core，调用本模块原语时把当前配置作为参数传入）。
 """
 
 import hashlib
@@ -15,10 +15,10 @@ import json
 import os
 import time
 
-# ---------------- 缓存分档常量（宿主 em_fetch.py import 拷贝引用） ----------------
+# ---------------- 缓存分档常量（em_core.py import 拷贝引用） ----------------
 # TTL 分档：行情 2h / 财务 12h / 治理 24h（均远小于数据自身更新周期，陈旧风险可控）；
 # EM_FETCH_NO_CACHE=1 全旁路。缓存读写任何失败都静默忽略，绝不阻断取数。
-# _CACHE_DIR/_NO_CACHE 状态归属宿主 em_fetch.py（test_em_fetch 按 em_fetch 命名空间 rebind）。
+# _CACHE_DIR/_NO_CACHE 状态在 em_core.py（test_em_fetch 按 em_core 命名空间 rebind）。
 _TTL_QUOTE = 2 * 3600    # 行情（日线收盘级，2h 内唯一风险是盘中跑+收盘后 1h 内重跑，可识别）
 _TTL_FIN = 12 * 3600     # 财务（季度更新）
 _TTL_GOV = 24 * 3600     # 治理（公告/事件级更新）

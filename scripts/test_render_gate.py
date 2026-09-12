@@ -342,6 +342,27 @@ def test_peers_roe_outlier_warns():
     print("OK peers ROE 量级倒挂告警（<同业一半 / >同业两倍告警，同量级放行）")
 
 
+def test_peers_column_without_support_warns():
+    """v4.10.3：peers 趋势表某列超半数格为「—」且未在同业结论框引用 → 告警
+    （fill-schema「无引用=删列」的可判定落地）；结论框引用该列、或数据补齐 ≥ 半数 → 放行。"""
+    thr = ('<div class="table-scroll"><table class="freeze-first">'
+           '<tr><th>公司</th><th>净利现金含量 3 年</th><th>PE(TTM)</th></tr>'
+           '<tr><td>测试股份</td><td>—</td><td>11</td></tr>'
+           '<tr><td>同业甲</td><td>—</td><td>25</td></tr>'
+           '<tr><td>同业乙</td><td>0.9</td><td>16</td></tr></table></div>'
+           '<div class="conclusion-box"><strong>结论：</strong>规模与估值见上表。</div>'
+           '<span class="source">数据来源：测试。</span>')
+    out = validate_stderr(minimal_fill(peers_html=thr))
+    assert "净利现金含量" in out and "无对比支撑" in out, "超半数缺失且未引用应告警"
+    cited = thr.replace("规模与估值见上表", "净利现金含量仅同业乙可得")
+    assert "无对比支撑" not in validate_stderr(minimal_fill(peers_html=cited)), \
+        "结论框已引用该列不应告警"
+    filled = thr.replace('<td>测试股份</td><td>—</td>', '<td>测试股份</td><td>0.8</td>')
+    assert "无对比支撑" not in validate_stderr(minimal_fill(peers_html=filled)), \
+        "可得数据 ≥ 半数不应告警"
+    print("OK peers 无对比支撑列告警（超半数「—」且未引用告警，引用/补齐放行）")
+
+
 def test_validate_warns_reach_stderr():
     """v4.9 validate 告警路径：触发告警的 fill → stderr 有「内容校验」前缀输出。"""
     fill = minimal_fill(subtitle="测试行业 · 报告日期：2026-01-01")
@@ -353,7 +374,8 @@ def test_validate_warns_reach_stderr():
 
 def test_backtest_triggers_warning():
     """v4.9.1：回测模式（prev 已填）triggers 缺失 → 告警（旧触发条件核对由状态条承载，
-    dash_html 不再手写核对表）；triggers 已填 → 无此告警。"""
+    dash_html 不再手写核对表）；triggers 已填 → 无此告警。
+    v4.10.3：全 pending 视同未核对（状态条条件渲染后一条也不显示）→ 同样告警。"""
     prev = {"date": "2026-08-05", "quality": 7.0, "valuation": 6.0, "timing": 5.0,
             "target_range": "10-12"}
     out = capture_stderr(lambda: R._check_backtest_flags(
@@ -363,6 +385,15 @@ def test_backtest_triggers_warning():
         minimal_fill(prev=prev, review_html="<p>复盘。</p>",
                      triggers=[{"cond": "提价兑现", "status": "hit"}])))
     assert "triggers 未填" not in out2, "triggers 已填不应再告警"
+    out3 = capture_stderr(lambda: R._check_backtest_flags(
+        minimal_fill(prev=prev, review_html="<p>复盘。</p>",
+                     triggers=[{"cond": "提价兑现", "status": "pending"}])))
+    assert "视同未核对" in out3, "全 pending 视同未核对，应告警"
+    out4 = capture_stderr(lambda: R._check_backtest_flags(
+        minimal_fill(prev=prev, review_html="<p>复盘。</p>",
+                     triggers=[{"cond": "提价兑现", "status": "pending"},
+                               {"cond": "销量转正", "status": "miss"}])))
+    assert "视同未核对" not in out4 and "triggers 未填" not in out4, "含 hit/miss 不应告警"
 
 
 def test_governance_strip_compact_warns():

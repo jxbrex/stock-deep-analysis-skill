@@ -40,13 +40,15 @@ def test_find_prev_report():
         # 文件名无日期不算
         _write(d, "测试股份-600000-无日期.html", FAKE_REPORT)
         got = E.find_prev_report("600000", d)
-        assert got and got.endswith("2026-08-20.html"), f"应取最新的带标记版本，实际 {got}"
-        # 全部排除干净时返回 None
+        assert got.path and got.path.endswith("2026-08-20.html"), f"应取最新的带标记版本，实际 {got}"
+        assert got.status == E.ST_FOUND
+    # 有候选但全被严格档排除 → 哨兵给 excluded（不再静默 None）
     with tempfile.TemporaryDirectory() as d2:
         _write(d2, "测试股份-600000-9.9-9.9-2026-08-25.html", "<html>无标记</html>")
-        assert E.find_prev_report("600000", d2) is None
-        assert E.find_prev_report("600000", d2) is None  # 幂等
-    print("OK find_prev_report（最新日期 / 无标记排除 / 他代码排除 / 空目录 None）")
+        r = E.find_prev_report("600000", d2)
+        assert r.path is None and r.status == E.ST_EXCLUDED
+        assert E.find_prev_report("600000", d2).status == E.ST_EXCLUDED  # 幂等
+    print("OK find_prev_report（最新日期 / 无标记排除→excluded / 他代码排除 / 幂等）")
 
 
 def test_find_include_unmarked():
@@ -54,21 +56,20 @@ def test_find_include_unmarked():
     with tempfile.TemporaryDirectory() as d:
         unmarked = _write(d, "腾讯控股-00700-6.93-8.2-复盘-2026-08-23.html",
                           "<html><body>pre-v4.3 无标记</body></html>")
-        assert E.find_prev_report("00700", d) is None, "严格档仍须排除无标记"
+        assert E.find_prev_report("00700", d).path is None, "严格档仍须排除无标记"
         got = E.find_prev_report("00700", d, include_unmarked=True)
-        assert got == unmarked, f"宽松档应命中无标记旧报告，实际 {got}"
+        assert got.path == unmarked, f"宽松档应命中无标记旧报告，实际 {got.path}"
         # 同日期存在带标记版本时，带标记者优先
         marked = _write(d, "腾讯控股-00700-7.00-8.0-复盘-2026-08-23.html",
                         FAKE_REPORT)
         got = E.find_prev_report("00700", d, include_unmarked=True)
-        assert got == marked, f"同日期应优先带标记版本，实际 {got}"
+        assert got.path == marked, f"同日期应优先带标记版本，实际 {got.path}"
         # 无标记版本日期更新时，宽松档取无标记新版
-        got = E.find_prev_report("00700", d, include_unmarked=True)
         _write(d, "腾讯控股-00700-6.50-7.0-2026-08-30.html",
                "<html><body>更新的无标记</body></html>")
         got = E.find_prev_report("00700", d, include_unmarked=True)
-        assert got.endswith("2026-08-30.html"), f"日期最新者应胜出，实际 {got}"
-        assert E.find_prev_report("00700", d) == marked, "严格档不受宽松档影响"
+        assert got.path.endswith("2026-08-30.html"), f"日期最新者应胜出，实际 {got.path}"
+        assert E.find_prev_report("00700", d).path == marked, "严格档不受宽松档影响"
     print("OK find_prev_report --include-unmarked（宽松命中 / 同日期带标记优先 / 严格档不受影响）")
 
 
@@ -107,8 +108,155 @@ def test_find_tail_sniff_large_file():
         p = _write(d, "测试股份-600000-7.50-6.5-2026-08-08.html", big)
         assert os.path.getsize(p) > 8192, "夹具必须是大文件分支（>8KB）"
         got = E.find_prev_report("600000", d)
-        assert got == p, f"大文件尾部标记应命中，实际 {got}"
+        assert got.path == p, f"大文件尾部标记应命中，实际 {got.path}"
     print("OK find_prev_report 大文件（头尾读取命中尾部渲染标记）")
+
+
+def test_norm_code_and_find_variants():
+    """代码归一化：600000 / 600000.SH / sh600000 三种写法等价命中同一份报告。"""
+    assert E.norm_code("600000") == "600000"
+    assert E.norm_code(" 600000.SH ") == "600000"
+    assert E.norm_code("sh600000") == "600000"
+    assert E.norm_code("SZ000063") == "000063"
+    assert E.norm_code("00700.HK") == "00700", "港股 5 位前导零必须保留"
+    assert E.norm_code("bj920982") == "920982"
+    assert E.norm_code("") == "" and E.norm_code(None) == ""
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
+        for c in ("600000", "600000.SH", "sh600000", "600000.sz", " SH600000 "):
+            r = E.find_prev_report(c, d)
+            assert r.path == p, f"{c!r} 应归一后命中，实际 {r.path}"
+    print("OK norm_code + 三种代码写法等价命中")
+
+
+def test_find_sentinel_status():
+    """结构化哨兵三情形：无候选 / 有报告但代码不匹配 / 有同代码候选但被严格档排除。"""
+    with tempfile.TemporaryDirectory() as d:
+        r = E.find_prev_report("600000", d)
+        assert r.path is None and r.status == E.ST_NO_CANDIDATES, "空目录 = no_candidates"
+        _write(d, "随手笔记.html", "<html>非报告</html>")   # 不可解析且不像报告 → 仍算无候选
+        assert E.find_prev_report("600000", d).status == E.ST_NO_CANDIDATES
+        _write(d, "别的公司-600001-8.0-8.0-2026-08-26.html", FAKE_REPORT)
+        r = E.find_prev_report("600000", d)
+        assert r.path is None and r.status == E.ST_NO_CODE_MATCH, f"实际 {r.status}"
+        _write(d, "测试股份-600000-9.9-9.9-2026-08-25.html", "<html>无标记</html>")
+        r = E.find_prev_report("600000", d)
+        assert r.path is None and r.status == E.ST_EXCLUDED, f"实际 {r.status}"
+        assert E.find_prev_report("600000", d, include_unmarked=True).status == E.ST_FOUND, \
+            "宽松档下同一目录应转为命中"
+    print("OK find_prev_report 哨兵（no_candidates / no_code_match / excluded / 宽松转命中）")
+
+
+def test_find_recursive_subdir():
+    """递归子目录命中（--dir 语义）：报告埋在嵌套目录里也能找到。"""
+    with tempfile.TemporaryDirectory() as d:
+        sub = os.path.join(d, "2026", "08")
+        os.makedirs(sub)
+        p = _write(sub, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
+        r = E.find_prev_report("600000", d)
+        assert r.path == p and r.status == E.ST_FOUND, f"递归子目录应命中，实际 {r.path}"
+    print("OK find_prev_report 递归子目录命中")
+
+
+def test_find_prunes_ignored_dirs():
+    """v4.10.3 审计：_archive/artifacts/隐藏目录被剪枝——其中的测试夹具不参与匹配，
+    否则 CWD=仓库根时 artifacts 里的同名报告会误进回测模式；正常子目录仍递归扫描。"""
+    with tempfile.TemporaryDirectory() as d:
+        for skip in ("_archive", "artifacts", ".hidden", "__pycache__"):
+            sub = os.path.join(d, skip)
+            os.makedirs(sub)
+            _write(sub, "测试股份-600000-9.99-9.9-复盘-2026-08-30.html", FAKE_REPORT)
+        r = E.find_prev_report("600000", d)
+        assert r.path is None and r.status == E.ST_NO_CANDIDATES, \
+            f"被剪枝目录内的报告不得参与匹配，实际 {r}"
+        sub = os.path.join(d, "2026")
+        os.makedirs(sub)
+        p = _write(sub, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
+        r = E.find_prev_report("600000", d)
+        assert r.path == p, f"正常子目录应仍被扫描，实际 {r.path}"
+    print("OK find_prev_report 剪枝（_archive/artifacts/隐藏目录不扫，正常子目录仍扫）")
+
+
+def test_parse_failure_only_is_no_candidates():
+    """v4.10.3 审计：解析失败文件不计入候选——目录里只有「像报告但解析失败」的文件时，
+    哨兵必须是 no_candidates（不得报 excluded：那会把用户误导去加 --include-unmarked）。"""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "测试股份-600000-无日期.html", FAKE_REPORT)   # 像报告但解析失败
+        _write(d, "600000-2026-08-08.html", FAKE_REPORT)        # 同上
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            r = E.find_prev_report("600000", d)
+    assert r.path is None and r.status == E.ST_NO_CANDIDATES, \
+        f"解析失败文件不得计为候选或排除，实际 {r.status}"
+    print("OK 解析失败文件不计入候选（哨兵=no_candidates）")
+
+
+def test_parse_failure_hint():
+    """「像报告但文件名解析失败」打 [跳过: …] 到 stderr；不像报告的静默跳过。"""
+    import contextlib
+    import io
+    with tempfile.TemporaryDirectory() as d:
+        _write(d, "测试股份-600000-无日期.html", FAKE_REPORT)   # 像报告（公司名 + 代码）
+        _write(d, "600000-2026-08-08.html", FAKE_REPORT)       # 像报告（6 位代码）
+        _write(d, "随手笔记.html", "<html>x</html>")           # 不像报告：不提示
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            E.find_prev_report("600000", d)
+        err = buf.getvalue()
+    assert "[跳过: 文件名无法解析 测试股份-600000-无日期.html]" in err, err
+    assert "[跳过: 文件名无法解析 600000-2026-08-08.html]" in err, err
+    assert "随手笔记" not in err, f"不像报告的不该提示: {err}"
+    print("OK 解析失败提示（像报告的才提示 / 不像报告的静默）")
+
+
+def test_cli_find_dir_and_messages():
+    """CLI 出口：--dir（含 = 形式）+ 代码后缀归一化命中；三情形文案分明（subprocess 直跑，无网络）。"""
+    import subprocess
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract_review.py")
+
+    def run(*a):
+        return subprocess.run([sys.executable, script] + list(a),
+                              capture_output=True, text=True, encoding="utf-8")
+    with tempfile.TemporaryDirectory() as d:
+        sub = os.path.join(d, "nested")
+        os.makedirs(sub)
+        _write(sub, "测试股份-600000-7.50-6.5-2026-08-08.html", FAKE_REPORT)
+        r = run("--find", "600000.SH", "--dir", d)          # 后缀归一 + 递归 + 空格形式
+        assert r.returncode == 0 and "发现同代码旧报告" in r.stderr, r.stderr
+        assert '"code": "600000"' in r.stdout, "应直接输出提取结果"
+        r = run("--find", "sh600000", "--dir=" + d)         # = 形式
+        assert r.returncode == 0 and "发现同代码旧报告" in r.stderr, r.stderr
+    with tempfile.TemporaryDirectory() as d2:
+        r = run("--find", "600000", "--dir", d2)
+        assert "没有可解析的报告文件" in r.stderr, r.stderr
+        _write(d2, "别的公司-600001-8.0-8.0-2026-08-26.html", FAKE_REPORT)
+        r = run("--find", "600000", "--dir", d2)
+        assert "未找到 600000 的脚本生成旧报告" in r.stderr, r.stderr
+        _write(d2, "测试股份-600000-9.9-9.9-2026-08-25.html", "<html>无标记</html>")
+        r = run("--find", "600000", "--dir", d2)
+        assert "已按严格档排除" in r.stderr and "--include-unmarked" in r.stderr, r.stderr
+        r = run("--find", "600000", "--dir", os.path.join(d2, "不存在"))
+        assert r.returncode == 1 and "目录不存在" in r.stderr, r.stderr
+    print("OK CLI --dir/归一化命中 + 三情形文案 + 坏目录报错")
+
+
+def test_cli_dir_missing_value_errors():
+    """v4.10.3 审计：--dir 缺值（或值恰为另一个 --flag）→ 明确报错 exit 1，不再静默回落 "."。"""
+    import subprocess
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "extract_review.py")
+
+    def run(*a):
+        return subprocess.run([sys.executable, script] + list(a),
+                              capture_output=True, text=True, encoding="utf-8")
+    r = run("--find", "600000", "--dir")
+    assert r.returncode == 1 and "--dir 缺少目录参数" in r.stderr, (r.returncode, r.stderr)
+    r = run("--find", "600000", "--dir", "--include-unmarked")
+    assert r.returncode == 1 and "--dir 缺少目录参数" in r.stderr, (r.returncode, r.stderr)
+    r = run("--find", "600000", "--dir=")
+    assert r.returncode == 1 and "--dir= 后缺少目录参数" in r.stderr, (r.returncode, r.stderr)
+    print("OK CLI --dir 缺值报错（缺值 / 值是他 flag / --dir= 空值 均 exit 1）")
 
 
 def test_parse_report_name():
@@ -142,8 +290,8 @@ def test_find_prev_report_legacy_naming():
     """旧 _ 分隔命名（pre-v4.0）经统一解析口径后也参与回测触发匹配。"""
     with tempfile.TemporaryDirectory() as d:
         p = _write(d, "中国神华_601088_6.72_2026-08-07.html", FAKE_REPORT)
-        assert E.find_prev_report("601088", d) == p, "旧 _ 命名带标记应命中"
-        assert E.find_prev_report("00700", d) is None, "代码不一致不命中"
+        assert E.find_prev_report("601088", d).path == p, "旧 _ 命名带标记应命中"
+        assert E.find_prev_report("00700", d).path is None, "代码不一致不命中"
     print("OK find_prev_report 旧 _ 命名（合并口径后覆盖旧一代报告）")
 
 
@@ -155,4 +303,12 @@ if __name__ == "__main__":
     test_extract_anchors()
     test_extract_date_no_topbar()
     test_find_tail_sniff_large_file()
-    print("全部 7 项测试通过")
+    test_norm_code_and_find_variants()
+    test_find_sentinel_status()
+    test_find_recursive_subdir()
+    test_find_prunes_ignored_dirs()
+    test_parse_failure_only_is_no_candidates()
+    test_parse_failure_hint()
+    test_cli_find_dir_and_messages()
+    test_cli_dir_missing_value_errors()
+    print("全部 15 项测试通过")

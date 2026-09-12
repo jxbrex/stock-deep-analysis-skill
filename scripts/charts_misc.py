@@ -218,8 +218,10 @@ def build_triggers_strip(fill: dict) -> str:
     把 dash 触发条件结构化为状态条，垫在手写 dash_html 前。评价语义色：hit=绿 / miss=红 / pending=灰。
     triggers: [{"cond":"提价兑现","metric":"26H2 毛利率","target":"≥46%","status":"hit"}, ...]
     （status 三值：hit 已兑现 / miss 未兑现 / pending 待验证——首版报告全部 pending，
-    回测模式填旧触发条件的核对结果；cond 必填，metric/target 可省。字段缺失/空 → 返回空串）"""
+    回测模式填旧触发条件的核对结果；cond 必填，metric/target 可省。字段缺失/空 → 返回空串；
+    v4.10.3：全 pending（首版报告）同样返回空串不渲染——无核对结果的状态条只是噪音）"""
     rows = []
+    verdict = False
     for t in fill.get("triggers") or []:
         if not isinstance(t, dict):
             continue
@@ -228,6 +230,8 @@ def build_triggers_strip(fill: dict) -> str:
             continue
         status = str(t.get("status") or "pending").strip().lower()
         label, cls = _TRIG_STATUS.get(status, _TRIG_STATUS["pending"])
+        if cls != "pending":
+            verdict = True
         metric = str(t.get("metric") or "").strip()
         target = str(t.get("target") or "").strip()
         mt = ""
@@ -237,7 +241,7 @@ def build_triggers_strip(fill: dict) -> str:
         rows.append(f'<div class="trig"><span class="trig-dot {cls}"></span>'
                     f'<span class="trig-cond">{_esc(cond)}</span>{mt}'
                     f'<span class="trig-status {cls}">{label}</span></div>')
-    if not rows:
+    if not rows or not verdict:
         return ""
     return ('<span class="section-tag">触发条件状态</span>'
             '<div class="trig-strip">' + "".join(rows) + '</div>'

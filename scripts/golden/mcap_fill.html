@@ -169,8 +169,9 @@ td.cell-worst { color: #2b2620; font-weight: 700; }
 .deduction + br { display: none; }
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
-/* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分 */
-.timing-table tr.total td { font-weight: 700; background: #f2eddd; }
+/* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分；
+   v4.10.3：选择器补 th——行首维度格多为 <th>，只选 td 时被 tbody th 的 transparent 归一，合计行条纹断裂 */
+.timing-table tr.total td, .timing-table tr.total th { font-weight: 700; background: #f2eddd; }
 /* v4.9.1 跟踪与触发合并单表（13 章 dash_html）：指标/当前值/触发阈值列防折行，
    触发后操作/数据来源长文列小字允许换行，行高不再被长文撑飞 */
 .dash-table th:nth-child(-n+3), .dash-table td:nth-child(-n+3) { white-space: nowrap; }

@@ -76,14 +76,16 @@ def _is_plain_text(s: str) -> bool:
 
 
 def _is_prose_cell(s: str) -> bool:
-    """num 列中应左对齐的文字格：剥括号注释后含句读的纯文字/长句，或超 2 字的纯文字。
+    """num 列中应左对齐的文字格：剥括号注释后含句读的纯文字/长句，或剥括号后超 4 字的纯文字。
     括号内句读不参与判定（"±60-90 亿（手机毛利率仅 8.5%，缓冲更薄）"是数值+注释，随列右对齐）；
-    ≤2 字短标记（"基础""亏损""偏多"）随列右对齐，长数值串（"13,600-15,300亿"）因含数字天然右对齐。"""
+    短占位格（"未披露""未获取到""不适用""—（上年亏损）"）**不翻列**——v4.10.3 审计实证：
+    原「超 2 字纯文字」阈值让这些占位格也翻转整列，存量 66 份报告 54 份因此被改动，远超申报口径；
+    长数值串（"13,600-15,300亿"）因含数字天然右对齐。"""
     t = _plain_text(s)
     t2 = re.sub(r"[（(][^）)]*[）)]", "", t)  # 先剥括号注释：括号内句读不参与判定
     if re.search(r"[，。；、：]", t2) and (not re.search(r"\d", t2) or len(t2) > 20):
         return True   # 纯文字带句读→左对齐；带数字的长句（>20字）仍是说明文→左对齐
-    return len(t) > 2 and _is_plain_text(s)
+    return len(t2) > 4 and _is_plain_text(s)
 
 
 def _content_vote(inner: str):
@@ -107,8 +109,9 @@ def _content_vote(inner: str):
 
 def fix_table_alignment(html: str) -> str:
     """表格对齐自动修正：逐单元格解析（th/td 都按列计数，处理行头 th），按列统计 td 对齐类
-    （num/center 多数决，v4.10 起文字票平票即判左），给同列 th 配同类；第一列强制左对齐。
-    matrix-table/scenario-table 跳过（后者类名由脚本写死、对齐属有意设计）。
+    （num/center 多数决，v4.10 起文字票平票即判左；v4.10.3 起列内出现说明文格 → 整列判左），
+    给同列 th 配同类；第一列强制左对齐。matrix-table/scenario-table 跳过（后者类名由脚本写死、
+    对齐属有意设计）。
     作用：模型手写 fragment 表头类不齐时（裸 th 配 td class=num/center），渲染层兜底对齐。
     限制：以非贪婪 `<table>…</table>` 正则切表，不支持表内嵌表（嵌套 <table> 会在内层
     起始处提前收表，行/列对齐只对外层可视段生效）——fragment 写作时禁止嵌套表。"""
@@ -128,6 +131,7 @@ def fix_table_alignment(html: str) -> str:
         # 收集每列的对齐类（td 数据格：有类按类投票，裸格按内容投票；rowspan 合并格需补偿列位，
         # colspan 格不计票）
         col_votes = {}
+        col_prose = set()  # 列内含说明文格（_is_prose_cell）→ 整列判左，见下方列决策
         rowspans = []  # [(col, remaining_rows)]，行首 rem 即上方剩余占用
         for trm in _TR.finditer(tbl):
             col = 0
@@ -150,6 +154,8 @@ def fix_table_alignment(html: str) -> str:
                         a = _content_vote(inner)
                     if a:
                         col_votes.setdefault(col, []).append(a)
+                    if _is_prose_cell(inner):
+                        col_prose.add(col)
                 # 登记本格 rowspan（跨 N 行 → 下方 N-1 行该列被占用）
                 rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
                 if rs and int(rs.group(1)) > 1:
@@ -165,6 +171,12 @@ def fix_table_alignment(html: str) -> str:
         for i, votes in col_votes.items():
             if i == 0:
                 decided[i] = None  # 第一列强制左
+                continue
+            # v4.10.3：列内含说明文格（带句读的长文 / 剥括号后超 4 字纯文字；短占位格不翻列）→
+            # 整列判左。原先只靠格级 _is_prose_cell 事后剥类，数字多数决仍判 num → 同列
+            # 「数字右、长文左」锯齿；整列让位给左后，格级剥类路径不再可达（见下方 td 分支注释）。
+            if i in col_prose:
+                decided[i] = None
                 continue
             num_n, cen_n, left_n = votes.count("num"), votes.count("center"), votes.count("left")
             # v4.10 平票判左：文本为主的表（8 章预期差对照表等）原规则在平票时判 num，
@@ -202,15 +214,12 @@ def fix_table_alignment(html: str) -> str:
                     rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
                     if rs and int(rs.group(1)) > 1:
                         rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
-                    # td 对齐统一（num 列）：长文格（含句读 / 超 2 字纯文字）→ 去类左对齐；
-                    # 数字、含数字短值、≤4 字短标记（"基础""12个月"）→ 统一 num 右对齐
+                    # td 对齐统一（num 列）：v4.10.3 起「含 prose 格」的列已在决策层整列判左
+                    # （col_prose），故到达本分支的 num 列必无 prose 格——原格级 _is_prose_cell
+                    # 剥类分支成为不可达代码，已删；数字、含数字短值、≤4 字短标记（"基础""12个月"）
+                    # 一律随列 num 右对齐
                     if colspan == 1 and decided.get(col) == "num":
-                        inner_end = cells[i + 1].start() if i + 1 < len(cells) else len(row)
-                        inner = row[cm.end():inner_end]
-                        if _is_prose_cell(inner):
-                            attrs = _strip_th_align(attrs)  # 剔除 num/center → 左
-                        else:
-                            attrs = _set_th_align(attrs, "num")  # 随列右对齐
+                        attrs = _set_th_align(attrs, "num")  # 随列右对齐
                     elif colspan == 1 and decided.get(col) is None:
                         attrs = _strip_th_align(attrs)  # 文字列/无投票列：剔除误标的 num/center → 左
                 rebuilt.append(f"<{tag}{attrs}>")

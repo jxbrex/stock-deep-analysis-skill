@@ -7,7 +7,7 @@ param([switch]$Go)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $env:USERPROFILE '.agents\skills\stock-deep-analysis'
-$xd = @('.git', '__pycache__', 'artifacts', 'handoffs')
+$xd = @('.git', '__pycache__', '.pytest_cache', 'artifacts', 'handoffs')
 
 # 文档超长行闸（v4.10.1）：单行 >1500 字符会触发 v4.9.2 立案的 Read 截断陷阱，warn-only
 function Test-DocLines {

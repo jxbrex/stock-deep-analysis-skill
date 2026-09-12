@@ -209,6 +209,16 @@ def full_fill(**over):
             {"name": "测试股份", "roe": 14, "pe": 11, "target": True},  # 与 valuation_inputs.pe_ttm 一致
             {"name": "同业甲", "roe": 9, "pe": 25},
             {"name": "同业乙", "roe": 18, "pe": 16}]},
+        # v4.10.3：时机判定小表（三行，末行 = tr.total）——此前三份 golden 无任何时机表用例，
+        # 模板 `.timing-table tr.total td` 只选 td、行首 th 漏选的问题长期隐身（回归盲区补齐）
+        position_html=('<table><thead><tr><th>维度</th><th>得分</th><th>命中信号与加减</th></tr></thead>'
+                       '<tbody><tr><th>筹码面</th><td class="num">5.0</td>'
+                       '<td>股东户数环比 -3%，集中</td></tr>'
+                       '<tr><th>技术面</th><td class="num">5.0</td><td>站上 60 日线</td></tr>'
+                       '<tr><th>时机分合计</th><td class="num">5.0</td>'
+                       '<td>筹码面×67% + 技术面×33%</td></tr></tbody></table>'
+                       '<span class="source">时机判定：中性 5 分起始，逐条信号加减（微调 ±1 档）。</span>'
+                       + '<p>时机判定与决策逻辑。' * 12 + '</p>'),
         consensus={"lo": 9, "hi": 13},
         triggers=[{"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%", "status": "hit"},
                   {"cond": "销量转正", "status": "pending"},

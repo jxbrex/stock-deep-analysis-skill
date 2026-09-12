@@ -11,8 +11,14 @@
 2. 运行回归测试（scripts/test_*、golden 快照）
 3. 更新 CHANGELOG.md
 4. 经用户确认后 commit（git 操作必须先征得用户同意）。**用户确认 commit 即同时授权
-   release**：commit 信息含版本号（vX.Y.Z）时，同步打同名 tag（如 `v4.9.2`），无需另行
-   请示；不含版本号的纯流程/文档提交不另打 tag
+   release**：commit 信息含版本号（vX.Y.Z）时，同步完成四件——`git push origin main`
+   推主分支、打同名 tag（如 `v4.9.2`）、`git push origin <tag>` 推送 tag、
+   `gh release create <tag> -t "<标题>" -n "详见仓库 CHANGELOG.md 与 handoffs/vX.Y.Z-handoff.md"`
+   （`-t` 标题取 commit 首行浓缩；`<tag>` 与版本号同名），无需另行请示；不含版本号的
+   纯流程/文档提交只推 main、不另打 tag。
+   （v4.10.3 前 "release" 仅指本地 tag、主分支常滞留未推——tag 缺口自 v4.10.0 起 3 个
+   （v4.10.0/1/2 未 push）、release 缺口自 v4.9.2 起 4 个（v4.9.2 有 tag 无 release，正是
+   Latest 滞留 v4.9.1 的真因）；四步缺一会静默断档）
 5. 部署：先 `powershell -File scripts\deploy.ps1` 预览，确认后加 `-Go` 执行
 
 ## 目录约定

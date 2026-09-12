@@ -324,6 +324,18 @@ def test_triggers_strip():
     assert "非法 status" in out and "> 8" in out, "非法值与超量应告警"
 
 
+def test_triggers_strip_all_pending_hidden():
+    """v4.10.3：首版报告全 pending → 状态条不渲染（空串）；出现 hit/miss 才渲染。"""
+    assert not R.build_triggers_strip(minimal_fill(triggers=[
+        {"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%", "status": "pending"},
+        {"cond": "销量转正", "status": "pending"}])), "全 pending 应为空串"
+    assert not R.build_triggers_strip(minimal_fill(
+        triggers=[{"cond": "成本回落", "status": "bogus"}])), "非法 status 归 pending 亦为空串"
+    html = R.build_triggers_strip(minimal_fill(triggers=[
+        {"cond": "提价兑现", "status": "hit"}, {"cond": "销量转正", "status": "pending"}]))
+    assert 'trig-dot hit' in html and 'trig-dot pending' in html, "含 hit 应原样渲染"
+
+
 def test_table_alignment_keeps_highlight_class():
     """v4.9.1：fix_table_alignment 只动 num/center，td 上的 cell-best/cell-worst 高亮类存活。"""
     html = R.fix_table_alignment(
@@ -373,6 +385,46 @@ def test_fix_alignment_tie_goes_left():
     html2 = R.fix_table_alignment(tbl2)
     assert '<th class="num">PE</th>' in html2, "数字占多数的列仍应右对齐"
     print("OK 对齐平票判左（文本表整表左 / 平票列左 / 数字列右不变）")
+
+
+def test_fix_alignment_prose_column_goes_left():
+    """v4.10.3：列内出现说明文格（_is_prose_cell）→ 整列判左，不再「数字多数决 → 逐格剥类」
+    （同列 3 数字右 + 1 长文左的锯齿；香农芯创时机表实证）。无长文格时数字多数仍判右。"""
+    tbl = ('<table><thead><tr><th>维度</th><th>说明</th></tr></thead><tbody>'
+           '<tr><td>甲</td><td class="num">11</td></tr>'
+           '<tr><td>乙</td><td class="num">25</td></tr>'
+           '<tr><td>丙</td><td class="num">3,757 亿</td></tr>'
+           '<tr><td>丁</td><td>负债成本降幅趋缓，息差企稳</td></tr>'
+           '<tr><td>戊</td><td>买入</td></tr></tbody></table>')
+    html = R.fix_table_alignment(tbl)
+    assert '<th class="num">说明</th>' not in html, "含长文格的列应整列判左"
+    assert 'class="num"' not in html, "整列判左后数字格也不再右对齐"
+    tbl_num = tbl.replace('<tr><td>丁</td><td>负债成本降幅趋缓，息差企稳</td></tr>', '')
+    assert '<th class="num">说明</th>' in R.fix_table_alignment(tbl_num), \
+        "无长文格时数字多数仍判右（对照支）"
+    print("OK 列含 prose 格整列判左（对照：无长文格仍数字多数决）")
+
+
+def test_fix_alignment_short_placeholder_stays_num():
+    """v4.10.3 审计收窄：短占位格（未披露/未获取到/不适用/—（上年亏损））不触发整列翻左——
+    数字多数列仍判 num（原「超 2 字纯文字」阈值会让存量 66 份报告里 54 份的表被动过）。"""
+    tbl = ('<table><thead><tr><th>公司</th><th>PE(TTM)</th></tr></thead><tbody>'
+           '<tr><td>甲</td><td>11</td></tr><tr><td>乙</td><td>25</td></tr>'
+           '<tr><td>丙</td><td>16</td></tr><tr><td>丁</td><td>18</td></tr>'
+           '<tr><td>戊</td><td>21</td></tr>'
+           '<tr><td>己</td><td>未披露</td></tr>'
+           '<tr><td>庚</td><td>未获取到</td></tr>'
+           '<tr><td>辛</td><td>不适用</td></tr></tbody></table>')
+    html = R.fix_table_alignment(tbl)
+    assert '<th class="num">PE(TTM)</th>' in html, "短占位格不应翻转整列"
+    assert 'class="num">未披露' in html and 'class="num">不适用' in html, "占位格随列右对齐"
+    tbl2 = ('<table><thead><tr><th>公司</th><th>PE(TTM)</th></tr></thead><tbody>'
+            '<tr><td>甲</td><td>11</td></tr><tr><td>乙</td><td>25</td></tr>'
+            '<tr><td>丙</td><td>16</td></tr><tr><td>丁</td><td>18</td></tr>'
+            '<tr><td>戊</td><td>—（上年亏损）</td></tr></tbody></table>')
+    assert '<th class="num">PE(TTM)</th>' in R.fix_table_alignment(tbl2), \
+        "「—（上年亏损）」剥括号后 1 字，不翻列"
+    print("OK 短占位格不翻列（未披露/未获取到/不适用/—（上年亏损）仍 num）")
 
 
 if __name__ == "__main__":

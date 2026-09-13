@@ -224,6 +224,67 @@ def test_price_history_and_holders():
     assert 'aria-label="股东户数趋势"' not in html2, "缺字段户数图应消失"
 
 
+def test_holders_label_collision():
+    """v4.11.0：户数图同月多期披露 → 横标降精度 MM-DD；重复截止日去重保留后写行
+    （天齐 002466 2026-09-13 实证：E4 给 20260710 双行、2026-07 共四期，横标一排 26-07）。"""
+    holders = [{"date": "2026-07-10", "num": 345304, "chg": 0.0},
+               {"date": "2026-07-10", "num": 345304, "chg": -1.7},
+               {"date": "2026-07-20", "num": 358804, "chg": 3.9},
+               {"date": "2026-07-31", "num": 360077, "chg": 0.4},
+               {"date": "2026-08-10", "num": 367221, "chg": 2.0},
+               {"date": "2026-08-31", "num": 364212, "chg": -0.8}]
+    html = render_fill(minimal_fill(holders=holders))
+    seg = html.split('aria-label="股东户数趋势"', 1)[1].split('</svg>', 1)[0]
+    assert "26-07" not in seg and "26-08" not in seg, "同月多期时横标不应停留在 YY-MM"
+    for lb in ("07-10", "07-20", "07-31", "08-10", "08-31"):
+        assert lb in seg, f"横标应含 {lb}"
+    assert seg.count("07-10") == 1, "重复截止日应去重为一行"
+    assert "-1.7%" in seg and "+0.0%" not in seg, "去重应保留后写行（变动 -1.7%）"
+    # 正常季度数据不触发降精度
+    html2 = render_fill(minimal_fill())
+    seg2 = html2.split('aria-label="股东户数趋势"', 1)[1].split('</svg>', 1)[0]
+    assert "25-03" in seg2, "无碰撞时应保持 YY-MM"
+    print("OK 户数图横标碰撞降精度与重复截止日去重")
+
+
+def test_price_history_quarterly_kline():
+    """v4.11.0：series 带 OHLC → 季K蜡烛（红涨绿跌、季度聚合）；缺 OHLC 回退发丝线；
+    连续缺 pe ≥3 个月段加亏损期底纹命名；PE 极值（max > p75×3）右轴截断 + 峰值标注。"""
+    months = []
+    for i in range(36):  # 2023-01 ~ 2025-12
+        y, m = 2023 + i // 12, i % 12 + 1
+        base = 10 + i * 0.2
+        months.append({"m": f"{y}-{m:02d}", "open": base, "high": base + 1, "low": base - 1,
+                       "close": base + 0.5,
+                       "pe": (None if 15 <= i <= 23 else 12.0)})  # 2024-04~2024-12 亏损期 9 个月
+    fill = minimal_fill(price_history={"label": "近3年", "series": months},
+                        cycle_html='<table><tr><td>x</td></tr></table>')
+    html = render_fill(fill)
+    seg = html.split('aria-label="股价季K与PE历史走势"', 1)[1].split('</svg>', 1)[0]
+    assert 'fill="#c75b5b"' in seg or 'fill="#6ba86b"' in seg, "季K 蜡烛应渲染（SVG  pastel 方向色）"
+    # 聚合正确性（审计 P2-9）：36 个月 → 12 根季度蜡烛（实体 rect），且影线极值取季内高/低
+    n_body = len(re.findall(r'<rect x="[\d.]+" y="[\d.]+" width="[\d.]+" height="[\d.]+" '
+                            r'fill="#(?:c75b5b|6ba86b|6f695e)"/>', seg))
+    assert n_body == 12, f"36 个月应聚合 12 根季度蜡烛，实际 {n_body}"
+    assert 'stroke-width="1.2"' in seg, "蜡烛影线应渲染"
+    assert "亏损期" in seg, "连续缺 pe 段应有亏损期底纹命名"
+    assert "峰值" not in seg, "无 PE 极值时不应有截断标注"
+    # PE 极值截断：末月 200x（p75=12 → 200 > 36 → 截断）
+    sp = [dict(mo, pe=(200.0 if i == 35 else mo.get("pe"))) for i, mo in enumerate(months)]
+    html2 = render_fill(minimal_fill(price_history={"label": "近3年", "series": sp},
+                                     cycle_html='<table><tr><td>x</td></tr></table>'))
+    seg2 = html2.split('aria-label="股价季K与PE历史走势"', 1)[1].split('</svg>', 1)[0]
+    assert "峰值 200x" in seg2, "PE 极值应截断并标注峰值"
+    # 缺 OHLC 回退发丝线（原契约不变）
+    months_c = [{"m": mo["m"], "close": mo["close"], "pe": mo["pe"]} for mo in months]
+    html3 = render_fill(minimal_fill(price_history={"label": "近3年", "series": months_c},
+                                     cycle_html='<table><tr><td>x</td></tr></table>'))
+    assert 'aria-label="股价与PE历史走势"' in html3, "无 OHLC 应回退发丝线形态"
+    seg3 = html3.split('aria-label="股价与PE历史走势"', 1)[1].split('</svg>', 1)[0]
+    assert "亏损期" in seg3, "回退形态同样画亏损期底纹"
+    print("OK 季K蜡烛 / 亏损期底纹 / PE 截断 / 发丝线回退")
+
+
 def test_consensus_band_and_pe_iqr():
     """v4.8 ③走廊图叠加卖方一致目标价带（consensus）；④PE 历史带 P25-P75 分位段。"""
     fill = minimal_fill(consensus={"lo": 9, "hi": 13})

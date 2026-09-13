@@ -114,7 +114,7 @@ def minimal_fill(**over):
         "peers_html": ('<div class="table-scroll"><table class="freeze-first">'
                        '<tr><th>公司</th><th>PE(TTM)</th><th>ROE</th></tr>'
                        '<tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td>'
-                       '<td class="cell-best">11</td><td>14%</td></tr>'
+                       '<td class="cell-best">11</td><td class="cell-best">14%</td></tr>'
                        '<tr><td>同业甲</td><td class="cell-worst">25</td><td>9%</td></tr>'
                        '</table></div>'
                        '<span class="source">数据来源：测试</span>'),

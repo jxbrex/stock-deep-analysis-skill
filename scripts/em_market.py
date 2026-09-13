@@ -218,14 +218,39 @@ def fetch_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
             # 港股无月线接口：缓存日线按 YYYYMM 聚合（取每月最后交易日收盘），港股不做复权
             rows = _hk_daily_series(ts)
             cutoff = f"{date.today().year - years}01"
-            last_of_month = {}
-            for r in rows:
-                if r["trade_date"][:6] >= cutoff:
-                    last_of_month[r["trade_date"][:6]] = r  # 同月后写覆盖先写
-            if not last_of_month:
+            if not any(r["trade_date"][:6] >= cutoff for r in rows):
                 raise RuntimeError("hk_daily 聚合为空")
-            out = [{"date": _fmt_date(r["trade_date"]), "close": round(float(r["close"]), 3)}
-                   for _, r in sorted(last_of_month.items())]
+            # v4.11.0：聚合同步产出月线 OHLC（季K 蜡烛四值；开=当月首日、高/低=月内极值、收=月末）；
+            # 日线行缺 OHLC 任一键 → 该月仅 close（图回退发丝线，不炸链路）
+            ohlc = {}
+            for r in rows:
+                ym = r["trade_date"][:6]
+                if ym < cutoff:
+                    continue
+                slot = ohlc.setdefault(ym, {"o": None, "h": None, "l": None, "c": None, "d": None})
+                try:
+                    o, h, l, c = (float(r[k]) for k in ("open", "high", "low", "close"))
+                except (KeyError, TypeError, ValueError):
+                    try:
+                        o, h, l, c = None, None, None, float(r["close"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                if slot["d"] is None:
+                    slot.update(o=o, h=h, l=l, c=c, d=r["trade_date"])
+                else:
+                    if o is not None:
+                        if slot["o"] is None:
+                            slot.update(o=o, h=h, l=l)   # 首个带 OHLC 的行补齐（首行缺键不再丢整月）
+                        else:
+                            slot["h"], slot["l"] = max(slot["h"], h), min(slot["l"], l)
+                    if r["trade_date"] >= slot["d"]:
+                        slot["c"], slot["d"] = c, r["trade_date"]
+            out = []
+            for _, v in sorted(ohlc.items()):
+                e = {"date": _fmt_date(v["d"]), "close": round(v["c"], 3)}
+                if v["o"] is not None:
+                    e.update(open=round(v["o"], 3), high=round(v["h"], 3), low=round(v["l"], 3))
+                out.append(e)
             return out
         rows = _C.ts_call("monthly", {"ts_code": ts, "start_date": beg, "end_date": end})
         if not rows:
@@ -238,10 +263,19 @@ def fetch_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
         out = []
         for r in sorted(rows, key=lambda x: x["trade_date"]):
             c = float(r["close"])
+            try:
+                o, h, l = (float(r[k]) for k in ("open", "high", "low"))
+            except (KeyError, TypeError, ValueError):
+                o = h = l = None   # 缺 OHLC 任一键 → 该月仅 close（图回退发丝线）
             f = fmap.get(r["trade_date"])
             if f and latest_f:
                 c = c * f / latest_f   # 前复权
-            out.append({"date": _fmt_date(r["trade_date"]), "close": round(c, 2)})
+                if o is not None:
+                    o, h, l = (v * f / latest_f for v in (o, h, l))
+            e = {"date": _fmt_date(r["trade_date"]), "close": round(c, 2)}
+            if o is not None:
+                e.update(open=round(o, 2), high=round(h, 2), low=round(l, 2))
+            out.append(e)
         # v4.8.1：月度 PE(TTM) 回填（供 price_history 图，替代模型手工「月收×总股本÷TTM净利」）。
         # 与 fetch_pe_pb_band 同参同字段（kline-years=5 时窗口亦同），命中透明缓存不增发请求；
         # 失败静默跳过（仅 close，图降级单线）

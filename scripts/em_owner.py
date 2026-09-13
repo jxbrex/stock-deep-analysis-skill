@@ -46,6 +46,41 @@ def fetch_holders(code: str) -> list:
         return _em_holders(code)
 
 
+_QEND = ("0331", "0630", "0930", "1231")  # 月日四位数字（YYYYMMDD 切片比对）
+
+
+def fetch_holders_quarterly(code: str) -> list:
+    """E4 季度口径户数序列（v4.11.0，天齐实证）：月内多期/不定期披露点间隔不一，等距排布
+    时间轴失真——只取季末（定期报告口径）近 12 期，间隔均匀可回溯；若最新披露新于末季末
+    （如 8 月互动易新披露），追加为末点。环比按保留序列自算。返回旧→新。"""
+    try:
+        rows = _C.ts_call("stk_holdernumber", {"ts_code": to_ts_code(code)})
+        rows = [r for r in rows if r.get("holder_num") and r.get("end_date")]
+        rows.sort(key=lambda x: x["end_date"])  # 旧→新
+        if not rows:
+            raise RuntimeError("stk_holdernumber 空返回")
+        qrows = [r for r in rows
+                 if "".join(ch for ch in r["end_date"] if ch.isdigit())[4:8] in _QEND]
+        # 同截止日多行（上游偶发近似重复，天齐 20240930/20260630 双行且户数略不同实证）→
+        # 去重保留后写行且先于截断（窗口按干净序列取近 12 个季末）；变动比在干净序列上重算
+        qrows = [r for i, r in enumerate(qrows)
+                 if i == len(qrows) - 1 or qrows[i + 1]["end_date"] != r["end_date"]]
+        q = qrows[-12:]
+        latest = rows[-1]
+        if not q or latest["end_date"] > q[-1]["end_date"]:
+            q = q + [latest]
+        out, prev = [], None
+        for r in q:
+            num = r["holder_num"]
+            ratio = round((num / prev - 1) * 100, 1) if (prev and num) else None
+            out.append({"END_DATE": r["end_date"], "HOLDER_NUM": num,
+                        "HOLDER_NUM_RATIO": ratio})
+            prev = num
+        return out
+    except Exception:
+        return []
+
+
 # ---------------- E5 一致预期 ----------------
 def _em_consensus(code: str) -> dict:
     data = _em_dc("RPT_WEB_RESPREDICT", f'(SECURITY_CODE="{code}")', 1)

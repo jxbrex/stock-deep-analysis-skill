@@ -79,7 +79,7 @@ from em_finance import (  # noqa: E402,F401
     fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt,
 )
 from em_owner import (  # noqa: E402,F401
-    fetch_holders, fetch_consensus, fetch_mainop,
+    fetch_holders, fetch_holders_quarterly, fetch_consensus, fetch_mainop,
 )
 from em_misc import (  # noqa: E402,F401
     fetch_forecast_express, fetch_governance, fetch_disclosure,
@@ -368,26 +368,36 @@ def _sec_quality(pure: str, annual: list) -> list:
 
 
 def _sec_e2(secid: str, years: int, is_hk: bool) -> list:
-    """E2 月线段：区间、最低/最高/最新、近12月收盘/月末PE(TTM)序列。"""
+    """E2 月线段：区间、最低/最高/最新、近12月收盘/月末PE(TTM)序列。
+    v4.11.0：增全序列行（天齐 09-13 实证——近12月之外拿不到月末 PE，price_history 只能
+    填近一年且过半缺 PE，图降级单线；全序列约 2KB，模型照抄即可填满 5 年窗口）。"""
     out = []
     try:
         kl = fetch_kline_monthly(secid, years, is_hk)
         if kl:
             closes = [k["close"] for k in kl]
+            # v4.11.0：全序列带 OHLC（季K 蜡烛四值来源）：YYYY-MM=开,高,低,收[/月末PE]
+            def fmt(k):
+                ohlc = (f"{k['date'][:7]}={k.get('open', '?')},{k.get('high', '?')},"
+                        f"{k.get('low', '?')},{k['close']}")
+                return ohlc + (f"/{k['pe']}" if k.get("pe") else "")
             out.append(f"## E2 月线（{len(kl)}期）\n"
                        f"区间 {kl[0]['date']}~{kl[-1]['date']} | "
                        f"最低{min(closes)} 最高{max(closes)} 最新{closes[-1]}\n"
                        f"近12月: " + " ".join(f"{k['close']}/{k['pe']}" if k.get("pe") else str(k['close'])
                                              for k in kl[-12:]) + "\n"
-                       f"（近12月格式=月收盘/月末PE(TTM)，无 PE 时仅收盘；price_history 的 pe 字段照抄本序列，"
-                       f"不再手工按「月收×总股本÷TTM净利」推算）\n")
+                       f"全序列: " + " ".join(fmt(k) for k in kl) + "\n"
+                       f"（全序列格式=开,高,低,收[/月末PE(TTM)]；四值为 ? = 该月 OHLC 缺失，"
+                       f"照抄时该月只写 close/pe（图自动退化为收盘一字线）；price_history 的 "
+                       f"open/high/low/close/pe 字段照抄全序列（m=YYYY-MM），不再手工推算）\n")
     except Exception as e:
         out.append(f"## E2 月线\n[失败: {e}]\n")
     return out
 
 
 def _sec_e4(pure: str, is_hk: bool) -> list:
-    """E4 股东户数段。"""
+    """E4 股东户数段。v4.11.0：增季度序列行（季末口径近 12 期 + 最新点），holders 图字段
+    照抄本行（不定期披露点间隔不一，等距排布时间轴失真——天齐 2026-07 四期实证）。"""
     out = []
     try:
         h = fetch_holders(pure)
@@ -403,6 +413,14 @@ def _sec_e4(pure: str, is_hk: bool) -> list:
             out.append("")
         elif is_hk:
             out.append("## E4 股东户数\n[港股不支持，跳过]\n")
+        if not is_hk:
+            q = fetch_holders_quarterly(pure)
+            if len(q) >= 3:
+                qline = " ".join(f"{r['END_DATE'][:10]}={r['HOLDER_NUM']}"
+                                 + (f"/{r['HOLDER_NUM_RATIO']}%" if isinstance(r.get('HOLDER_NUM_RATIO'), (int, float)) else "")
+                                 for r in q)
+                out.append(f"季度序列（季末口径近{len(q)}期，旧→新；holders 图字段照抄本行，"
+                           f"格式=截止日=户数/环比）: {qline}\n")
     except Exception as e:
         out.append(f"## E4 股东户数\n[失败: {e}]\n")
     return out

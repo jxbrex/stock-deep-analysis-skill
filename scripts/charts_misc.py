@@ -111,7 +111,8 @@ def build_holders_plot(fill: dict) -> str:
     柱状图，暖灰柱=历史期、钢蓝柱=最新期；柱上=户数（千位符），柱下=截止日与环比——
     环比按筹码语义着色：户数增=筹码分散=红，户数减=集中=绿。
     holders: [{"date":"2025-03-31","num":188153,"chg":5.2}, ...]（旧→新，chg 为环比%，可省；
-    有效点 <3 → 返回空串，静默跳过）"""
+    v4.11.0 起照抄 E4「季度序列」行——季末口径近 12 期 + 最新点，间隔均匀；不定期披露点
+    不再上图。有效点 <3 → 返回空串，静默跳过）"""
     pts = []
     for p in fill.get("holders") or []:
         d = str(p.get("date") or "").strip()
@@ -119,14 +120,36 @@ def build_holders_plot(fill: dict) -> str:
         if not d or num is None:
             continue
         pts.append({"date": d, "num": num, "chg": _num(p.get("chg"))})
+    pts.sort(key=lambda r: r["date"])  # 旧→新
+    # v4.11.0：同一截止日多行（E4 上游偶发重复，天齐 20260710 双行且变动值不一致实证）
+    # → 去重保留后写行（先于 <3 门禁，去重后不足 3 期同样不生成；审计 P2：去重键按数字序列归一，
+    # "20260710" 与 "2026-07-10" 视为同日）；横标重复（月内多期披露，天齐 2026-07 四期实证）→
+    # 降精度到日，同年用 MM-DD、跨年用 YY-MM-DD，避免一排「26-07」
+    dk = lambda ds: "".join(ch for ch in ds if ch.isdigit())
+    pts = [p for i, p in enumerate(pts) if i == len(pts) - 1 or dk(pts[i + 1]["date"]) != dk(p["date"])]
     if len(pts) < 3:
         return ""
-    pts.sort(key=lambda r: r["date"])  # 旧→新
+
+    def _hl(ds):
+        digs = "".join(ch for ch in ds if ch.isdigit())
+        if len(digs) >= 8:
+            return digs[2:4], digs[4:6], digs[6:8]
+        if len(digs) == 6:
+            return digs[2:4], digs[4:6], None
+        return None
+
+    parsed = [_hl(p["date"]) for p in pts]
+    labels = [f"{t[0]}-{t[1]}" if t else p["date"][:7] for t, p in zip(parsed, pts)]
+    if len(set(labels)) < len(labels):
+        same_year = len({t[0] for t in parsed if t}) <= 1
+        labels = [(f"{t[1]}-{t[2]}" if t and t[2] and same_year else
+                   f"{t[0]}-{t[1]}-{t[2]}" if t and t[2] else labels[i])
+                  for i, t in enumerate(parsed)]
 
     W, H, L, R, T, B = 1000, 260, 60, 20, 40, 44
     n = len(pts)
     slot = (W - L - R) / n
-    bar_w = min(slot * 0.56, 72)
+    bar_w = min(slot * 0.5, 44)   # v4.11.0：季度序列柱数上探 12+，柱宽封顶下调（72→44）
     hi = max(p["num"] for p in pts) * 1.18  # 不断轴（柱=真实数值契约），顶部留给数值标签
     Y = _lin_map(0, hi, H - B, T)
 
@@ -143,7 +166,7 @@ def build_holders_plot(fill: dict) -> str:
                      f'font-size="11" font-weight="{700 if i == n - 1 else 400}" '
                      f'fill="{_C_BLUE if i == n - 1 else _C_STONE}">{p["num"]:,.0f}</text>')
         parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{H - B + 16}" text-anchor="middle" '
-                     f'font-size="10.5" fill="{_C_LABEL}">{_esc(p["date"][2:7])}</text>')
+                     f'font-size="10.5" fill="{_C_LABEL}">{_esc(labels[i])}</text>')
         if p["chg"] is not None:
             chg_color = _C_RED if p["chg"] > 0 else _C_GREEN  # 户数增=分散=红；减=集中=绿
             parts.append(f'<text x="{x + bar_w / 2:.1f}" y="{H - B + 31}" text-anchor="middle" '

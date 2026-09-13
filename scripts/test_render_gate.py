@@ -471,18 +471,63 @@ def test_peers_bestworst_warn():
             '<span class="source">数据来源：测试</span>')
     assert "cell-best" in validate_stderr(minimal_fill(peers_html=bare)), "零标注应告警"
     assert "cell-best" not in validate_stderr(minimal_fill()), "fixture 自带标注不应告警"
-    print("OK peers 最优/最差标注缺失告警（零标注告警 / 自带放行）")
+    # v4.11.0 逐列检查（天齐 09-13 实证：7 列只标 4 列，零标注告警不触发）——数值列缺标注按列名告警
+    partial = ('<div class="table-scroll"><table class="freeze-first">'
+               '<tr><th>公司</th><th class="num">PE(TTM)</th><th class="num">ROE</th></tr>'
+               '<tr><td style="color:#4a6fa5;font-weight:700;">测试股份</td>'
+               '<td class="cell-best num">11</td><td class="num">14%</td></tr>'
+               '<tr><td>同业甲</td><td class="cell-worst num">25</td><td class="num">9%</td></tr>'
+               '</table></div><span class="source">数据来源：测试</span>')
+    err = validate_stderr(minimal_fill(peers_html=partial))
+    assert "缺最优/最差标注" in err and "ROE" in err, "ROE 列裸奔应按列名告警"
+    print("OK peers 最优/最差标注缺失告警（零标注告警 / 逐列裸奔告警 / 自带放行）")
+
+
+def test_governance_deduct_row_warn():
+    """v4.11.0：3.5 治理块评分段含扣分项时，trig 行必须有 miss「扣分」状态行
+    （天齐 09-13 实证：评分段写「折价配售摊薄 −0.3」，四个方块却无一扣分档，结论断层）。"""
+    import conftest as C
+    gov = C._L1_GOV_BLOCK
+    deducted = gov.replace("关联交易关注项不扣分但列入 13 章跟踪",
+                           "扣分项（H 股折价配售摊薄 −0.3）")
+    l1 = "".join(C._dim(C._LONG_TEXT) for _ in range(5)) + deducted
+    err = validate_stderr(minimal_fill(l1_html=l1))
+    assert "无「扣分」状态" in err, "评分段有扣分项、块内无扣分行 → 应告警"
+    fixed = deducted.replace('<span class="trig-status miss">关注</span>',
+                             '<span class="trig-status miss">扣分</span>')
+    err2 = validate_stderr(minimal_fill(l1_html="".join(C._dim(C._LONG_TEXT) for _ in range(5)) + fixed))
+    assert "无「扣分」状态" not in err2, "块内有扣分行后应放行"
+    assert "无「扣分」状态" not in validate_stderr(minimal_fill()), "fixture 无扣分项不应告警"
+    print("OK 治理块扣分项-扣分行一致性校验")
+
+
+def test_holders_dup_date_warn():
+    """v4.11.0：holders 重复截止日 → 告警（E4 上游偶发双行且变动值不一致，天齐 20260710 实证）。"""
+    dup = [{"date": "2026-07-10", "num": 345304, "chg": 0.0},
+           {"date": "2026-07-10", "num": 345304, "chg": -1.7},
+           {"date": "2026-07-20", "num": 358804, "chg": 3.9},
+           {"date": "2026-07-31", "num": 360077, "chg": 0.4}]
+    assert "重复截止日" in validate_stderr(minimal_fill(holders=dup)), "重复截止日应告警"
+    assert "重复截止日" not in validate_stderr(minimal_fill()), "fixture 无重复不应告警"
+    print("OK holders 重复截止日告警")
 
 
 def test_price_history_pe_warn():
-    """v4.10：price_history 的 pe 过半缺失 → PE 折线不生成，告警提示照抄 E2 月末 PE
-    （工行 09-11 报告 12 点全缺、图只剩股价线实证）。"""
+    """v4.10：price_history 的 pe 缺失告警（v4.11.0 起口径=有效 <12 点，图门槛同步）——
+    提示照抄 E2 全序列月末 PE（工行 09-11 报告 12 点全缺、图只剩股价线实证）。"""
     ph = {"label": "近12个月", "series": [{"m": f"2025-{m:02d}", "close": 7.5} for m in range(1, 13)]}
     assert "月末 PE" in validate_stderr(minimal_fill(price_history=ph)), "pe 全缺应告警"
     ph2 = {"label": "近12个月",
            "series": [{"m": f"2025-{m:02d}", "close": 7.5, "pe": 7.6} for m in range(1, 13)]}
     assert "月末 PE" not in validate_stderr(minimal_fill(price_history=ph2)), "pe 齐全不应告警"
-    print("OK price_history pe 缺失告警（全缺告警 / 齐全放行）")
+    # v4.11.0：门槛放宽为 ≥12 点（亏损期断线属诚实形态）——68 点 29 有效不再告警
+    ph3 = {"label": "近5年", "series": [
+        {"m": f"{2021 + i // 12}-{i % 12 + 1:02d}", "close": 40.0,
+         "pe": (15.0 if 16 <= i < 40 or i >= 62 else None)} for i in range(68)]}
+    assert sum(1 for p in ph3["series"] if p["pe"]) == 30
+    assert "月末 PE" not in validate_stderr(minimal_fill(price_history=ph3)), \
+        "30/68 点有效（≥12）不应再告警"
+    print("OK price_history pe 缺失告警（全缺告警 / 齐全放行 / 亏损期断线放行）")
 
 
 def test_l4_form_gates():

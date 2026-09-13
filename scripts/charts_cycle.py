@@ -108,11 +108,17 @@ def build_pe_band(fill: dict) -> str:
 
 
 def build_price_history(fill: dict) -> str:
-    """10 周期规律·股价/PE 历史发丝图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
-    左轴=月收盘价（深灰发丝 + 浅沙色面积填充），右轴=PE(TTM)（钢蓝发丝，过半点缺 PE 则只画股价），
-    横轴按年 tick（带竖向浅网格线），末端最新值标注带药丸底色。概览→明细：垫在历史带之后、手写时段拆解之前。
-    price_history: {"label":"近5年", "series":[{"m":"2021-09","close":12.3,"pe":15.2}, ...]}
-    （旧→新，月频；有效点 <12 → 返回空串，数据太短画不出形态，静默跳过）"""
+    """10 周期规律·股价/PE 历史图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
+    v4.11.0 起主形态=季K蜡烛（series 带 open/high/low/close 时——照抄 E2「全序列」行；按日历季度聚合：
+    季首月开/季内高低/季末月收，红涨绿跌仅股价方向），无 OHLC 的旧 fill 回退月收发丝线（原形态）。
+    右轴=PE(TTM)（钢蓝发丝月频；有效 pe <12 点则只画股价；亏损期 PE 无定义自然断线分段，
+    连续缺值 ≥3 个月的段加浅灰底纹并命名「亏损期 · PE(TTM) 无定义」——缺口是诚实区间不是断数，
+    天齐实证 2020 亏损尾巴+2024-2025 亏损期两段）；**PE 右轴自适应截断**（max > p75×3 时域顶=p75×3、
+    超限段平贴域顶、右缘标注「峰值 Nx →」，套 v4.8.1 pe_history 规则——扭亏初期净利极薄会冲出
+    200x+ 把正常段压成平线，天齐 2026-03 204.6x 实证）。横轴按年 tick（带竖向浅网格线），
+    末端最新值标注带药丸底色。概览→明细：垫在历史带之后、手写时段拆解之前。
+    price_history: {"label":"近5年", "series":[{"m":"2021-09","open":..,"high":..,"low":..,"close":12.3,"pe":15.2}, ...]}
+    （旧→新，月频；open/high/low 可省（回退发丝线）；有效点 <12 → 返回空串，静默跳过）"""
     ph = fill.get("price_history") or {}
     pts = []
     for p in ph.get("series") or []:
@@ -120,41 +126,135 @@ def build_price_history(fill: dict) -> str:
         c = _num(p.get("close"))
         if not m or c is None:
             continue
-        pts.append({"m": m, "close": c, "pe": _num(p.get("pe"))})
+        pts.append({"m": m, "close": c, "pe": _num(p.get("pe")),
+                    "o": _num(p.get("open")), "h": _num(p.get("high")), "l": _num(p.get("low"))})
     if len(pts) < 12:
         return ""
+    pts.sort(key=lambda p: p["m"])   # v4.11.0 审计：逆序 fill 会画成时间轴镜像（m=YYYY-MM 可字典序排）
     n = len(pts)
-    has_pe = sum(1 for p in pts if p["pe"] is not None) >= max(12, n // 2)
+    # v4.11.0：门槛自「过半」放宽为 ≥12 点——亏损期 PE(TTM) 无定义天然缺值，分段断线
+    # 才是诚实形态（天齐实证：照抄全序列后 29/68 点有效，过半规则会误杀 2022-2024 段）
+    has_pe = sum(1 for p in pts if p["pe"] is not None) >= 12
+    has_ohlc = sum(1 for p in pts if None not in (p["o"], p["h"], p["l"])) >= max(12, n // 2)
+    if has_ohlc:
+        # 审计 P0-1：缺 OHLC 的月退化为收盘价一字线（o=h=l=close），聚合不再遇 None（不炸链路）
+        for p in pts:
+            if None in (p["o"], p["h"], p["l"]):
+                p["o"] = p["h"] = p["l"] = p["close"]
 
     W, H, L, R, T, B = 1000, 240, 56, 64, 34, 36
-    X = lambda i: L + i / (n - 1) * (W - L - R)
     closes = [p["close"] for p in pts]
-    lo_c, hi_c = _pad_domain(min(closes), max(closes), 0.08, floor=0.0)
+
+    # 季度聚合（日历季度；开=季首月开、高/低=季内极值、收=季末月收）
+    def _mi(m):   # "YYYY-MM" → (年, 月)；非法返回 None（该点自成一组，不崩链）
+        return (int(m[:4]), int(m[5:7])) if len(m) >= 7 and m[:4].isdigit() and m[5:7].isdigit() else None
+    quarters = []
+    if has_ohlc:
+        i = 0
+        while i < n:
+            q0 = _mi(pts[i]["m"])
+            j = i
+            while j + 1 < n and q0 is not None:
+                q1 = _mi(pts[j + 1]["m"])
+                if q1 is None or q1[0] != q0[0] or (q1[1] - 1) // 3 != (q0[1] - 1) // 3:
+                    break
+                j += 1
+            g = pts[i:j + 1]
+            quarters.append({"i0": i, "i1": j, "o": g[0]["o"], "h": max(x["h"] for x in g),
+                             "l": min(x["l"] for x in g), "c": g[-1]["close"]})
+            i = j + 1
+
+    # X 映射：发丝模式端点对齐（原契约）；季K 模式月槽中心（蜡烛占槽）
+    if has_ohlc:
+        slot = (W - L - R) / n
+        X = lambda i: L + (i + 0.5) * slot
+        step = slot
+    else:
+        X = lambda i: L + i / (n - 1) * (W - L - R)
+        step = (W - L - R) / (n - 1)
+
+    if has_ohlc:
+        lo_c, hi_c = _pad_domain(min(q["l"] for q in quarters), max(q["h"] for q in quarters),
+                                 0.08, floor=0.0)
+    else:
+        lo_c, hi_c = _pad_domain(min(closes), max(closes), 0.08, floor=0.0)
     Yc = _lin_map(lo_c, hi_c, H - B, T)
+    pe_cap = None
     if has_pe:
-        pes = [p["pe"] for p in pts if p["pe"] is not None]
-        lo_p, hi_p = _pad_domain(min(pes), max(pes), 0.08, floor=0.0)
-        Yp = _lin_map(lo_p, hi_p, H - B, T)
+        pes = sorted(p["pe"] for p in pts if p["pe"] is not None)
+        hi_raw = pes[-1]
+        p75 = pes[int((len(pes) - 1) * 0.75)]
+        if p75 > 0 and hi_raw > p75 * 3:
+            pe_cap = p75 * 3   # 扭亏初期 PE 冲出 200x+ 压扁正常段 → 截断（右缘标注峰值）
+        if pe_cap:
+            lo_p = max(0.0, pes[0] - (pe_cap - pes[0]) * 0.08)
+            hi_p = pe_cap      # 截断模式域顶即 cap，不再二次垫高（与文档「域顶=p75×3」承诺一致）
+        else:
+            lo_p, hi_p = _pad_domain(pes[0], hi_raw, 0.08, floor=0.0)
+        _Yp = _lin_map(lo_p, hi_p, H - B, T)
+        Yp = lambda v: max(_Yp(min(v, hi_p)), T)   # 超限段平贴域顶
 
     label = str(ph.get("label") or "").strip()
     cur = str(fill.get("currency") or "元")
     # PE 序列同源 E2 月线（价格×股本÷TTM净利），恒为 PE(TTM) 口径，不随 metric_label 换标签
-    parts = [f'<span class="section-tag">股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}</span>',
-             _svg_open(W, H, "股价与PE历史走势")]
-    # 图例（左上）
-    parts.append(f'<line x1="{L}" y1="{T - 12}" x2="{L + 26}" y2="{T - 12}" stroke="{_C_INK}" stroke-width="1.6"/>')
-    parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价（左轴，{_esc(cur)}）</text>')
+    tag = f'股价季K 与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}' if has_ohlc \
+        else f'股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}'
+    parts = [f'<span class="section-tag">{tag}</span>',
+             _svg_open(W, H, "股价季K与PE历史走势" if has_ohlc else "股价与PE历史走势")]
+    # 亏损期底纹（连续缺 pe ≥3 个月；先画在最底层）。审计 P0-2：尾部段（延伸到序列末，
+    # 即当前仍亏损——困境反转标的恰恰如此）旧哨兵逻辑永不收尾 → 显式收 run_start 到 n-1
+    runs, run_start = [], None
     if has_pe:
-        lx2 = L + 32 + _text_w(f"股价（左轴，{cur}）", 11) + 24
+        for i, p in enumerate(pts):
+            if p["pe"] is None and run_start is None:
+                run_start = i
+            elif p["pe"] is not None and run_start is not None:
+                if i - run_start >= 3:
+                    runs.append((run_start, i - 1))
+                run_start = None
+        if run_start is not None and n - run_start >= 3:
+            runs.append((run_start, n - 1))
+    _shade_label = "亏损期 · PE(TTM) 无定义"
+    for a, b in runs:
+        x1 = max(X(a) - step / 2, L)          # 夹到绘图区（回退模式首段左溢实证）
+        x2 = min(X(b) + step / 2, W - R)
+        parts.append(f'<rect x="{x1:.1f}" y="{T}" width="{x2 - x1:.1f}" height="{H - B - T}" '
+                     f'fill="{_C_STONE}" fill-opacity="0.07"/>')
+        if x2 - x1 >= _text_w(_shade_label, 11) + 16:
+            parts.append(f'<text x="{(x1 + x2) / 2:.1f}" y="{T + 16}" text-anchor="middle" font-size="11" '
+                         f'fill="{_C_STONE}" stroke="{_C_PAPER_CELL}" stroke-width="3" '
+                         f'paint-order="stroke">{_shade_label}</text>')
+    # 图例（左上）
+    if has_ohlc:
+        parts.append(f'<rect x="{L}" y="{T - 17}" width="12" height="9" rx="2" fill="{_C_RED}"/>')
+        parts.append(f'<rect x="{L + 14}" y="{T - 17}" width="12" height="9" rx="2" fill="{_C_GREEN}"/>')
+        parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价季K（左轴，{_esc(cur)}；红涨绿跌）</text>')
+    else:
+        parts.append(f'<line x1="{L}" y1="{T - 12}" x2="{L + 26}" y2="{T - 12}" stroke="{_C_INK}" stroke-width="1.6"/>')
+        parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价（左轴，{_esc(cur)}）</text>')
+    _leg1 = f"股价季K（左轴，{cur}；红涨绿跌）" if has_ohlc else f"股价（左轴，{cur}）"
+    if has_pe:
+        lx2 = L + 32 + _text_w(_leg1, 11) + 24
         parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" stroke="{_C_BLUE}" stroke-width="1.6"/>')
-        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴）</text>')
+        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴，月频）</text>')
     # 左轴（股价）网格与刻度
     _hgrid_ticks(parts, Yc, _ticks(lo_c, hi_c, 5), L, W - R, L - 8)
-    # 右轴（PE）刻度
+    # 右轴（PE）刻度 + 截断标注
     if has_pe:
         for v in _ticks(lo_p, hi_p, 5):
             gy = Yp(v)
             parts.append(f'<text x="{W - R + 8}" y="{gy + 4:.1f}" font-size="11" fill="{_C_BLUE}">{_fmt(v)}</text>')
+        if pe_cap:
+            # 虚线封口（自首个超限点起）+ 峰值标签贴截断段起点（避开右缘最新值药丸区，P1-1 实证：
+            # 天齐峰值恰在末点，右缘标注被药丸遮掉）
+            f0 = next(i for i, p in enumerate(pts) if p["pe"] is not None and p["pe"] >= hi_p)
+            parts.append(f'<line x1="{X(f0) - step / 2:.1f}" y1="{Yp(hi_p):.1f}" x2="{W - R}" y2="{Yp(hi_p):.1f}" '
+                         f'stroke="{_C_SAND}" stroke-width="1.2" stroke-dasharray="4 3"/>')
+            _cap_txt = f"峰值 {_fmt(hi_raw)}x →"
+            _canc, _cx = _anchor_clamp(X(f0) - 6, _text_w(_cap_txt, 10.5), L + 4, W - R - 4)
+            parts.append(f'<text x="{_cx:.1f}" y="{T + 14}" text-anchor="{_canc}" font-size="10.5" '
+                         f'font-weight="700" fill="{_C_BLUE}" stroke="{_C_PAPER_CELL}" stroke-width="3" '
+                         f'paint-order="stroke">{_cap_txt}</text>')
     # 横轴：按年 tick（每年首个点；v4.8.2 加竖向浅网格线）
     seen_years = set()
     for i, p in enumerate(pts):
@@ -165,10 +265,22 @@ def build_price_history(fill: dict) -> str:
             parts.append(f'<text x="{X(i):.1f}" y="{H - 10}" text-anchor="middle" font-size="11" '
                          f'fill="{_C_LABEL}">{y}</text>')
     parts.append(f'<line x1="{L}" y1="{H - B}" x2="{W - R}" y2="{H - B}" stroke="{_C_AXIS}" stroke-width="1.2"/>')
-    # 股价发丝线（v4.8.2：线下浅沙色面积填充，发丝 1.3→1.8）
-    path = "M" + " L".join(f"{X(i):.1f},{Yc(p['close']):.1f}" for i, p in enumerate(pts))
-    parts.append(f'<path d="{path} L{X(n - 1):.1f},{H - B} L{L},{H - B} Z" fill="{_C_TRACK}" stroke="none"/>')
-    parts.append(f'<path d="{path}" fill="none" stroke="{_C_INK}" stroke-width="1.8"/>')
+    if has_ohlc:
+        # 季K蜡烛：红涨绿跌（仅股价方向用色，v4.9 方向色约定）
+        for q in quarters:
+            cx = X((q["i0"] + q["i1"]) / 2)
+            bw = min(step * (q["i1"] - q["i0"] + 1) * 0.55, max(26, step * 2))
+            col = _C_RED if q["c"] > q["o"] else (_C_GREEN if q["c"] < q["o"] else _C_LABEL)
+            parts.append(f'<line x1="{cx:.1f}" y1="{Yc(q["h"]):.1f}" x2="{cx:.1f}" y2="{Yc(q["l"]):.1f}" '
+                         f'stroke="{col}" stroke-width="1.2"/>')
+            y1, y2 = Yc(max(q["o"], q["c"])), Yc(min(q["o"], q["c"]))
+            parts.append(f'<rect x="{cx - bw / 2:.1f}" y="{y1:.1f}" width="{bw:.1f}" '
+                         f'height="{max(y2 - y1, 1):.1f}" fill="{col}"/>')
+    else:
+        # 股价发丝线（v4.8.2：线下浅沙色面积填充，发丝 1.3→1.8）
+        path = "M" + " L".join(f"{X(i):.1f},{Yc(p['close']):.1f}" for i, p in enumerate(pts))
+        parts.append(f'<path d="{path} L{X(n - 1):.1f},{H - B} L{L},{H - B} Z" fill="{_C_TRACK}" stroke="none"/>')
+        parts.append(f'<path d="{path}" fill="none" stroke="{_C_INK}" stroke-width="1.8"/>')
     # PE 发丝线（允许中间缺值：缺值处分段）
     if has_pe:
         run = []
@@ -193,7 +305,18 @@ def build_price_history(fill: dict) -> str:
         if last_pe is not None:
             _pill(X(n - 1) - 6, Yp(last_pe) + 16, f'{_fmt(last_pe)}x', _C_BLUE)
     parts.append(_svg_close())
-    parts.append('<span class="source">股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
-                 '深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）；双轴各自定标，读交叉不读绝对高度；'
-                 '判读：价涨 PE 平=业绩驱动，价平 PE 跳=估值重定价（财报日 TTM 净利跳变所致）</span>')
+    if has_ohlc:
+        src = ('股价季K/PE 历史走势（脚本按 price_history 字段生成，同源 E2 月线全序列）：'
+               '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向），钢蓝=PE(TTM)（右轴，月频）；'
+               '灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义——诚实区间非断数）；双轴各自定标，读交叉不读绝对高度')
+        if pe_cap:
+            src += f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注（正常段可读性优先）'
+    else:
+        src = ('股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
+               '深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）'
+               + ('；灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义）' if runs else '')
+               + (f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注' if has_pe and pe_cap else '')
+               + '；双轴各自定标，读交叉不读绝对高度；'
+               '判读：价涨 PE 平=业绩驱动，价平 PE 跳=估值重定价（财报日 TTM 净利跳变所致）')
+    parts.append(f'<span class="source">{src}</span>')
     return "".join(parts)

@@ -474,6 +474,82 @@ def test_12_fields_third_param():
     print("11. fetch_pe_pb_band fields 归一化 通过")
 
 
+
+
+def test_13_holders_quarterly():
+    """13. E4 季度序列（v4.11.0）：只取季末近 12 期 + 最新点；同截止日去重保留后写行；
+    非季末披露点不进序列；环比在干净序列上重算（天齐 2026-07 月内四期 / 上游同日双行实证）。"""
+    import em_owner
+
+    def _mk(d, n):
+        return {"end_date": d, "holder_num": n}
+
+    qs = ["20230331", "20230630", "20230930", "20231231", "20240331", "20240630",
+          "20240930", "20241231", "20250331", "20250630", "20250930", "20251231", "20260331"]
+    rows = [_mk("20230101", 50)]                       # 非季末且最旧：应被排除
+    rows += [_mk(d, 100 + i * 10) for i, d in enumerate(qs)]
+    rows += [_mk("20250630", 618)]                     # 同截止日双行：保留后写行
+    rows += [_mk("20260831", 700)]                     # 最新非季末点：追加
+    _orig = em_core.ts_call
+    try:
+        em_core.ts_call = lambda name, params, **k: rows
+        q = em_owner.fetch_holders_quarterly("002466")
+    finally:
+        em_core.ts_call = _orig
+    dates = [r["END_DATE"] for r in q]
+    assert dates[0] == "20230630", f"近 12 期截断应从 20230630 起，实际 {dates[0]}"
+    assert "20230331" not in dates and "20230101" not in dates
+    assert dates.count("20250630") == 1, "同截止日应去重为一行"
+    assert q[-1]["END_DATE"] == "20260831", "最新非季末点应追加为末点"
+    by = {r["END_DATE"]: r for r in q}
+    assert by["20250630"]["HOLDER_NUM"] == 618, "去重应保留后写行"
+    # 环比在干净序列上重算：20250630 前值=上季末 20250331(180) → 618/180-1 ≈ +243.3%
+    assert by["20250630"]["HOLDER_NUM_RATIO"] == round((618 / 180 - 1) * 100, 1)
+    assert q[0]["HOLDER_NUM_RATIO"] is None, "首点无前值，环比应为 None"
+    print("13. holders 季度序列 通过")
+
+
+
+
+def test_14_monthly_ohlc():
+    """14. E2 月线 OHLC（v4.11.0）：A股 OHLC 随 close 同因子前复权；缺键行仅 close（不炸链路）；
+    港股日线聚合月线 OHLC（首行缺键由首个带 OHLC 行补齐）。"""
+    import em_market
+    # A股：monthly 带 OHLC + adj_factor 2.0→4.0（前复权 ×0.5 统一到最新因子）
+    monthly_rows = [
+        {"trade_date": "20250131", "open": 20.0, "high": 22.0, "low": 19.0, "close": 21.0},
+        {"trade_date": "20250228", "high": 24.0, "low": 20.5, "close": 23.0},  # 缺 open → 仅 close
+    ]
+    fac = [{"trade_date": "20250131", "adj_factor": "2.0"},
+           {"trade_date": "20250228", "adj_factor": "4.0"}]
+    _orig = em_core.ts_call
+    try:
+        def _ts(name, params, **k):
+            return {"monthly": monthly_rows, "adj_factor": fac}.get(name, [])
+        em_core.ts_call = _ts
+        kl = em_market.fetch_kline_monthly("1.600989", 1, False)
+    finally:
+        em_core.ts_call = _orig
+    assert kl[0]["open"] == 10.0 and kl[0]["high"] == 11.0 and kl[0]["low"] == 9.5,         f"OHLC 应同因子前复权，实际 {kl[0]}"
+    assert kl[0]["close"] == 10.5
+    assert "open" not in kl[1] and kl[1]["close"] == 23.0, "缺 open 的行应仅 close（因子 4/4=1 不降权）"
+    # 港股：日线聚合 OHLC + 首行缺键补齐
+    import em_market as emm
+    hk_rows = [
+        {"trade_date": "20260202", "close": 10.0},                                   # 缺 OHLC
+        {"trade_date": "20260205", "open": 10.2, "high": 12.0, "low": 9.8, "close": 11.0},
+        {"trade_date": "20260227", "open": 11.0, "high": 13.0, "low": 10.8, "close": 12.5},
+    ]
+    _orig2 = emm._hk_daily_series
+    try:
+        emm._hk_daily_series = lambda ts: hk_rows
+        hk = emm.fetch_kline_monthly("116.01357", 1, True)
+    finally:
+        emm._hk_daily_series = _orig2
+    assert hk[-1]["open"] == 10.2 and hk[-1]["high"] == 13.0 and hk[-1]["low"] == 9.8         and hk[-1]["close"] == 12.5, f"港股聚合/补齐不符：{hk[-1]}"
+    print("14. 月线 OHLC（前复权/缺键回退/港股聚合补齐）通过")
+
+
 if __name__ == "__main__":
     import traceback
     test_01_market_map()
@@ -488,4 +564,6 @@ if __name__ == "__main__":
     test_10_hk_daily_reversed()
     test_11_monthly_pe_backfill()
     test_12_fields_third_param()
+    test_13_holders_quarterly()
+    test_14_monthly_ohlc()
     print("全部断言通过")

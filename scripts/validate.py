@@ -509,6 +509,16 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
     holders = fill.get("holders") or []
     if holders and len(holders) < 3:
         warns.append("holders 有效点 <3：户数趋势图不生成（E4 默认返回近 8 期，请回填 ≥3 期）")
+    # v4.11.0：同一截止日多行告警（E4 上游偶发重复，天齐 20260710 双行且变动值不一致实证；
+    # 图内已去重保留后写行，此处提示模型核对哪一行为准）。审计修订：去重键按数字序列归一
+    #（"20260710" 与 "2026-07-10" 同日）；去重后 <3 期时图不生成，与图门槛同口径告警
+    hdates = ["".join(ch for ch in str((p or {}).get("date") or "") if ch.isdigit()) for p in holders]
+    dup = sorted({d for d in hdates if d and hdates.count(d) > 1})
+    if dup:
+        warns.append(f"holders 存在重复截止日：{'、'.join(dup)}——图内已去重（保留后写行），"
+                     f"请核对 E4 原始输出哪一行的变动值为准")
+    if len(holders) >= 3 and len({d for d in hdates if d}) < 3:
+        warns.append("holders 去重后有效期数 <3：户数趋势图不生成（与图内去重门槛同口径）")
     # v4.9：触发条件状态条字段纪律
     trg = fill.get("triggers") or []
     if trg:
@@ -581,13 +591,26 @@ def _check_governance_strip(fill: dict, warns: list) -> None:
     <p> 恰为 2 规则同步覆盖（4.3 评分段可省，校验只看 >2）。"""
     for field, tags in (("l1_html", ("3.3", "3.5")), ("l3_html", ("4.3",))):
         for blk in re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]:
-            tag = next((t for t in tags if t in blk), None)
+            # 审计 P1-3：tag 从 dim-name 提取（旧「子串命中」会被块内正文提及的 3.3 截胡，
+            # 导致 3.5 块被当成 3.3、扣分校验整段跳过）
+            _m = re.search(r'dim-name[^>]*>\s*(\d\.\d)', blk)
+            tag = _m.group(1) if _m and _m.group(1) in tags else None
             if tag is None or "trig-strip" not in blk:
                 continue
             np = len(re.findall(r"<p[ >]", blk))
             if np > 2:
                 warns.append(f"{tag} 维度块含 {np} 个 <p>（应恰为 2：判词段+评分末拍段）："
                              f"trig 行后不要另起 <p> 正文，论据压进 .trig-mt 一句内联（fill-schema 条款）")
+            # v4.11.0（天齐 09-13 实证）：评分末拍写了扣分项但 trig 行无一「扣分」状态——
+            # 方块只剩正面/中性，扣分结论断层。审计修订：扣分项识别容忍写法漂移
+            #（嵌套括号/全角减号 − – －/无「扣分项（」前缀的裸负分），扣分行识别容忍 class 顺序
+            # 与「已扣分/减分」文案；「不扣分」句整体豁免
+            if (tag == "3.5"
+                    and re.search(r"扣分[\s\S]{0,24}?[−\-–－]\s*\.?\d", blk)
+                    and not re.search(r"不扣分", blk)
+                    and not re.search(r'<span class="[^"]*\bmiss\b[^"]*"[^>]*>\s*(已)?[扣减]分', blk)):
+                warns.append("3.5 治理块评分段含扣分项，但 trig 行无「扣分」状态："
+                             "扣分结论也要写进方块——miss 红行状态文案写「扣分」（「关注」=不扣分仅跟踪，两者不得混用）")
 
 
 def _check_peers_orientation(fill: dict, warns: list) -> None:
@@ -601,13 +624,46 @@ def _check_peers_orientation(fill: dict, warns: list) -> None:
 
 def _check_peers_bestworst(fill: dict, warns: list) -> None:
     """v4.10：同业当前指标表每列最优/最差标注（cell-best/cell-worst）缺失告警——
-    工行 09-11 报告两表零标注实证（软规则无门禁就不会被遵守）。matrix-table 兜底形态不适用。"""
+    工行 09-11 报告两表零标注实证（软规则无门禁就不会被遵守）。matrix-table 兜底形态不适用。
+    v4.11.0 升级为逐列检查（天齐 09-13 实证：全表 7 列只标了 4 列，市值/PE最佳/26H1 同比
+    整列裸奔但零标注告警不触发）——当前指标表每个数值列至少一个 best/worst 标注，
+    缺列按列名告警（方向性确实无意义的列如市值，在 peers_meta 说明后可忽略本告警）。"""
     peers = fill.get("peers_html") or ""
-    if ("<table" in peers and "matrix-table" not in peers
-            and "cell-best" not in peers and "cell-worst" not in peers):
+    if "<table" not in peers:
+        return
+    if "cell-best" not in peers and "cell-worst" not in peers:
         warns.append("peers_html 当前指标表无 cell-best/cell-worst 最优/最差标注："
                      "每列按指标方向性各标一格（低为优：PE/PB/负债率；高为优：ROE/增速等），"
                      "规则见 fill-schema「表格」节")
+        return
+    # 审计 P1-6：matrix-table 兜底只跳过它自己那张表（旧逻辑「peers 含 matrix-table 即整段跳过」
+    # 会让当前指标表的逐列检查失效——多表并存实证）
+    tbl = next((t for t in re.finditer(r"(<table\b[^>]*>.*?</table>)", peers, flags=re.I | re.S)
+                if "matrix-table" not in t.group(0)), None)
+    if not tbl:
+        return
+    rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", tbl.group(1), flags=re.I | re.S)
+    if len(rows) < 2:
+        return
+    cells_of = [re.findall(r"<t[hd]\b([^>]*)>(.*?)</t[hd]>", r, flags=re.I | re.S) for r in rows]
+    headers = [re.sub(r"<[^>]+>", "", c).strip() for _, c in cells_of[0]]
+    marked, numeric = set(), set()
+    for cells in cells_of[1:]:
+        for ci, (attrs, content) in enumerate(cells):
+            if "cell-best" in attrs or "cell-worst" in attrs:
+                marked.add(ci)
+            if re.search(r"\d", re.sub(r"<[^>]+>", "", content)):
+                numeric.add(ci)
+    missing = [headers[ci] if ci < len(headers) else f"第{ci + 1}列"
+               for ci in sorted(numeric - marked) if ci > 0]
+    # 审计 P1-9：方向性无意义列（如市值）在 peers_meta 注明后抑制对应列告警
+    #（fill-schema 承诺「注明即可」的实现侧——此前文档写了、实现没做，每份规范报告会稳定误报市值列）
+    meta = fill.get("peers_meta") or ""
+    missing = [c for c in missing if c and c not in meta]
+    if missing:
+        warns.append(f"peers_html 当前指标表数值列缺最优/最差标注：{'、'.join(missing)}"
+                     f"——每列按方向性至少标一格（低为优：PE/PB/负债率；高为优：ROE/增速等）；"
+                     f"方向性无意义的列（如市值）在 peers_meta 注明后可忽略")
 
 
 def _check_peers_column_support(fill: dict, warns: list) -> None:
@@ -653,15 +709,21 @@ def _peers_col_key(s: str) -> str:
 
 def _check_price_history_pe(fill: dict, warns: list) -> None:
     """v4.10：price_history 的 pe 过半缺失 → 图只画股价线而标题仍挂 PE(TTM)（图文不符）。
-    A 股 E2 月线自带月末 PE(TTM) 序列应照抄——工行 09-11 报告 12 个点 pe 全缺实证。"""
+    A 股 E2 月线自带月末 PE(TTM) 序列应照抄——工行 09-11 报告 12 个点 pe 全缺实证。
+    v4.11.0：告警口径随图门槛改为「有效 pe <12 点」（图的 PE 线门槛同步放宽——亏损期
+    PE 无定义是诚实断线，照抄 E2 全序列后过半缺失不再误杀；天齐 09-13 实证 29/68 点有效）。"""
     ph = fill.get("price_history") or {}
     series = ph.get("series") or []
     if not series:
         return
-    n_pe = sum(1 for p in series if isinstance(p, dict) and p.get("pe") is not None)
-    if n_pe * 2 < len(series):
-        warns.append(f"price_history 的 pe 字段仅 {n_pe}/{len(series)} 点有效（过半缺失）："
-                     "PE(TTM) 折线将不生成——A股 E2 月线输出自带月末 PE(TTM) 序列，照抄即可（禁手估）；"
+    # 审计 P1-2：有效口径与图同——点数按 m/close 可解析、pe 经 _num 解析
+    #（"—"/"" 等占位字符串旧口径会被计为有效 → 图文不符从缝隙漏过）
+    valid = [p for p in series if isinstance(p, dict) and p.get("m") and _num(p.get("close")) is not None]
+    n_pe = sum(1 for p in valid if _num(p.get("pe")) is not None)
+    if len(valid) >= 12 and n_pe < 12:
+        warns.append(f"price_history 的 pe 字段仅 {n_pe}/{len(valid)} 点有效（<12 点）："
+                     "PE(TTM) 折线将不生成——A股 E2 月线「全序列」行自带月末 PE(TTM)，逐点照抄即可"
+                     "（禁手估；亏损期缺 PE 属正常断线，无需补齐）；"
                      "港股或数据确实不可得时请在图注/正文注明口径")
 
 

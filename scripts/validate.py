@@ -23,6 +23,15 @@ _HTML_FIELDS = ("thesis_html", "conclusion_html", "p0_html", "l1_html", "l3_html
 # 可含数据表的章节字段（source 来源标注检查用；thesis 不含表，剔除）
 _HTML_TABLE_FIELDS = _HTML_FIELDS[1:]
 
+# v4.11.1（审核 D8）：dim-block 切块正则容忍附加类（class="dim-block extra"），
+# 三处消费方（内容地板/维度块校验/治理条）收敛同一 helper，口径唯一
+_DIM_BLOCK_RE = r'<div class="dim-block(?:\s[^"]*)?">'
+
+
+def _split_dim_blocks(frag: str) -> list:
+    """切出全部 dim-block 片段（不含首段前导部分）。附加类形态（dim-block xxx）一并识别。"""
+    return re.split(_DIM_BLOCK_RE, frag or "")[1:]
+
 
 def _check_price_date(fill: dict) -> None:
     """price/date 校验：缺失/非法即拒渲染。"""
@@ -132,8 +141,13 @@ def _check_valuation_inputs(fill: dict) -> None:
         raise ValueError(f"valuation_inputs 缺键: {miss_vi}（四键必填：pe_ttm / pe_band / div_yield / risk_free）")
 
 
-def _check_valuation_scenarios(fill: dict) -> None:
-    """valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）。"""
+def _check_valuation_scenarios(fill: dict, warns: list = None) -> None:
+    """valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）。
+    v4.11.1（审核 D2）：增跨情景顺序硬校验（pess.mid ≤ base.mid ≤ opt.mid，倒挂拒渲染）——
+    旧版只校验单情景内部区间，跨档倒挂只告警不拒，负离散度还会被决策链误判为
+    「低不确定性」上浮一档；docstring 承诺的「校验层拒渲染」此前未覆盖跨情景路径。
+    v4.11.1（审核 D1）：profit+pe 口径负 profit 告警不拒（困境反转/未盈利应走正常化利润
+    或 mcap 口径，提示模型确认口径）。"""
     v = fill.get("valuation")
     if not isinstance(v, dict) or not v.get("scenarios"):
         raise ValueError("valuation 为必填字段：结构化三情景假设（shares / horizon / scenarios），"
@@ -143,6 +157,7 @@ def _check_valuation_scenarios(fill: dict) -> None:
         raise ValueError("valuation.shares 缺失、非法或 ≤0（总股本，亿股，必须为正数）")
     skeys = set()
     modes = set()
+    mids = {}
     for s in v.get("scenarios") or []:
         skeys.add(str(s.get("key") or "").lower())
         slab = s.get("label") or s.get("key") or "?"
@@ -157,6 +172,7 @@ def _check_valuation_scenarios(fill: dict) -> None:
             if mc_lo <= 0 or mc_hi < mc_lo:
                 raise ValueError(f"valuation.scenarios[{slab}] mcap 区间非法（mcap: [低, 高]，亿元，需 0<低≤高）")
             modes.add("mcap")
+            mids[str(s.get("key") or "").lower()] = (mc_lo + mc_hi) / 2 / shares_n
         else:
             if not has_profit:
                 raise ValueError(f"valuation.scenarios[{slab}] 缺净利假设（profit，归母净利亿元）"
@@ -166,13 +182,74 @@ def _check_valuation_scenarios(fill: dict) -> None:
             # 与 mcap 侧对称的区间校验：倒挂（高<低）或非正值一律拒渲染
             if pe_lo <= 0 or pe_hi < pe_lo:
                 raise ValueError(f"valuation.scenarios[{slab}] PE 区间非法（pe: [低, 高]，需 0<低≤高）")
+            if profit < 0 and warns is not None:
+                warns.append(f"valuation.scenarios[{slab}] profit={profit:g} 为负：困境反转/未盈利标的"
+                             f"请确认口径——profit+pe 口径应用正常化利润，原始亏损口径请改 mcap 市值区间")
             modes.add("pe")
+            mids[str(s.get("key") or "").lower()] = profit * (pe_lo + pe_hi) / 2 / shares_n
         if not str(s.get("horizon") or v.get("horizon") or "").strip():
             raise ValueError(f"valuation.scenarios[{slab}] 缺时间维度（horizon，可放情景级或 valuation 级）")
     if len(modes) > 1:
         raise ValueError("valuation.scenarios 口径混用：profit+pe 与 mcap 三情景必须统一口径")
     if not {"pess", "base", "opt"} <= skeys:
         raise ValueError(f"valuation.scenarios 必须含 pess/base/opt 三情景，当前只有: {sorted(skeys)}")
+    # 跨情景顺序：悲观中枢 ≤ 基础中枢 ≤ 乐观中枢（相等允许——三情景同值是合法的极端保守写法）
+    if {"pess", "base", "opt"} <= set(mids):
+        if mids["pess"] > mids["base"] or mids["base"] > mids["opt"]:
+            raise ValueError(f"valuation 三情景中枢跨档倒挂：悲观 {mids['pess']:.2f} / 基础 {mids['base']:.2f} / "
+                             f"乐观 {mids['opt']:.2f}（目标价口径，需 悲观≤基础≤乐观）——请检查各情景 "
+                             f"profit/pe/mcap 假设是否填反（倒挂会产生负离散度假信号，污染仓位决策链）")
+
+
+def _check_gap_plot(fill: dict, calc: dict, warns: list) -> None:
+    """gap_plot 分布图字段校验（v4.11.1 落地时补设计；字段可选，缺失不查）。
+    硬拒：dim 缺 name/ours/consensus 或不可解析（非法字段值不放行）。
+    告警：consensus ≤0 行被图剔除、有效维度 <2（图不生成）、dims >6、street 同机构多点、
+    「目标价」维度 ours 与脚本中枢价失配（镜像 thesis 一致性 2%/0.1 口径）。
+    org 名真实性无法机械校验——由 fill-schema「照抄 E5 明细行、禁编造」条款 + 附注来源兜底。"""
+    gp = fill.get("gap_plot")
+    if gp is None:
+        return
+    if not isinstance(gp, dict):
+        raise ValueError(f"gap_plot 字段需为对象（{{\"dims\": [...]}}），实际: {type(gp).__name__}")
+    dims = gp.get("dims") or []
+    if not dims:
+        warns.append("gap_plot.dims 为空：分布图不会生成——无数据请整字段删除（同 holders 惯例）")
+        return
+    effective = 0
+    cmap = {r["key"]: r["mid"] for r in (calc or {}).get("rows", [])}
+    base_mid = cmap.get("base")
+    for i, d in enumerate(dims):
+        if not isinstance(d, dict):
+            raise ValueError(f"gap_plot.dims[{i}] 不是对象：每行需 {{name, ours, consensus, ...}}")
+        name = str(d.get("name") or "").strip()
+        ours, cons = _num(d.get("ours")), _num(d.get("consensus"))
+        if not name or ours is None or cons is None:
+            raise ValueError(f"gap_plot.dims[{i}] 缺 name/ours/consensus 或不可解析：{d!r}")
+        if cons <= 0:
+            warns.append(f"gap_plot.dims[{i}]「{name}」consensus={cons:g} ≤0：该行图内剔除")
+            continue
+        effective += 1
+        seen_orgs = []
+        for s in (d.get("street") or []):
+            if not isinstance(s, dict):
+                # 热核审计 P1-1：street 元素非对象与 dims 非法行同标准——不放行
+                raise ValueError(f"gap_plot.dims[{i}]「{name}」street 元素需为对象 "
+                                 f'（{{"org","v","major"?}}），实际: {s!r}')
+            if s.get("org"):
+                seen_orgs.append(str(s["org"]))
+        dup = sorted({o for o in seen_orgs if seen_orgs.count(o) > 1})
+        if dup:
+            warns.append(f"gap_plot.dims[{i}]「{name}」street 同机构多点: {dup}"
+                         f"——一家机构 180 天内只取最新一份研报，请去重")
+        if "目标价" in name and base_mid is not None and base_mid > 0:
+            if abs(ours - base_mid) > 0.1 and abs(ours - base_mid) / base_mid > 0.02:
+                warns.append(f"gap_plot「{name}」本文值 {ours:g} 与 valuation 基础情景中枢 "
+                             f"{base_mid:.2f} 偏差 >2%：本文假设点与三情景口径须一致")
+    if dims and effective < 2:
+        warns.append(f"gap_plot 有效数值维度仅 {effective} 个 <2：分布图不会生成（准入规则）")
+    if len(dims) > 6:
+        warns.append(f"gap_plot.dims 共 {len(dims)} 行 >6：图内只画前 6 行，其余请挪 text_dims 附注")
 
 
 def _check_chart_fields(fill: dict) -> None:
@@ -255,10 +332,12 @@ def _check_thesis_consistency(fill: dict, calc: dict) -> None:
             if mismatch:
                 bad.append(f"{_SCENARIO_NAMES[k]} 手写 {f:g} vs 脚本 {c:.2f}")
         if bad:
+            # v4.11.1（审核 D7）：推导式抽成局部变量，不再 f-string 内嵌双层花括号
+            hand = {k: span_prices[k] for k in ("pess", "base", "opt")}
+            calc_m = {k: round(cmap.get(k, 0), 2) for k in ("pess", "base", "opt")}
             raise ValueError("thesis_html 三情景手写价与 valuation 计算值不一致（相对偏差>2% 且绝对差>0.1）："
                              + "；".join(bad)
-                             + f"。手写={ {k: span_prices[k] for k in ('pess','base','opt')} }，"
-                             + f"脚本={ {k: round(cmap.get(k, 0), 2) for k in ('pess','base','opt')} }")
+                             + f"。手写={hand}，脚本={calc_m}")
 
 
 def _check_content_floor(fill: dict) -> None:
@@ -268,8 +347,8 @@ def _check_content_floor(fill: dict) -> None:
         raise ValueError(f"conclusion_html 纯文本仅 {concl_len} 字 < 120：核心结论四卡不能为空洞"
                          f"（v4.9.1 补充修订四：四卡 ul 短列表化，地板由 200 下调）")
     for name, need in (("l1_html", 6), ("l3_html", 3)):
-        # 与下方字数地板同口径（re.split），避免 class="dim-block x" 之类写法两口径打架
-        n = len(re.split(r'<div class="dim-block">', fill.get(name) or "")) - 1
+        # 与下方字数地板同口径（_split_dim_blocks），避免 class="dim-block x" 之类写法两口径打架
+        n = len(_split_dim_blocks(fill.get(name) or ""))
         if n < need:
             raise ValueError(f"{name} 仅 {n} 个 dim-block < {need}：每个评分维度必须各有一个维度块")
     if "<table" not in (fill.get("peers_html") or ""):
@@ -381,15 +460,31 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
     # dim-block 内容地板（deepseek 中兴/豪威"每块一句话凑数"缩水实证）：
     # 纯文本 <40 字 → 拒渲染（连一条论据都写不出）；<80 字 → 告警。
     # 同循环保留极端分证据校验：≥8 或 ≤3 的维度，dim-block 纯文本 <50 字 → 告警（极端分须配量化依据）
+    # v4.11.1（审核 D3）：维度识别废位置 zip——乱序块会被错配（极端分门槛被静默绕过）；
+    # 改与 _check_governance_strip 同口径，从 dim-name 提取 `\d\.\d` 编号映射 DIMS；
+    # 提取不到编号 → 按位置兜底并告警（写法漂移可见，不静默）
     thin_reject, thin_warn = [], []
     for field, layer in (("l1_html", "L1"), ("l3_html", "L3")):
-        blocks = re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]
-        for (key, _l, name, _dw), blk in zip([d for d in DIMS if d[1] == layer], blocks):
+        blocks = _split_dim_blocks(fill.get(field) or "")
+        dims = [d for d in DIMS if d[1] == layer]
+        by_num = {d[2].split()[0]: d for d in dims}   # "3.1 赛道与宏观" → "3.1"
+        fallback = 0
+        for pos, blk in enumerate(blocks):
+            m = re.search(r'dim-name[^>]*>\s*(\d\.\d)', blk)
+            if m and m.group(1) in by_num:
+                key, name = by_num[m.group(1)][0], by_num[m.group(1)][2]
+            elif pos < len(dims):
+                key, name = dims[pos][0], dims[pos][2]
+                fallback += 1
+            else:
+                key, name = None, f"第 {pos + 1} 块"
             blen = len(_plain_text(blk))
             if blen < 40:
                 thin_reject.append(f"{name} 仅 {blen} 字")
             elif blen < 80:
                 thin_warn.append(f"{name} 仅 {blen} 字")
+            if key is None:
+                continue
             sv = (fill.get("scores") or {}).get(key)
             if sv is None:
                 continue
@@ -397,6 +492,10 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
             if (sv >= 8 or sv <= 3) and blen < 50:
                 warns.append(f"{name} 得分 {sv:g}（极端分）但 dim-block 纯文本仅 {blen} 字 < 50："
                              f"≥8 或 ≤3 必须配具体量化依据")
+        if fallback:
+            warns.append(f"{field} 有 {fallback} 个 dim-block 未从 dim-name 提取到有效编号，"
+                         f"已按位置兜底匹配——dim-name 请写「编号+名称」规范形态（如 3.1 赛道与宏观），"
+                         f"乱序块的极端分证据校验依赖编号识别")
     if thin_reject:
         raise ValueError("dim-block 内容地板：" + "；".join(thin_reject)
                          + "（纯文本 <40 字）：每个维度块至少写出论据+数据，不能只写一句判语")
@@ -477,10 +576,18 @@ def _check_misc_required(fill: dict, warns: list) -> None:
 
 
 def _check_quote_present(fill: dict, warns: list) -> None:
-    """quote 缺失 → 告警不拒（存量 fill 兼容）；quote 存在但不一致已在 _check_quote_consistency 拒渲染。"""
-    if not fill.get("quote"):
-        warns.append("quote 字段缺失：现价/PE(TTM) 无 em_fetch --out 落盘防伪（神华 601088 事故修复项）"
-                     "——新报告应在 em_fetch 时加 --out 落盘，并在 fill 回填 quote.source_file")
+    """quote 缺失门禁（v4.11.1 升级，审核 D5）：fill date ≥ 2026-09-02（v4.8 引入 quote 之日）
+    缺 quote → 拒渲染（不填 quote 即可绕过现价防伪的静默口被关上）；此前日期的存量 fill
+    → 维持告警豁免。quote 存在但不一致已在 _check_quote_consistency 拒渲染。"""
+    if fill.get("quote"):
+        return
+    if str(fill.get("date") or "") >= "2026-09-02":
+        raise ValueError("quote 字段缺失：现价/PE(TTM) 无 em_fetch --out 落盘防伪"
+                         "（神华 601088 现价造假事故修复项）——v4.8 起的新报告必须在 em_fetch 时加 "
+                         "--out 落盘，并在 fill 回填 quote.source_file 后重渲"
+                         "（2026-09-02 前的存量 fill 仅告警豁免）")
+    warns.append("quote 字段缺失：现价/PE(TTM) 无 em_fetch --out 落盘防伪（神华 601088 事故修复项）"
+                 "——新报告应在 em_fetch 时加 --out 落盘，并在 fill 回填 quote.source_file")
 
 
 def _check_optional_charts(fill: dict, warns: list) -> None:
@@ -590,7 +697,7 @@ def _check_governance_strip(fill: dict, warns: list) -> None:
     补充修订四：同款清单推广到 3.3 护城河 / 4.3 催化剂（4.2 为可选形态不强制），
     <p> 恰为 2 规则同步覆盖（4.3 评分段可省，校验只看 >2）。"""
     for field, tags in (("l1_html", ("3.3", "3.5")), ("l3_html", ("4.3",))):
-        for blk in re.split(r'<div class="dim-block">', fill.get(field) or "")[1:]:
+        for blk in _split_dim_blocks(fill.get(field) or ""):
             # 审计 P1-3：tag 从 dim-name 提取（旧「子串命中」会被块内正文提及的 3.3 截胡，
             # 导致 3.5 块被当成 3.3、扣分校验整段跳过）
             _m = re.search(r'dim-name[^>]*>\s*(\d\.\d)', blk)
@@ -771,20 +878,17 @@ def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
                      "是规律失效还是本次反例（区分假设本身错 vs 触发条件变化），见 backtest.md 6.6 复盘纪律")
 
 
-def validate_content(fill: dict, calc: dict = None) -> None:
-    """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
-    硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
-    fin_trend/growth_plot 必填图字段缺失或结构非法（v4.9）、
-    红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
-    表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
-    calc 为 compute_valuation 结果（thesis 一致性校验用）。"""
+def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
+    """validate_content 的执行主体（拆出是为了硬拒前 flush 告警，见包装函数）。"""
     _check_price_date(fill)
     _check_quote_consistency(fill)
     _check_score_ranges(fill)
 
     _check_valuation_inputs(fill)
-    _check_valuation_scenarios(fill)
+    _check_valuation_scenarios(fill, warns)
     _check_chart_fields(fill)
+    _check_quote_present(fill, warns)   # v4.11.1（审核 D5）：date ≥ 2026-09-02 缺 quote 拒渲染
+    _check_gap_plot(fill, calc, warns)  # v4.11.1：gap_plot 分布图字段校验（可选字段，缺失不查）
 
     _check_red_flag_breaker(fill)
     _check_thesis_consistency(fill, calc)
@@ -792,7 +896,6 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_l4_form(fill)
     _check_cn_placeholder(fill)
 
-    warns = []
     _check_missing_required_warns(fill, warns)
     _check_stock_type_weights(fill, warns)
     _check_thesis_price_tags(fill, warns)
@@ -812,7 +915,24 @@ def validate_content(fill: dict, calc: dict = None) -> None:
     _check_prev_fields(fill, warns)
     _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
-    _check_quote_present(fill, warns)
     _check_optional_charts(fill, warns)
+
+
+def validate_content(fill: dict, calc: dict = None) -> None:
+    """内容级校验（成稿前自动复核，借鉴 equity-research 检查器思路）。
+    硬错误（拒渲染）：分数越界、valuation_inputs 缺失、valuation 三情景字段不全、
+    fin_trend/growth_plot 必填图字段缺失或结构非法（v4.9）、
+    红灯熔断缺"不建议参与"、thesis 手写价与脚本计算值不一致、内容地板（空心章节）、
+    表格缺来源标注；其余 → stderr 告警（P1），模型看到即修正。
+    calc 为 compute_valuation 结果（thesis 一致性校验用）。
+    v4.11.1（热核审计 P2-1）：硬拒前先 flush 已积累告警——否则负 profit/存量 quote 豁免等
+    提示会随异常湮灭，模型修 fill 丢上下文。"""
+    warns = []
+    try:
+        _validate_content_impl(fill, calc, warns)
+    except ValueError:
+        for w in warns:
+            print(f"⚠️ 内容校验: {w}", file=sys.stderr)
+        raise
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)

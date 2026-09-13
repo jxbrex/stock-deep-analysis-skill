@@ -201,12 +201,16 @@ def compute_valuation(fill: dict):
         print(f"⚠️ horizon「{horizon}」无法解析出时长，按 12 个月处理", file=sys.stderr)
         months = 12.0
     central_raw = base["mid"] / price - 1
-    central = (1 + central_raw) ** (12 / months) - 1 if months > 0 else central_raw
+    # v4.11.1（审核 D1）：负中枢（亏损股 profit<0 → base.mid<0 → central_raw<-1）不做年化——
+    # 负底数非整数幂在 Python3 返回 complex，下游 _map_central 的 >= 比较会 TypeError 裸崩；
+    # 且年化对负中枢本无意义（「中枢为负拦截器」按 central_raw<0 判定，与年化值无关）
+    central = (1 + central_raw) ** (12 / months) - 1 if (months > 0 and central_raw > -1) else central_raw
     down = price - pess["low"]
     odds = None if down <= 0 else (base["mid"] - price) / down  # down<=0 → 悲观仍正收益 → ∞
     dispersion = (opt["mid"] - pess["mid"]) / price
     if rows[0]["mid"] > rows[-1]["mid"]:
-        print("⚠️ valuation 三情景目标价顺序异常（悲观中枢 > 乐观中枢），请检查 profit/pe 假设", file=sys.stderr)
+        print("⚠️ valuation 三情景目标价顺序异常（悲观中枢 > 乐观中枢），请检查 profit/pe 假设"
+              "——跨情景倒挂将被 validate 拒渲染（v4.11.1 起）", file=sys.stderr)
     return {"rows": rows, "central": central, "central_raw": central_raw, "months": months,
             "odds": odds, "dispersion": dispersion, "base_lo": base["low"], "base_hi": base["high"],
             "horizon": horizon, "price": price,
@@ -573,12 +577,14 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
                 idx = new_idx
             # 离散度调节（>90% 下调一档 / <40% 上浮一档；60% 旧阈值在 20 份报告中触发率 70%，
             # 形同普遍降档，已按经验分布收紧到极端档）
+            # v4.11.1（审核 D2）：dispersion < 0 = 三情景倒挂的衍生假信号（校验层漏网时的
+            # 第二道防线），不得判为「低不确定性」上浮——加 0 下限守卫
             if calc and calc["dispersion"] > 0.90:
                 new_idx = max(idx - 1, 0)
                 steps.append(f"离散度调节：离散度 {calc['dispersion'] * 100:.1f}% > 90% → 下调一档"
                              f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[new_idx]]}）")
                 idx = new_idx
-            elif calc and calc["dispersion"] < 0.40:
+            elif calc and 0 <= calc["dispersion"] < 0.40:
                 try_up("离散度", f"离散度 {calc['dispersion'] * 100:.1f}% < 40%")
             # 赔率 ∞ 上浮一档（受封顶约束）
             if calc and calc["odds"] is None:

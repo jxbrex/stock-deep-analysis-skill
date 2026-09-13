@@ -46,6 +46,7 @@ from charts_l1 import _inject_l1_charts
 from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
+    _inject_gap_chart,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
 from validate import validate_content
@@ -53,7 +54,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.11.0"
+RENDERER_VERSION = "v4.11.1"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -313,7 +314,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "STOCK_TYPE": fill.get("stock_type", ""),
         "VALUATION_HTML": fill.get("valuation_html", ""),
         "GAP_TIER": fill.get("gap_tier", "—"),
-        "GAP_HTML": fill.get("gap_html", ""),
+        # 8 章预期差图：<!--GAP--> 锚点注入 gap_html（图 + gap-notes 附注；缺失垫章首 + 告警）
+        "GAP_HTML": _inject_gap_chart(fill.get("gap_html", ""), fill),
         "PEERS_META": fill.get("peers_meta", ""),
         "PEERS_HTML": peers_html,
         "SCENARIO_SPECTRUM_HTML": spectrum_html,
@@ -556,7 +558,8 @@ def check_fill(fill_path: str) -> None:
     中兴 2026-08-24 实证）。退出码：0=通过可渲染，2=存在拒渲染项。"""
     try:
         fill, _calc, _sc, _valuation, _vc = _preflight(fill_path)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
+        # v4.11.1（热核审计）：捕获面与 render 对称（TypeError 一并收编，估值边界缺陷兜底）
         print(f"✗ 预检未通过（渲染将被拒绝）：\n  {e}", file=sys.stderr)
         sys.exit(2)
     print(f"OK JSON 可解析，共 {len(fill)} 个顶层键；内容预检通过，可执行渲染")
@@ -574,7 +577,8 @@ if __name__ == "__main__":
     else:
         try:
             render(args[0], opts.get("out"))
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
             # 与 --check 同款友好捕获：校验失败不把完整 traceback 吐进 agent 上下文
+            # v4.11.1（审核 D1/S2）：TypeError 一并收编（估值计算边界缺陷的兜底防线）
             print(f"✗ 渲染被拒绝：\n  {e}", file=sys.stderr)
             sys.exit(2)

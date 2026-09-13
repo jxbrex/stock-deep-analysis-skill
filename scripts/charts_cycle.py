@@ -111,6 +111,8 @@ def build_price_history(fill: dict) -> str:
     """10 周期规律·股价/PE 历史图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
     v4.11.0 起主形态=季K蜡烛（series 带 open/high/low/close 时——照抄 E2「全序列」行；按日历季度聚合：
     季首月开/季内高低/季末月收，红涨绿跌仅股价方向），无 OHLC 的旧 fill 回退月收发丝线（原形态）。
+    v4.11.1 起叠加趋势均线（海油反馈：季K 单看蜡烛不易读趋势）——季K=季度收盘 MA4、
+    发丝=月收盘 MA12，暖灰细线 + 图例；均线值域含于价格域内，不影响定标。
     右轴=PE(TTM)（钢蓝发丝月频；有效 pe <12 点则只画股价；亏损期 PE 无定义自然断线分段，
     连续缺值 ≥3 个月的段加浅灰底纹并命名「亏损期 · PE(TTM) 无定义」——缺口是诚实区间不是断数，
     天齐实证 2020 亏损尾巴+2024-2025 亏损期两段）；**PE 右轴自适应截断**（max > p75×3 时域顶=p75×3、
@@ -196,6 +198,16 @@ def build_price_history(fill: dict) -> str:
 
     label = str(ph.get("label") or "").strip()
     cur = str(fill.get("currency") or "元")
+    # 趋势均线预计算（v4.11.1，海油反馈）：季K=季度收盘 MA4 过季度槽中心、发丝=月收盘 MA12。
+    # 热核审计 P2-2：图例/source/折线同一门槛——≥2 点才成线（quarters≥5 / n≥13），
+    # 否则图例说了谎却没有线（单点 moveto-only path 不可见）
+    if has_ohlc:
+        ma_pts = [(X((quarters[i]["i0"] + quarters[i]["i1"]) / 2),
+                   Yc(sum(quarters[k]["c"] for k in range(i - 3, i + 1)) / 4))
+                  for i in range(3, len(quarters))] if len(quarters) >= 5 else []
+    else:
+        ma_pts = [(X(i), Yc(sum(closes[i - 11:i + 1]) / 12))
+                  for i in range(11, n)] if n >= 13 else []
     # PE 序列同源 E2 月线（价格×股本÷TTM净利），恒为 PE(TTM) 口径，不随 metric_label 换标签
     tag = f'股价季K 与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}' if has_ohlc \
         else f'股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}'
@@ -233,8 +245,16 @@ def build_price_history(fill: dict) -> str:
         parts.append(f'<line x1="{L}" y1="{T - 12}" x2="{L + 26}" y2="{T - 12}" stroke="{_C_INK}" stroke-width="1.6"/>')
         parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价（左轴，{_esc(cur)}）</text>')
     _leg1 = f"股价季K（左轴，{cur}；红涨绿跌）" if has_ohlc else f"股价（左轴，{cur}）"
+    # v4.11.1（海油反馈）：叠加趋势均线——季K 模式=季度收盘 MA4，发丝模式=月收盘 MA12；
+    # 中性暖灰细线，不抢蜡烛/PE 线视觉层级
+    _ma_leg = "4 季均线" if has_ohlc else "12 月均线"
+    lx2 = L + 32 + _text_w(_leg1, 11) + 24
+    if ma_pts:   # 图例与折线同门槛（无线不出图例）
+        parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" '
+                     f'stroke="{_C_STONE}" stroke-width="1.6"/>')
+        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_STONE}">{_ma_leg}</text>')
+        lx2 += 32 + _text_w(_ma_leg, 11) + 24
     if has_pe:
-        lx2 = L + 32 + _text_w(_leg1, 11) + 24
         parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" stroke="{_C_BLUE}" stroke-width="1.6"/>')
         parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴，月频）</text>')
     # 左轴（股价）网格与刻度
@@ -281,6 +301,10 @@ def build_price_history(fill: dict) -> str:
         path = "M" + " L".join(f"{X(i):.1f},{Yc(p['close']):.1f}" for i, p in enumerate(pts))
         parts.append(f'<path d="{path} L{X(n - 1):.1f},{H - B} L{L},{H - B} Z" fill="{_C_TRACK}" stroke="none"/>')
         parts.append(f'<path d="{path}" fill="none" stroke="{_C_INK}" stroke-width="1.8"/>')
+    # 趋势均线（v4.11.1）：折线/图例/source 同门槛（≥2 点），预计算见 legend 区上方
+    if ma_pts:
+        parts.append('<path d="M' + " L".join(f"{x:.1f},{y:.1f}" for x, y in ma_pts)
+                     + f'" fill="none" stroke="{_C_STONE}" stroke-width="1.6"/>')
     # PE 发丝线（允许中间缺值：缺值处分段）
     if has_pe:
         run = []
@@ -307,13 +331,17 @@ def build_price_history(fill: dict) -> str:
     parts.append(_svg_close())
     if has_ohlc:
         src = ('股价季K/PE 历史走势（脚本按 price_history 字段生成，同源 E2 月线全序列）：'
-               '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向），钢蓝=PE(TTM)（右轴，月频）；'
+               '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向）'
+               + ('，暖灰=4 季均线' if ma_pts else '')
+               + '，钢蓝=PE(TTM)（右轴，月频）；'
                '灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义——诚实区间非断数）；双轴各自定标，读交叉不读绝对高度')
         if pe_cap:
             src += f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注（正常段可读性优先）'
     else:
         src = ('股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
-               '深灰=月收盘价（左轴），钢蓝=PE(TTM)（右轴）'
+               '深灰=月收盘价（左轴）'
+               + ('，暖灰=12 月均线' if ma_pts else '')
+               + '，钢蓝=PE(TTM)（右轴）'
                + ('；灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义）' if runs else '')
                + (f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注' if has_pe and pe_cap else '')
                + '；双轴各自定标，读交叉不读绝对高度；'

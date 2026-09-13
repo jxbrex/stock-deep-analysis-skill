@@ -413,6 +413,12 @@ def _sec_e4(pure: str, is_hk: bool) -> list:
             out.append("")
         elif is_hk:
             out.append("## E4 股东户数\n[港股不支持，跳过]\n")
+        elif not h:
+            # v4.11.1（审核 D6）：A股户数全空时补降级提示（对齐 E3/E5/E6/治理段纪律，
+            # 筹码面是时机分 67% 权重的核心输入，缺席必须显式标注）
+            out.append("## E4 股东户数\n[未获取到股东户数数据，请降级：妙想 MCP "
+                       "mx_ashare_finance_data 直查股东户数，或东财 F10 手工查；"
+                       "筹码面评分缺核心输入，11 章时机判定须注明数据缺席]\n")
         if not is_hk:
             q = fetch_holders_quarterly(pure)
             if len(q) >= 3:
@@ -421,6 +427,10 @@ def _sec_e4(pure: str, is_hk: bool) -> list:
                                  for r in q)
                 out.append(f"季度序列（季末口径近{len(q)}期，旧→新；holders 图字段照抄本行，"
                            f"格式=截止日=户数/环比）: {qline}\n")
+            elif h:
+                # 季度序列不足 3 期（户数主序列有数据时才有提示意义，全空已在上行提示）
+                out.append(f"[季度序列不足 3 期（仅 {len(q)} 期），holders 图不会生成；"
+                           f"请降级：妙想 MCP 直查历史季末户数补齐，或 11 章注明户数图缺席]\n")
     except Exception as e:
         out.append(f"## E4 股东户数\n[失败: {e}]\n")
     return out
@@ -502,6 +512,23 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                     if slot["eps"]:
                         line += f" EPS均值{sum(slot['eps'])/len(slot['eps']):.2f}"
                     lines.append(line)
+            # v4.11.1（gap_plot 落地）：逐机构明细行——fill 的 gap_plot.street 照抄本行，
+            # 禁手估/禁编造机构名（同机构 180 天内多份已去重取最新；np 单位亿元）
+            for yr in sorted(c.get("detail") or {}):
+                det = c["detail"][yr]
+                seg = "·".join(f"{d['org']}{d['np']:g}({d['date'][4:6]}-{d['date'][6:8]})"
+                               for d in det[:20])
+                # 审计 P2-3：截断时家数声明与行内条数不得矛盾
+                cnt_note = f"前 20 家/共 {len(det)} 家" if len(det) > 20 else f"{len(det)} 家"
+                lines.append(f"{yr}E 净利明细（gap_plot 照抄行，{cnt_note}，"
+                             f"按值降序）: {seg}")
+            if c.get("aim_detail"):
+                det = c["aim_detail"]
+                seg = "·".join(f"{d['org']}{d['tp']:g}({d['date'][4:6]}-{d['date'][6:8]})"
+                               for d in det[:20])
+                cnt_note = f"前 20 家/共 {len(det)} 家" if len(det) > 20 else f"{len(det)} 家"
+                lines.append(f"目标价明细（gap_plot 照抄行，{cnt_note}，"
+                             f"(研报下限+上限)/2）: {seg}")
             if c.get("aim"):
                 lines.append(f"目标价区间: {c['aim'][0]:.1f}-{c['aim'][1]:.1f}元")
             if c.get("ratings"):

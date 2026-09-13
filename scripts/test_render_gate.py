@@ -563,6 +563,97 @@ def test_l4_form_gates():
     print("OK L4 形态门禁（旧形态拒 / 零扣分行拒 / 合规放行）")
 
 
+def test_negative_profit_central_no_crash():
+    """v4.11.1（审核 D1）：负利润 base + 2年 horizon → 中枢不年化、保持实数，不崩 TypeError；
+    中枢为负拦截器照常生效；validate 对负 profit 告警不拒。"""
+    f = minimal_fill()
+    f["valuation"]["horizon"] = "2年"
+    for s in f["valuation"]["scenarios"]:
+        s["profit"] = {"pess": -80, "base": -50, "opt": -20}[s["key"]]
+    calc = R.compute_valuation(f)
+    assert isinstance(calc["central"], float), f"负中枢不得年化为复数：{calc['central']!r}"
+    assert calc["central"] < -1, f"central_raw=-6（-50×11/10/10−1），实际 {calc['central']}"
+    label, steps, _ = _position_steps(6.0, 5.0, 5.0, calc, "")
+    assert "中枢为负" in label, f"负中枢应走拦截器，实际 {label}"
+    f["thesis_html"] = "<p>困境反转论点：产能出清后正常化利润回归，本句仅作测试占位文本。</p>"
+    warns = validate_stderr(f)
+    assert "profit=-50" in warns and "口径" in warns, "负 profit 应有口径提示告警（不拒渲染）"
+
+
+def test_cross_scenario_inversion_rejected():
+    """v4.11.1（审核 D2）：三情景中枢跨档倒挂（pess>base 或 base>opt）→ 拒渲染；
+    负离散度不得被决策链当作「低不确定性」上浮（校验漏网时的第二道防线）。"""
+    f = minimal_fill()
+    # pess 315 / base 105 / opt 63（profit 填反方向）
+    for s, p in zip(f["valuation"]["scenarios"], (30, 10, 6)):
+        s["profit"] = p
+        s["pe"] = [100, 110]
+    expect_valueerror(f, "跨档倒挂")
+    calc = {"central_raw": 0.5, "central": 0.5, "dispersion": -25.2, "odds": 1.5}
+    html = R.build_position_card(minimal_fill(), quality=6.0, valuation=6.5,
+                                 timing=5.0, calc=calc, red_flag="")
+    assert "离散度调节" not in html, "负离散度不得触发上浮（审核 D2 防线二）"
+
+
+def test_dim_blocks_by_dim_name():
+    """v4.11.1（审核 D3）：dim-block 乱序时按 dim-name 编号映射维度——
+    3.3 块写最前，极端分 1C=8.5 的证据校验仍须命中 3.3 块（旧位置 zip 会错配到 1A 漏检）。"""
+    f = minimal_fill()
+    f["scores"]["1C"] = 8.5
+    thin_txt = "护城河论据较薄但越过地板线，此处补充字数" + "据" * 13   # 块总长 45（含头部11字）：过 40 地板、踩 <50 极端分门槛
+
+    def _named(num, name, txt):
+        return (f'<div class="dim-block"><div class="dim-header">'
+                f'<span class="dim-name">{num} {name}</span></div><p>{txt}</p></div>')
+    long_txt = "该维度分析：论据与数据充分，行业地位稳固，具备长期参考价值，结论可靠。"
+    f["l1_html"] = (_named("3.3", "商业模式与护城河", thin_txt)
+                    + _named("3.1", "赛道与宏观", long_txt) + _named("3.2", "产业链位置", long_txt)
+                    + _named("3.4", "财务健康", long_txt) + _named("3.5", "治理与资本配置", long_txt)
+                    + _named("3.6", "资本回报质量", long_txt))
+    err = validate_stderr(f)
+    assert "3.3 商业模式与护城河 得分 8.5（极端分）" in err, \
+        f"乱序下极端分校验应命中 3.3 块，实际 stderr：{err[:400]}"
+
+
+def test_quote_present_date_gate():
+    """v4.11.1（审核 D5）：date ≥ 2026-09-02（v4.8 引入 quote）缺 quote → 拒渲染；
+    此前存量 fill → 维持告警（豁免）。"""
+    f = minimal_fill()
+    f["date"] = "2026-09-13"
+    expect_valueerror(f, "新报告缺 quote 应拒渲染")
+    g = minimal_fill()  # date=2026-08-27 存量
+    err = validate_stderr(g)
+    assert "quote 字段缺失" in err, "存量 fill 缺 quote 应走告警豁免"
+
+
+def test_dim_block_extra_class_tolerated():
+    """v4.11.1（审核 D8）：class="dim-block extra" 附加类形态仍计入块数，不误触发 <6 拒渲染。"""
+    f = minimal_fill()
+    f["l1_html"] = f["l1_html"].replace('<div class="dim-block">',
+                                        '<div class="dim-block extra">', 1)
+    R.validate_content(f, R.compute_valuation(f))  # 不拒即通过
+
+
+def test_gap_plot_validate():
+    """v4.11.1：gap_plot 校验——非法行（缺 name/ours/consensus）拒渲染；
+    有效维度 <2 / 同机构多点 / 目标价与脚本中枢失配 → 告警。"""
+    f = minimal_fill()
+    f["gap_plot"] = {"dims": [{"name": "2026E 归母净利（亿元）", "ours": 110, "consensus": 100}]}
+    err = validate_stderr(f)
+    assert "有效数值维度仅 1 个" in err, "有效维度 <2 应告警（图不生成）"
+    f["gap_plot"] = {"dims": [{"name": "x", "consensus": 100}]}
+    expect_valueerror(f, "gap_plot 行缺 ours 应拒渲染")
+    f["gap_plot"] = {"dims": [
+        {"name": "目标价·12个月（元）", "ours": 30, "consensus": 26,
+         "street": [{"org": "野村", "v": 31}, {"org": "野村", "v": 30}]},
+        {"name": "2026E 归母净利（亿元）", "ours": 110, "consensus": 100},
+        {"name": "废行", "ours": 1, "consensus": 0}]}
+    err = validate_stderr(f)
+    assert "同机构多点" in err, "street 同机构多点应告警"
+    assert "口径须一致" in err, "目标价与 valuation 中枢失配应告警"
+    assert "≤0" in err, "consensus ≤0 行剔除应告警"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

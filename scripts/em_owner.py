@@ -108,22 +108,44 @@ def fetch_consensus(code: str) -> dict:
         orgs = {r.get("org_name") for r in recent if r.get("org_name")}
         # 单次循环聚合：按预测年度的净利/EPS（quarter 形如 2026Q4 → 2026）、目标价区间、评级分布
         years, prices, ratings = {}, [], {}
+        latest_by_org = {}   # v4.11.1（gap_plot 落地）：(yr, org) → 最新研报行，供 E5 逐机构明细
+        aim_by_org = {}      # org → 最新含目标价研报行
         for r in recent:
             q = str(r.get("quarter") or "")
             yr = q[:4] if len(q) >= 4 else ""
+            org = (r.get("org_name") or "").strip()
+            rd = str(r.get("report_date") or "")
             if yr.isdigit():
                 slot = years.setdefault(yr, {"np": [], "eps": []})
                 if r.get("np") is not None:
                     slot["np"].append(float(r["np"]) / 1e4)  # report_rc np 单位万元 → 亿
                 if r.get("eps") is not None:
                     slot["eps"].append(float(r["eps"]))
+                if org and r.get("np") is not None:
+                    k = (yr, org)
+                    if k not in latest_by_org or rd > latest_by_org[k]["report_date"]:
+                        latest_by_org[k] = r
             if r.get("min_price") and r.get("max_price"):
                 prices.append((float(r["min_price"]), float(r["max_price"])))
+                if org and (org not in aim_by_org or rd > aim_by_org[org]["report_date"]):
+                    aim_by_org[org] = r
             rt = (r.get("rating") or "").strip()
             if rt:
                 ratings[rt] = ratings.get(rt, 0) + 1
+        # 逐机构明细（同机构 180 天内多份取最新）：np 万元→亿；目标价=(min+max)/2
+        detail = {}
+        for (yr, org), r in latest_by_org.items():
+            detail.setdefault(yr, []).append({"org": org, "np": round(float(r["np"]) / 1e4, 1),
+                                              "date": r.get("report_date", "")})
+        for v in detail.values():
+            v.sort(key=lambda x: -x["np"])
+        aim_detail = [{"org": org, "tp": round((float(r["min_price"]) + float(r["max_price"])) / 2, 2),
+                       "date": r.get("report_date", "")}
+                      for org, r in sorted(aim_by_org.items(),
+                                           key=lambda kv: -(float(kv[1]["min_price"])
+                                                            + float(kv[1]["max_price"])))]
         return {"_src": "tushare", "orgs": len(orgs), "n_reports": len(recent),
-                "years": years,
+                "years": years, "detail": detail, "aim_detail": aim_detail,
                 "aim": (min(p[0] for p in prices), max(p[1] for p in prices)) if prices else None,
                 "ratings": ratings}
     except Exception:

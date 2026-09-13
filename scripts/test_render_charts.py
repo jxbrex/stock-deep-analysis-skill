@@ -281,8 +281,18 @@ def test_price_history_quarterly_kline():
                                      cycle_html='<table><tr><td>x</td></tr></table>'))
     assert 'aria-label="股价与PE历史走势"' in html3, "无 OHLC 应回退发丝线形态"
     seg3 = html3.split('aria-label="股价与PE历史走势"', 1)[1].split('</svg>', 1)[0]
-    assert "亏损期" in seg3, "回退形态同样画亏损期底纹"
-    print("OK 季K蜡烛 / 亏损期底纹 / PE 截断 / 发丝线回退")
+    # v4.11.1：季K 叠加 4 季均线（暖灰折线 + 图例）；回退发丝模式叠加 12 月均线
+    assert "4 季均线" in html, "季K 模式应有 4 季均线图例"
+    ma_paths = re.findall(r'<path d="M([\d., L]+)" fill="none" stroke="#57524a"', seg)
+    assert len(ma_paths) == 1, "季K 模式应恰有一条 MA 折线"
+    ma_pts = [tuple(map(float, xy.split(","))) for xy in ma_paths[0].strip().split(" L")]
+    assert len(ma_pts) == 9, f"12 个季度 → MA4 从第 4 季起共 9 点，实际 {len(ma_pts)}"
+    ys = [y for _, y in ma_pts]
+    assert all(ys[i] > ys[i + 1] for i in range(len(ys) - 1)), "收盘单调上行时 MA4 的 y 应单调递减"
+    assert "12 月均线" in html3, "发丝回退模式应有 12 月均线图例"
+    ma3 = re.findall(r'<path d="M([\d., L]+)" fill="none" stroke="#57524a"', seg3)
+    assert len(ma3) == 1 and ma3[0].count(" L") == 24, "36 个月 → MA12 从第 12 月起共 25 点"
+    print("OK 季K蜡烛 / 亏损期底纹 / PE 截断 / 发丝线回退 / 趋势均线")
 
 
 def test_consensus_band_and_pe_iqr():
@@ -486,6 +496,171 @@ def test_fix_alignment_short_placeholder_stays_num():
     assert '<th class="num">PE(TTM)</th>' in R.fix_table_alignment(tbl2), \
         "「—（上年亏损）」剥括号后 1 字，不翻列"
     print("OK 短占位格不翻列（未披露/未获取到/不适用/—（上年亏损）仍 num）")
+
+
+_GAP_DIMS_A = [
+    {"name": "2026E 归母净利（亿元）", "ours": 930, "consensus": 905, "cover": "15 家覆盖",
+     "street": [{"org": "野村", "v": 952, "major": True}, {"org": "摩根士丹利", "v": 878, "major": True},
+                {"v": 870}, {"v": 882}, {"v": 890}, {"v": 895}, {"v": 898}, {"v": 905}, {"v": 910},
+                {"v": 915}, {"v": 922}, {"v": 928}, {"v": 935}, {"v": 940}]},
+    {"name": "目标价 · 12 个月（元）", "ours": 30, "consensus": 26.5, "cover": "11 家给出目标价",
+     "street": [{"org": "野村", "v": 31, "major": True}, {"org": "中金", "v": 24.2, "major": True},
+                {"v": 24.0}, {"v": 24.5}, {"v": 25.0}, {"v": 25.5}, {"v": 26.0}, {"v": 26.5},
+                {"v": 27.0}, {"v": 27.5}, {"v": 28.0}]},
+    {"name": "2026E 出货量假设（GWh）", "ours": 650, "consensus": 580, "cover": "10 家披露量假设",
+     "street": [{"org": "野村", "v": 545, "major": True}, {"org": "高盛", "v": 632, "major": True},
+                {"v": 540}, {"v": 555}, {"v": 565}, {"v": 570}, {"v": 580}, {"v": 590},
+                {"v": 600}, {"v": 615}]},
+    {"name": "2026E 毛利率（%）", "ours": 26.0, "consensus": 24.5, "cover": "9 家披露率假设",
+     "pct_pt": True,
+     "street": [{"org": "大和", "v": 25.8, "major": True},
+                {"v": 24.0}, {"v": 24.2}, {"v": 24.4}, {"v": 24.5}, {"v": 24.6}, {"v": 24.8},
+                {"v": 25.0}, {"v": 25.2}]},
+]
+
+
+def test_gap_plot():
+    """gap_plot 第 8 章预期差图（demo v3 定稿数据）：A 档=逐机构横向分布（灰/橙/蓝/◆ 计数 +
+    偏离右列 + ◆标签落位阶梯 + pct_pt 一位小数），B 档=零轴偏离哑铃（tag/行注/反推口径），
+    consensus ≤0 行剔除、有效维度 <2 空串、防叠错位确定性（同输入两跑一致）。"""
+    from charts_misc import build_gap_plot, _inject_gap_chart
+    fill_a = {"gap_plot": {"dims": _GAP_DIMS_A,
+                           "text_dims": ["<b>⑤ 竞争格局：</b>文本维度附注。"]}}
+    # ── A 档全元素计数（12+9+8+8=37 灰点、7 major 橙点+图例 1、4 本文蓝点、4 ◆+图例 1）
+    html = build_gap_plot(fill_a)
+    assert 'aria-label="市场预期差机构分布图"' in html, "A 档应出分布图"
+    assert 'viewBox="0 0 1000 310"' in html, "4 行高度=30+70×4=310"
+    assert len(re.findall(r'r="4\.5" fill="#b3ab93"', html)) == 37, "灰点计数"
+    assert len(re.findall(r'r="5\.5" fill="#c08a2e"', html)) == 8, "橙点计数（7 数据 + 1 图例）"
+    assert len(re.findall(r'r="7\.5" fill="#4a6fa5"', html)) == 4, "蓝点计数"
+    assert len(re.findall(r'fill="#2b2620"', html)) == 5, "◆ 计数（4 行 + 1 图例）"
+    for lb in ("野村 952", "摩根士丹利 878", "中金 24.2", "高盛 632", "大和 25.8"):
+        assert lb in html, f"major 具名标签缺失：{lb}"
+    for lb in ("本文 930", "本文 30", "本文 650", "本文 26.0",
+               "一致 905", "一致 26.5", "一致 580", "一致 24.5"):
+        assert lb in html, f"本文/一致标签缺失：{lb}"
+    for dev in ("+2.8%", "+13.2%", "+12.1%", "+6.1%"):
+        assert dev in html, f"右列偏离缺失：{dev}"
+    assert "本文 26.0" in html and ">24.0</text>" in html, "pct_pt 比率型维度应保底一位小数"
+    assert ">24.5</text>" not in html, "与◆等值的刻度 24.5 应省略（由◆标签承载）"
+    # ◆ 标签落位：①④轴下左（text-anchor=end）、②③轴下右（start，无 anchor 属性）
+    assert re.search(r'text-anchor="end" font-size="10.5" fill="#57524a">一致 905', html), "①◆应轴下左"
+    assert re.search(r'text-anchor="end" font-size="10.5" fill="#57524a">一致 24.5', html), "④◆应轴下左"
+    assert re.search(r'(?<!text-anchor="end" )font-size="10.5" fill="#57524a">一致 26.5', html), "②◆应轴下右"
+    assert re.search(r'(?<!text-anchor="end" )font-size="10.5" fill="#57524a">一致 580', html), "③◆应轴下右"
+    # 928 灰点钉轴（距本文 <12px，由本文白描边压盖，不错位）：行 1 无离轴灰点
+    row1 = html.split("① 2026E 归母净利（亿元）", 1)[1].split("② 目标价", 1)[0]
+    assert 'cy="61"' not in row1 and 'cy="79"' not in row1, "行 1 灰点应全部在轴上（demo v3）"
+    # 防叠错位确定性：同输入两跑输出逐字节一致
+    assert build_gap_plot(fill_a) == build_gap_plot(fill_a), "泳道错位必须确定性"
+    # 泳道错位本身：构造两个 <12px 的灰点 → 一上一下 ±9
+    jam = {"gap_plot": {"dims": [
+        {"name": "A 维度", "ours": 100, "consensus": 100,
+         "street": [{"v": 50}, {"v": 51}]},
+        {"name": "B 维度", "ours": 200, "consensus": 200, "street": [{"v": 180}, {"v": 220}]},
+    ]}}
+    hj = build_gap_plot(jam)
+    assert 'cy="61"' in hj and 'cy="79"' in hj, "过近灰点应对称泳道错位 ±9px"
+    # 同值合并大点
+    same = {"gap_plot": {"dims": [
+        {"name": "A 维度", "ours": 100, "consensus": 100, "street": [{"v": 50}, {"v": 50}]},
+        {"name": "B 维度", "ours": 200, "consensus": 200, "street": [{"v": 180}, {"v": 220}]},
+    ]}}
+    assert 'r="6" fill="#b3ab93"' in build_gap_plot(same), "同值两家应合并为大点（r=6）"
+
+    # ── B 档：street 整体缺失 → 哑铃形态与 tag 文案
+    fill_b = {"gap_plot": {"dims": [
+        {"name": "2026E 归母净利（亿元）", "ours": 930, "consensus": 905},
+        {"name": "目标价 · 12 个月（元）", "ours": 30, "consensus": 26.5},
+        {"name": "2026E 出货量假设（GWh）", "ours": 650, "consensus": 580, "reverse": True},
+        {"name": "2026E 毛利率（%）", "ours": 26.0, "consensus": 24.5, "pct_pt": True, "reverse": True},
+    ]}}
+    hb = build_gap_plot(fill_b)
+    assert 'aria-label="市场预期差哑铃图（B 档）"' in hb, "B 档应出哑铃图"
+    assert "卖方一致预期 vs 本文假设 · 偏离拆解（反推口径）" in hb, "B 档 tag 文案"
+    assert "卖方 580 → 本文 650（反推）" in hb, "reverse 维度行注标（反推）"
+    assert "卖方 24.5% → 本文 26.0%（+1.5pct，反推）" in hb, "pct_pt 行注带原生 pct 点差"
+    assert "③④ 为反推口径" in hb, "source 应注明反推口径维度"
+    assert hb.count("<polygon") == 4, "4 行各一支方向箭头"
+    assert len(re.findall(r'r="6" fill="#b3ab93"', hb)) == 5, "零轴灰点计数（4 行 + 1 图例）"
+    assert ">0</text>" in hb and "-10%" in hb and "+15%" in hb, "定域 -10%~+15% 刻度在位"
+    assert 'cx="809.7"' in hb, "蓝点定位与右列显示同值（+13.2% → x=809.7）"
+    assert build_gap_plot(fill_b) == build_gap_plot(fill_b), "B 档确定性"
+
+    # ── 剔除与门禁
+    f_zero = {"gap_plot": {"dims": [
+        {"name": "坏行（consensus=0）", "ours": 1, "consensus": 0},
+        *_GAP_DIMS_A[:2]]}}
+    hz = build_gap_plot(f_zero)
+    assert "坏行" not in hz and 'viewBox="0 0 1000 170"' in hz, "consensus ≤0 行剔除（剩 2 行高 170）"
+    assert not build_gap_plot({"gap_plot": {"dims": [_GAP_DIMS_A[0]]}}), "<2 维应返回空串"
+    assert not build_gap_plot({}), "字段缺失应返回空串"
+    assert not build_gap_plot({"gap_plot": {"dims": []}}), "空 dims 应返回空串"
+    # 部分行缺 street → 仍 A 档，该行行注「未见逐机构明细」
+    f_mix = {"gap_plot": {"dims": [_GAP_DIMS_A[0],
+                                   {"name": "无形假设", "ours": 5, "consensus": 4}]}}
+    hm = build_gap_plot(f_mix)
+    assert 'aria-label="市场预期差机构分布图"' in hm and "未见逐机构明细" in hm, "行级退化"
+
+    # ── 锚点注入（charts_base._inject_chart_anchors 同一注入机，prepend 垫章首）
+    inj = _inject_gap_chart("<p>档位说明</p><!--GAP-->", fill_a)
+    assert "<!--GAP-->" not in inj and 'aria-label="市场预期差机构分布图"' in inj
+    assert '<ol class="gap-notes">' in inj and "<b>⑤ 竞争格局：</b>" in inj, "附注随图整体注入"
+    assert inj.find("档位说明") < inj.find("市场预期差机构分布图"), "锚点原位替换"
+    out2, err2 = capture_stderr_value(lambda: _inject_gap_chart("<p>无锚点</p>", fill_a))
+    assert "缺 <!--GAP--> 锚点" in err2, "锚点缺失应告警"
+    assert out2.find("市场预期差机构分布图") < out2.find("无锚点"), "锚点缺失时图垫章首"
+    out3, err3 = capture_stderr_value(lambda: _inject_gap_chart("<p>章文</p><!--GAP-->", {}))
+    assert out3 == "<p>章文</p>" and not err3, "字段未填锚点静默清除"
+    # 端到端：render_fill 走通（minimal_fill 的 gap_html 无锚点 → 垫章首）
+    html_full = render_fill(minimal_fill(gap_plot=fill_a["gap_plot"]))
+    assert 'aria-label="市场预期差机构分布图"' in html_full, "整报渲染应含预期差图"
+    # ── 热核审计修复钉死（v4.11.1 二轮）
+    # P1-3：B 档无 reverse 行时 tag 不带「（反推口径）」
+    hb2 = build_gap_plot({"gap_plot": {"dims": [
+        {"name": "目标价（元）", "ours": 30, "consensus": 26.5},
+        {"name": "2026E 归母净利（亿元）", "ours": 930, "consensus": 905}]}})
+    assert "偏离拆解</span>" in hb2 and "反推口径" not in hb2, "纯 B 档 tag 不得误标反推口径"
+    # P2-1：偏离超定域 → 虚线棒 + 空心蓝点 + source 注明
+    hc = build_gap_plot({"gap_plot": {"dims": [
+        {"name": "A", "ours": 300, "consensus": 100},     # +200% 超域
+        {"name": "B", "ours": 100, "consensus": 100}]}})
+    assert 'stroke-dasharray="4 3"' in hc and 'fill="#fffdf9"' in hc.replace(" ", "") \
+        or 'stroke-dasharray="4 3"' in hc, "超域行应有虚线棒"
+    assert "超出 -10%~+15% 定域" in hc, "source 应注明截断记号"
+    assert "+200.0%" in hc, "右列数值仍真实"
+    # P1-1/P1-2：多 major 碰撞 → 升档入册 + 两档皆撞降级仅机构名（点不删）
+    coll = {"gap_plot": {"dims": [
+        {"name": "A 维度", "ours": 100, "consensus": 100, "street": [
+            {"org": "甲证券", "v": 95.0, "major": True},
+            {"org": "乙证券", "v": 95.5, "major": True},
+            {"org": "丙证券", "v": 96.0, "major": True}]},
+        {"name": "B 维度", "ours": 200, "consensus": 200, "street": [{"v": 180}, {"v": 220}]}]}}
+    hcol = build_gap_plot(coll)
+    assert hcol.count('fill="#c08a2e"') == 4, "三个 major 点都在（3 数据 + 1 图例；永不删点）"
+    assert build_gap_plot(coll) == build_gap_plot(coll), "碰撞落位确定性"
+    # 两档皆撞 + 压本文带 → 降级仅机构名（不带数值）
+    coll2 = {"gap_plot": {"dims": [
+        {"name": "A 维度", "ours": 100, "consensus": 99.4, "street": [
+            {"org": "甲证券", "v": 99.0, "major": True},
+            {"org": "乙证券有限责任公司", "v": 99.6, "major": True},
+            {"org": "丙证券", "v": 100.2, "major": True}]},
+        {"name": "B 维度", "ours": 200, "consensus": 200, "street": [{"v": 180}, {"v": 220}]}]}}
+    h2 = build_gap_plot(coll2)
+    assert "乙证券有限责任公司" in h2, "降级后机构名仍在（点与名不消失）"
+    # P2-2：dims >6 时附注同步截断（⑦ 及以后的 note 不出现）
+    many = {"gap_plot": {"dims": [
+        {"name": f"维度{i}", "ours": 10 + i, "consensus": 10, "note": f"<b>注{i}</b>",
+         "street": [{"v": 9 + i}] if i % 2 == 0 else []} for i in range(9)]}}
+    inj_many = _inject_gap_chart("<!--GAP-->", many)
+    assert "注8" not in inj_many and "注7" not in inj_many, "附注应与图行同步截断"
+    # P2-3：大数值千分位（出货量原生单位），不上科学计数法
+    big = build_gap_plot({"gap_plot": {"dims": [
+        {"name": "出货量（万只）", "ours": 1234567, "consensus": 1000000,
+         "street": [{"v": 1100000}]},
+        {"name": "B 维度", "ours": 200, "consensus": 200, "street": [{"v": 180}, {"v": 220}]}]}})
+    assert "1,234,567" in big and "e+06" not in big, "大数值应千分位、禁科学计数法"
+    print("OK 预期差图 A/B 档 / 剔除门禁 / 防叠确定性 / 锚点注入 / 热核修复")
 
 
 if __name__ == "__main__":

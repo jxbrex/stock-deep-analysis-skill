@@ -550,6 +550,55 @@ def test_14_monthly_ohlc():
     print("14. 月线 OHLC（前复权/缺键回退/港股聚合补齐）通过")
 
 
+def test_15_e4_empty_hints():
+    """15. E4 降级提示（v4.11.1，审核 D6）：A股户数全空 → 降级提示行（对齐 E3/E5/E6 纪律）；
+    主序列有数据但季度序列 <3 期 → 提示 holders 图不生成。"""
+    import em_fetch
+    _o1, _o2 = em_fetch.fetch_holders, em_fetch.fetch_holders_quarterly
+    try:
+        em_fetch.fetch_holders = lambda code: []
+        em_fetch.fetch_holders_quarterly = lambda code: []
+        out = "\n".join(em_fetch._sec_e4("600000", False))
+        assert "未获取到股东户数数据" in out and "请降级" in out, \
+            f"A股全空应有降级提示，实际：{out!r}"
+        em_fetch.fetch_holders = lambda code: [
+            {"END_DATE": "2026-06-30", "HOLDER_NUM": 100, "HOLDER_NUM_RATIO": None}]
+        em_fetch.fetch_holders_quarterly = staticmethod(lambda code: [
+            {"END_DATE": "2026-06-30", "HOLDER_NUM": 100, "HOLDER_NUM_RATIO": None}])
+        out = "\n".join(em_fetch._sec_e4("600000", False))
+        assert "季度序列不足 3 期" in out, f"季度序列 <3 期应提示，实际：{out!r}"
+    finally:
+        em_fetch.fetch_holders, em_fetch.fetch_holders_quarterly = _o1, _o2
+    print("15. E4 空数据降级提示 通过")
+
+
+def test_16_consensus_detail():
+    """16. E5 逐机构明细（v4.11.1，gap_plot 数据源）：同机构 180 天内多份取最新、
+    np 万元→亿换算、目标价明细取 (min+max)/2、180 天外研报排除。"""
+    import em_owner
+    rows = [
+        {"org_name": "野村", "report_date": "20260830", "quarter": "2026Q4",
+         "np": 9520000, "eps": 2.1, "min_price": 30, "max_price": 32, "rating": "买入"},
+        {"org_name": "野村", "report_date": "20260701", "quarter": "2026Q4", "np": 9000000},
+        {"org_name": "摩根士丹利", "report_date": "20260812", "quarter": "2026Q4",
+         "np": 8780000, "eps": 2.0},
+        {"org_name": "老券商", "report_date": "20250101", "quarter": "2026Q4", "np": 1000000},
+    ]
+    _orig = em_core.ts_call
+    try:
+        em_core.ts_call = lambda name, params, **k: rows
+        c = em_owner.fetch_consensus("600938")
+    finally:
+        em_core.ts_call = _orig
+    d = c["detail"]["2026"]
+    assert len(d) == 2, f"180 天外研报应排除、同机构应去重，实际 {d}"
+    by = {x["org"]: x for x in d}
+    assert by["野村"]["np"] == 952.0, f"万元→亿且取最新（0830 覆盖 0701），实际 {by['野村']}"
+    assert "老券商" not in by
+    assert c["aim_detail"][0]["tp"] == 31.0, f"目标价明细应取 (30+32)/2，实际 {c['aim_detail']}"
+    print("16. E5 逐机构明细 通过")
+
+
 if __name__ == "__main__":
     import traceback
     test_01_market_map()
@@ -566,4 +615,6 @@ if __name__ == "__main__":
     test_12_fields_third_param()
     test_13_holders_quarterly()
     test_14_monthly_ohlc()
+    test_15_e4_empty_hints()
+    test_16_consensus_detail()
     print("全部断言通过")

@@ -1,4 +1,4 @@
-# 部署脚本：仓库 -> 部署目录（唯一同步入口，请在 commit 之后运行）
+﻿# 部署脚本：仓库 -> 部署目录（唯一同步入口，请在 commit 之后运行）
 # 用法：
 #   powershell -File scripts\deploy.ps1        # 预览（dry-run）
 #   powershell -File scripts\deploy.ps1 -Go    # 实际部署，结束后恢复部署目录只读

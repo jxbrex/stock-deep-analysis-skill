@@ -23,9 +23,13 @@
 
 ## 目录约定
 
-- `handoffs/`：每轮版本交接文档（v4.1 起），写完归档不再修改；`deploy.ps1` 排除清单
-  已排除该目录（skill 运行副本不携带维护史）。交接文档以仓库内为权威，仓库外
-  `_skill_repo` 目录已停止使用。
+- `handoffs/`：每轮版本交接文档（v4.1 起），写完归档不再修改（未开工的计划交接
+  如 v5.0 除外——它是跟踪载体，可随联动修订）。交接文档以仓库内为权威，仓库外
+  `_skill_repo` 目录已停止使用。`deploy.ps1` 排除清单（v4.11.2 扩充）：/XD 目录 =
+  .git / __pycache__ / .pytest_cache / artifacts / handoffs / tasks / golden（快照
+  测试基线，仅 test_golden.py 消费，运行时零依赖）；/XF 文件 = test_*.py / conftest.py /
+  CHANGELOG.md / README.md / AGENTS.md / deploy.ps1（测试与仓库维护侧，运行副本零依赖）。
+  运行副本只携带干活必需的源码、契约文档（references/）、模板（assets/）与 SKILL.md。
 
 ## 禁止事项
 

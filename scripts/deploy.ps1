@@ -7,7 +7,10 @@ param([switch]$Go)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $env:USERPROFILE '.agents\skills\stock-deep-analysis'
-$xd = @('.git', '__pycache__', '.pytest_cache', 'artifacts', 'handoffs', 'tasks')
+# /XD 目录排除：golden=快照测试基线（仅 test_golden.py 消费，运行时零依赖）
+$xd = @('.git', '__pycache__', '.pytest_cache', 'artifacts', 'handoffs', 'tasks', 'golden')
+# /XF 文件排除：测试与维护侧文件（test_*/conftest=pytest 侧；CHANGELOG/README/AGENTS/deploy=仓库维护侧）
+$xf = @('test_*.py', 'conftest.py', 'CHANGELOG.md', 'README.md', 'AGENTS.md', 'deploy.ps1')
 
 # 文档超长行闸（v4.10.1）：单行 >1500 字符会触发 v4.9.2 立案的 Read 截断陷阱，warn-only
 function Test-DocLines {
@@ -21,7 +24,7 @@ function Test-DocLines {
 Test-DocLines
 
 if (-not $Go) {
-    robocopy $repo $dest /MIR /L /XD $xd /NJH | Out-Null
+    robocopy $repo $dest /MIR /L /XD $xd /XF $xf /NJH | Out-Null
     $rc = $LASTEXITCODE
     if ($rc -ge 8) { Write-Host "robocopy 预览失败 (code $rc)"; exit 1 }
     if ($rc -eq 0) { Write-Host '预览完成：部署目录已是最新，无需变更。' }
@@ -30,7 +33,7 @@ if (-not $Go) {
 }
 
 attrib -R "$dest\*" /S /D | Out-Null
-robocopy $repo $dest /MIR /XD $xd /NFL /NDL | Out-Null
+robocopy $repo $dest /MIR /XD $xd /XF $xf /NFL /NDL | Out-Null
 $rc = $LASTEXITCODE
 if ($rc -ge 8) { Write-Host "robocopy 部署失败 (code $rc)，只读未恢复"; exit 1 }
 attrib +R "$dest\*" /S /D | Out-Null

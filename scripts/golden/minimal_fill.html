@@ -76,10 +76,18 @@ body {
 .section { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
 .section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #ece7db; background: #f7f2e7; }
 .section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #efe9db; border-radius: 4px; padding: 2px 8px; }
+/* v4.11.3：桌面标题不缩、meta 可缩——长 section-meta（同业口径/触发条件长句）曾把标题
+   挤到逐字折行（宁德时代 s9/s10 视觉审计实证），压力改由 11px 灰字 meta 折行吸收；
+   仅桌面生效——移动端正标题自身超宽（如「估值与安全边际（PE历史时段匹配法+DCF强制三行）」
+   26 字 ≈390px > 358px 内容盒），禁缩会把徽章顶出右缘 34px（同为审计实证），
+   故 ≤768px 恢复可缩、允许标题自然折两行 */
 .section-title { font-size: 15px; font-weight: 600; color: #2b2620; }
-.section-meta { margin-left: auto; font-size: 11px; color: #6f695e; }
+@media (min-width: 769px) { .section-title { flex-shrink: 0; } }
+.section-meta { margin-left: auto; font-size: 11px; color: #6f695e; min-width: 0; }
 .section-body { padding: 20px 24px; }
-.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; }
+/* v4.11.3：徽章不折行——390px 下被压缩的 section-meta 曾把「估值分 7.4」徽章
+   挤成逐字 4 行（视觉审计实证）；徽章是短词槽位，宁可外层 meta 换行 */
+.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .badge-green { background: #4d804d; }
 .badge-orange { background: #96691a; }
 .badge-red { background: #b84a4a; }
@@ -149,6 +157,36 @@ td.cell-worst { color: #2b2620; font-weight: 700; }
 .trig-status.miss { color: #b84a4a; }
 .trig-status.pending { color: #7a715e; }
 @media (max-width: 1024px) { .trig-strip { grid-template-columns: repeat(2, 1fr); } }
+/* v4.11.3 P0 驱动卡（drivers 字段，挂 2 章）：1-2 个关键利润驱动的弹性值 + 三情景锚标签，
+   判词横条复用 .layer-summary */
+.drv-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
+.drv { border: 1px solid #e0d7c3; border-radius: 8px; background: #f7f2e7; padding: 14px 16px; }
+.drv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.drv-name { font-size: 14px; font-weight: 700; color: #2b2620; }
+.drv-badge { font-size: 10.5px; font-weight: 700; color: #fff; background: #4a6fa5; border-radius: 3px; padding: 1px 6px; }
+.drv-elastic { font-size: 19px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; margin: 2px 0 4px; }
+.drv-elastic .unit { font-size: 12px; font-weight: 400; color: #6f695e; }
+.drv-note { font-size: 11.5px; color: #57524a; margin-bottom: 8px; }
+.drv-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+.drv-chips span { border: 1px solid #e0d7c3; border-radius: 4px; padding: 1px 7px; background: #fffdf9; color: #57524a; }
+.drv-chips b { font-weight: 700; }
+/* v4.11.3 周期阶段卡（cycle_stages 字段，挂 10 章）：网格去箭头——03→04 跨行箭头会误指 06
+   （demo 实证），顺序由大序号 + 加粗日期行承载；current 卡蓝框高亮 +「本轮」角标 */
+.stage-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 4px 0 12px; }
+.stage { position: relative; border: 1px solid #e0d7c3; border-radius: 8px; background: #f7f2e7; padding: 12px 14px; }
+.stage-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.stage-num { font-size: 18px; font-weight: 700; color: #b3ab93; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.stage-name { font-size: 14px; font-weight: 700; color: #2b2620; }
+.stage-meta { font-size: 12.5px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; margin-bottom: 4px; }
+.stage-driver { font-size: 11.5px; color: #6f695e; }
+.stage.current { border-color: #4a6fa5; background: #eef2f7; }
+.stage.current .stage-name { color: #4a6fa5; }
+.stage-cur-tag { position: absolute; top: 10px; right: 12px; font-size: 10.5px; font-weight: 700; color: #fff; background: #4a6fa5; border-radius: 3px; padding: 1px 6px; }
+/* 双数取整（trig-strip v4.9.2 同款）：恰 2/4 张时桌面 2 列 */
+@media (min-width: 1025px) {
+  .stage-strip:has(> .stage:nth-child(2):last-child),
+  .stage-strip:has(> .stage:nth-child(4):last-child) { grid-template-columns: repeat(2, 1fr); }
+}
 /* v4.9.1 补充修订二：5 章红灯检查 hero 三卡（l4_html 章首手写）；pass=通过（绿）/fail=不通过（红） */
 .flag-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
 .flag-hero-card { border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 16px; text-align: center; background: #fffdf9; }
@@ -246,6 +284,13 @@ html { scroll-behavior: smooth; }
   .flag-hero { grid-template-columns: 1fr; }
   /* v4.9.1 补充修订四：trig-strip 单列（治理分块/触发条件条卡片纵向排列） */
   .trig-strip { grid-template-columns: 1fr; }
+  /* v4.11.3：驱动卡/阶段卡移动单列 */
+  .drv-strip, .stage-strip { grid-template-columns: 1fr; }
+  /* v4.11.3：移动端 section-meta 落到标题下一行——长 meta（同业口径/触发条件长句）
+     不再与标题争行把短标题挤成逐字折行（390px「同业横向对比」6 行实证）；
+     标题独占一行后只可能因自身过长自然折行（全行折，非逐字挤） */
+  .section-header { flex-wrap: wrap; }
+  .section-meta { flex-basis: 100%; margin-left: 0; }
   /* v4.9.1 补充修订四 dash-table 移动卡片化：列序固定六列（指标/当前值/触发阈值/触发后操作/数据来源/更新频率），
      行转卡片 + td::before 列名标签，免横向滚动；手写 dash_html 结构不变 */
   .dash-table, .dash-table tbody, .dash-table tr, .dash-table td { display: block; width: 100%; }
@@ -352,6 +397,7 @@ html { scroll-behavior: smooth; }
   <div class="section-body">
     <p>关键驱动分析。</p>
     
+    
   </div>
 </div>
 
@@ -421,6 +467,7 @@ html { scroll-behavior: smooth; }
     <div class="table-scroll"><table class="scenario-table"><thead><tr><th>指标</th><th class="num">悲观情景</th><th class="num">基础情景</th><th class="num">乐观情景</th></tr></thead><tbody><tr><td>时间维度</td><td class="num">12个月</td><td class="num">12个月</td><td class="num">12个月</td></tr><tr><td>触发条件</td><td class="num">下行</td><td class="num">中性</td><td class="num">上行</td></tr><tr><td>归母净利</td><td class="num">80 亿</td><td class="num">100 亿</td><td class="num">120 亿</td></tr><tr><td>EPS</td><td class="num">0.80</td><td class="num">1.00</td><td class="num">1.20</td></tr><tr><td>PE</td><td class="num">8-10x</td><td class="num">10-12x</td><td class="num">12-14x</td></tr><tr><td>目标价</td><td class="num">6.40-8.00 元</td><td class="num">10-12 元</td><td class="num">14-17 元</td></tr><tr><td>较现价</td><td class="num"><span class="down">-28.0%</span>（中值7.20）</td><td class="num"><span class="up">+10.0%</span>（中值11）</td><td class="num"><span class="up">+56.0%</span>（中值16）</td></tr></tbody></table></div><div class="metric-row"><div class="metric-card"><div class="label">年化中枢期望收益</div><div class="value up">+10.0%</div><div class="sub">基础中值 11 ÷ 现价 10 − 1（12个月）</div></div><div class="metric-card"><div class="label">赔率（上行/下行）</div><div class="value bad">0.28</div><div class="sub">(基础中值−现价)÷(现价−悲观下限)；>1.5 为良好不对称</div></div><div class="metric-card"><div class="label">情景离散度</div><div class="value mid">84.0%</div><div class="sub">（乐观中值−悲观中值）÷ 现价；中不确定</div></div></div>
     
     <p>估值方法说明。</p>
+    
     <span class="section-tag">估值分计算</span><div class="table-scroll"><table><thead><tr><th>套件</th><th>输入值</th><th class="center">映射得分</th><th class="num">权重</th><th class="num">加权</th></tr></thead><tbody><tr><td>中枢分</td><td>年化中枢 +10.0%（12个月）</td><td class="center score-cell"><span class="badge badge-green">7.0</span></td><td class="num">×40%</td><td class="num">2.80</td></tr><tr><td>赔率分</td><td>赔率 0.28</td><td class="center score-cell"><span class="badge badge-red">3.5</span></td><td class="num">×25%</td><td class="num">0.88</td></tr><tr><td>合理倍数分</td><td>PE(TTM) 11x vs 合理带 10-12x</td><td class="center score-cell"><span class="badge badge-orange">5.0</span></td><td class="num">×25%</td><td class="num">1.25</td></tr><tr><td>股息分</td><td>股息率 2% − 无风险 1.7% = +0.3pct</td><td class="center score-cell"><span class="badge badge-orange">6.0</span></td><td class="num">×10%</td><td class="num">0.60</td></tr><tr><td colspan="2"><strong>估值分 = 2.80 + 0.88 + 1.25 + 0.60 = 5.5</strong></td><td class="center score-cell"><span class="badge badge-orange badge-lg">5.5</span></td><td colspan="2"><strong>合理无安全边际</strong></td></tr></tbody></table></div><span class="source">估值分档位：≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理无安全边际 / &lt;4 贵</span>
   </div>
 </div>

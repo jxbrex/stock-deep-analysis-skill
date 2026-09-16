@@ -615,3 +615,92 @@ def _inject_gap_chart(gap_html: str, fill: dict) -> str:
         gap_html,
         (("<!--GAP-->", block, "gap_plot"),),
         "gap_html", "第 8 章章首", "建议把锚点放到档位说明段之后", prepend=True)
+
+
+# ════════════════════ 2 关键利润驱动 · 驱动卡 / 10 周期规律 · 阶段卡（v4.11.3） ════════════════════
+
+def build_driver_cards(fill: dict) -> str:
+    """2 关键利润驱动·驱动卡（fill["drivers"] + fill["driver_verdict"]，v4.11.3）：
+    1-2 个关键利润驱动各一张卡——弹性值（大字号）+ 备注（当前值/撕扯力量）+ 三情景锚标签；
+    第一变量带 drv-badge 角标；卡下判词横条（.layer-summary）承载「为什么 X 是第一变量」
+    （v4.11.3 起替代 p0_html 手写 info-card）。
+    drivers: [{"name":"单Wh净利（单位盈利）","first_var":true,
+               "elastic":"±0.01元/Wh → 净利 ±100亿","elastic_sub":"±10.6%，1,000GWh 基数",
+               "note":"当前约 0.10元/Wh。……",
+               "chips":[{"label":"悲观","value":"0.085"},{"label":"基础","value":"0.095–0.10"},
+                        {"label":"乐观","value":"0.105"},{"label":"元/Wh","unit":true}]}, ...]
+    （chips 恰 3 情景档 + 可选 1 个 unit 标签；字段缺失/空 → 返回空串）"""
+    drivers = [d for d in fill.get("drivers") or [] if isinstance(d, dict)]
+    cards = []
+    for d in drivers:
+        name = str(d.get("name") or "").strip()
+        elastic = str(d.get("elastic") or "").strip()
+        if not name or not elastic:
+            continue
+        badge = '<span class="drv-badge">第一变量</span>' if d.get("first_var") else ""
+        sub = str(d.get("elastic_sub") or "").strip()
+        sub_html = f'<span class="unit">（{_esc(sub)}）</span>' if sub else ""
+        note = str(d.get("note") or "").strip()
+        note_html = f'<div class="drv-note">{_esc(note)}</div>' if note else ""
+        chips = []
+        for c in d.get("chips") or []:
+            if not isinstance(c, dict):
+                continue
+            label = str(c.get("label") or "").strip()
+            if not label:
+                continue
+            if c.get("unit"):
+                chips.append(f'<span>{_esc(label)}</span>')
+            else:
+                value = str(c.get("value") or "").strip()
+                chips.append(f'<span>{_esc(label)} <b>{_esc(value)}</b></span>')
+        chips_html = f'<div class="drv-chips">{"".join(chips)}</div>' if chips else ""
+        cards.append(
+            f'<div class="drv"><div class="drv-head"><span class="drv-name">{_esc(name)}</span>{badge}</div>'
+            f'<div class="drv-elastic">{_esc(elastic)}{sub_html}</div>'
+            f'{note_html}{chips_html}</div>')
+    if not cards:
+        return ""
+    verdict = str(fill.get("driver_verdict") or "").strip()
+    verdict_html = ""
+    if verdict:
+        first = next((d for d in drivers if d.get("first_var")), None)
+        first_name = str((first or {}).get("name") or "").strip()
+        lead = f"为什么{_esc(first_name)}是第一变量：" if first_name else "第一变量判词："
+        verdict_html = f'<div class="layer-summary"><strong>{lead}</strong>{_esc(verdict)}</div>'
+    return '<div class="drv-strip">' + "".join(cards) + '</div>' + verdict_html
+
+
+def build_cycle_stages(fill: dict) -> str:
+    """10 周期规律·阶段卡（fill["cycle_stages"]，v4.11.3）：阶段拆解从手写表格改为步骤卡网格
+    ——大序号 + 阶段名 + 加粗日期/PE/股价行 + 一句驱动（显示宽 ≤48，灭孤字），本轮高亮 + 「本轮」角标。
+    顺序由序号与 Z 字阅读承载，网格去箭头（03→04 跨行箭头会误指 06 的 demo 实证）。
+    cycle_stages: [{"name":"赛道泡沫期","period":"2021/01–2022/04","pe":"60–216x",
+                    "price":"162–355","driver":"新能源爆发初期赛道溢价；碳酸锂 5万→50万/吨",
+                    "current":false}, ...]
+    （3-6 项、恰 1 个 current；字段缺失/空 → 返回空串，cycle_html 手写阶段表旧形态不受影响）"""
+    cards = []
+    for s in fill.get("cycle_stages") or []:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name") or "").strip()
+        period = str(s.get("period") or "").strip()
+        if not name or not period:
+            continue
+        cur = bool(s.get("current"))
+        cls = "stage current" if cur else "stage"
+        tag = '<span class="stage-cur-tag">本轮</span>' if cur else ""
+        pe = str(s.get("pe") or "").strip()
+        price = str(s.get("price") or "").strip()
+        meta = " ｜ ".join(p for p in (_esc(period),
+                                      f"PE {_esc(pe)}" if pe else "",
+                                      f"股价 {_esc(price)}" if price else "") if p)
+        driver = str(s.get("driver") or "").strip()
+        driver_html = f'<div class="stage-driver">{_esc(driver)}</div>' if driver else ""
+        cards.append(
+            f'<div class="{cls}">{tag}<div class="stage-top"><span class="stage-num">{len(cards) + 1:02d}</span>'
+            f'<span class="stage-name">{_esc(name)}</span></div>'
+            f'<div class="stage-meta">{meta}</div>{driver_html}</div>')
+    if not cards:
+        return ""
+    return '<div class="stage-strip">' + "".join(cards) + '</div>'

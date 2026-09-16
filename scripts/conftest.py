@@ -197,14 +197,34 @@ def full_fill(**over):
                         "downstream": ["聚烯烃加工", "包装", "家电"]},
         sensitivity=[{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
                      {"name": "产量", "impact": 13}],
+        # v4.11.3：P0 驱动卡（first_var 名与 sensitivity 首行同名）+ 周期阶段卡 + DCF 双卡进 golden
+        drivers=[{"name": "金价", "first_var": True,
+                  "elastic": "±10% → 净利 ±20%", "elastic_sub": "±10%，金价 900 元/g 基数",
+                  "note": "当前约 900 元/g，被三重力量撕扯：美元实际利率、央行购金、地缘溢价。",
+                  "chips": [{"label": "悲观", "value": "800"}, {"label": "基础", "value": "900"},
+                            {"label": "乐观", "value": "1,000"}, {"label": "元/g", "unit": True}]},
+                 {"name": "产量", "elastic": "±10% → 净利 ±13%",
+                  "note": "2026E 约 50 吨，可见度高（在建矿山年底投产）。",
+                  "chips": [{"label": "悲观", "value": "45"}, {"label": "基础", "value": "50"},
+                            {"label": "乐观", "value": "55"}, {"label": "吨", "unit": True}]}],
+        driver_verdict="弹性（±20%）大于产量（±13%），且不确定性不对称——三情景围绕金价定义。",
         pe_history={"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年",
                     "milestones": [{"label": "2021H1", "pe": 46.9}, {"label": "2023Q2", "pe": 13.7}]},
         price_history={"label": "近3年", "series": months},
-        cycle_html=('<table><thead><tr><th>阶段</th><th class="num">时间</th><th class="num">PE</th>'
-                    '<th>驱动</th></tr></thead><tbody><tr><td>景气顶</td><td class="num">2021H1</td>'
-                    '<td class="num">46.9x</td><td>商品价格见顶</td></tr></tbody></table>'
+        cycle_html=('<p>当前处于阶段 03（修复重估）中段：业绩兑现中，PE 仍在历史带下沿。</p>'
                     '<span class="source">阶段拆解：E2 月线 + 当年 EPS 估算 PE</span>'
                     '<div class="conclusion-box"><strong>可复用规律：</strong>低分位≠便宜。</div>'),
+        cycle_stages=[
+            {"name": "景气顶", "period": "2021/01–2021/12", "pe": "30–47x", "price": "9–13",
+             "driver": "商品价格见顶", "current": False},
+            {"name": "双杀出清", "period": "2022/01–2024/01", "pe": "10–30x", "price": "6–12",
+             "driver": "价格暴跌+估值先杀", "current": False},
+            {"name": "修复重估", "period": "2024/02–2026/08", "pe": "10–16x", "price": "8–11",
+             "driver": "业绩兑现重估", "current": True}],
+        dcf={"value": 12.5, "fcf0": "95亿", "growth_5y": "5%", "g_perp": "2.5%", "wacc": "8.5%",
+             "net_cash": "120亿", "implied_g": "0.5",
+             "implied_note": "g=WACC−FCF₁/EV（EV=市值−净现金）",
+             "verdict": "隐含 g≈0.5% vs 近5年净利复合 +8%——市场按低增长定价，DCF 值与基础中值互证。"},
         peers_plot={"points": [
             {"name": "测试股份", "roe": 14, "pe": 11, "target": True},  # 与 valuation_inputs.pe_ttm 一致
             {"name": "同业甲", "roe": 9, "pe": 25},

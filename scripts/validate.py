@@ -916,6 +916,9 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
     _check_optional_charts(fill, warns)
+    _check_driver_cards(fill, warns)      # v4.11.3：P0 驱动卡字段（drivers/driver_verdict）
+    _check_cycle_stages(fill, warns)      # v4.11.3：周期阶段卡字段（cycle_stages）
+    _check_dcf(fill, warns)               # v4.11.3：DCF 双卡字段（dcf）
 
 
 def validate_content(fill: dict, calc: dict = None) -> None:
@@ -936,3 +939,114 @@ def validate_content(fill: dict, calc: dict = None) -> None:
         raise
     for w in warns:
         print(f"⚠️ 内容校验: {w}", file=sys.stderr)
+
+
+def _disp_w(s: str) -> int:
+    """显示宽度：CJK/全角计 2、ASCII 计 1——槽位契约的宽度口径（纯字符数对中英混排
+    过紧：「PE 25x→17.2x」26 字符实际只占 ~36 宽，单行可读）。"""
+    return sum(2 if ord(c) > 0x2E7F else 1 for c in s)
+
+
+def _check_driver_cards(fill: dict, warns: list) -> None:
+    """v4.11.3：P0 驱动卡字段校验（drivers/driver_verdict，软告警迁移期——缺失不拒）。
+    drivers 1-2 项、first_var 恰 1 个、chips 恰 悲观/基础/乐观 三情景档（+可选 unit）、
+    name ≤12 字、note 显示宽 ≤300（≈3 行；宁德时代融合版备注 137 字实测可读，原 90 字过紧
+    已放宽——宽度口径：CJK 计 2、ASCII 计 1）；first_var 名与 sensitivity 首行变量名不一致 → 告警；
+    p0_html 仍手写「为什么…第一变量」info-card → 重复告警。"""
+    drivers = [d for d in fill.get("drivers") or [] if isinstance(d, dict)]
+    if not drivers:
+        warns.append("drivers 字段未填：v4.11.3 起 P0 驱动卡由 drivers/driver_verdict 字段承载"
+                     "（1-2 个关键驱动：name/elastic/note/chips 三情景锚；p0_html 不再手写"
+                     "「为什么 X 是第一变量」info-card——判词由 driver_verdict 承载）")
+        return
+    if len(drivers) > 2:
+        warns.append(f"drivers 共 {len(drivers)} 项（应 1-2 个）：只保留对利润弹性最大的 1-2 个驱动")
+    firsts = [d for d in drivers if d.get("first_var")]
+    if len(firsts) != 1:
+        warns.append(f"drivers 的 first_var 应恰为 1 个（当前 {len(firsts)} 个）：第一变量只有一个")
+    for d in drivers:
+        tag = _plain_text(str(d.get("name") or "")).strip() or "?"
+        short = tag[:8] + ("…" if len(tag) > 8 else "")
+        if len(tag) > 12:
+            warns.append(f"drivers[{short}] name {len(tag)} 字 > 12（槽位契约：变量名只放一个概念，"
+                         "驱动因素写 note 不进名字）")
+        note_w = _disp_w(_plain_text(str(d.get("note") or "")).strip())
+        if note_w > 300:
+            warns.append(f"drivers[{short}] note 显示宽 {note_w} > 300（槽位契约：≈3 行上限，"
+                         "当前值+撕扯力量压缩表述，展开论证住正文）")
+        scen = [c for c in d.get("chips") or []
+                if isinstance(c, dict) and not c.get("unit")]
+        labels = [str(c.get("label") or "").strip() for c in scen]
+        if labels != ["悲观", "基础", "乐观"]:
+            warns.append(f"drivers[{short}] chips 情景档为 {labels}（应恰为 悲观/基础/乐观 三档，"
+                         "+可选 unit 标签）")
+    if not str(fill.get("driver_verdict") or "").strip():
+        warns.append("driver_verdict 未填：「为什么 X 是第一变量」判词缺失"
+                     "（弹性对比+不确定性不对称一句，卡下横条承载）")
+    sens = [s for s in fill.get("sensitivity") or [] if isinstance(s, dict)]
+    if firsts and sens:
+        fv = _plain_text(str(firsts[0].get("name") or "")).strip().replace(" ", "")
+        sv = _plain_text(str(sens[0].get("name") or "")).strip().replace(" ", "")
+        if fv and sv and fv != sv:
+            warns.append(f"drivers 第一变量「{firsts[0].get('name')}」与 sensitivity 首行「{sens[0].get('name')}」"
+                         "不同名：两处应一致（龙卷风图排序标签与驱动卡同源）")
+    if re.search(r'<div class="info-card"><strong>为什么', fill.get("p0_html") or ""):
+        warns.append("p0_html 仍含手写「为什么…」info-card：v4.11.3 起由 driver_verdict 判词横条承载，"
+                     "请删除手写块（drivers 已填）")
+
+
+def _check_cycle_stages(fill: dict, warns: list) -> None:
+    """v4.11.3：周期阶段卡字段校验（cycle_stages，软告警迁移期——缺失不拒）。
+    3-6 项、恰 1 个 current、name ≤8 字、driver 显示宽 ≤48（灭孤字契约；宽度口径：
+    CJK 计 2、ASCII 计 1——混合串「PE 25x→17.2x」26 字符实测单行可读，纯字符数 24 过紧
+    已改宽度）、period 必填；
+    cycle_html 手写阶段表与字段的关系：字段未填 → 迁移告警；并存 → 重复告警。"""
+    stages = [s for s in fill.get("cycle_stages") or [] if isinstance(s, dict)]
+    hand_table = re.search(r"<th[^>]*>\s*阶段\s*</th>", fill.get("cycle_html") or "")
+    if not stages:
+        if hand_table:
+            warns.append("cycle_html 含手写阶段拆解表：v4.11.3 起请迁移 cycle_stages 字段"
+                         "（name/period/pe/price/driver 显示宽 ≤48/current 恰 1 个），手写表格写法废止")
+        return
+    if not 3 <= len(stages) <= 6:
+        warns.append(f"cycle_stages 共 {len(stages)} 项（应 3-6 个阶段）")
+    curs = [s for s in stages if s.get("current")]
+    if len(curs) != 1:
+        warns.append(f"cycle_stages 的 current 应恰为 1 个（当前 {len(curs)} 个）：「本轮」只有一个")
+    for s in stages:
+        tag = _plain_text(str(s.get("name") or "")).strip() or "?"
+        short = tag[:6] + ("…" if len(tag) > 6 else "")
+        if len(tag) > 8:
+            warns.append(f"cycle_stages[{short}] name {len(tag)} 字 > 8（槽位契约）")
+        driver_w = _disp_w(_plain_text(str(s.get("driver") or "")).strip())
+        if driver_w > 48:
+            warns.append(f"cycle_stages[{short}] driver 显示宽 {driver_w} > 48（槽位契约：超长必孤字折行，"
+                         "压缩表述——demo 阶段 02「杀」字独占行实证；宽度口径：CJK 计 2、ASCII 计 1）")
+        if not str(s.get("period") or "").strip():
+            warns.append(f"cycle_stages[{short}] 缺 period（日期行是阶段卡的顺序主锚，必填）")
+    if hand_table:
+        warns.append("cycle_html 手写阶段表与 cycle_stages 字段并存（内容重复）：请删除手写表格")
+
+
+def _check_dcf(fill: dict, warns: list) -> None:
+    """v4.11.3：DCF 双卡字段校验（dcf，软告警迁移期——缺失不拒）。
+    稳健成长分型 dcf 缺失 → 强制告警；填了 → 八键齐全性 + verdict ≥40 字；
+    valuation_html 仍手写 DCF 表 → 重复告警。"""
+    d = fill.get("dcf")
+    if not isinstance(d, dict) or not d:
+        if "稳健成长" in str(fill.get("stock_type") or ""):
+            warns.append("dcf 字段未填：稳健成长分型 DCF 强制三行由 dcf 字段承载（v4.11.3 起；"
+                         "value/fcf0/growth_5y/g_perp/wacc/net_cash/implied_g/verdict 八键，"
+                         "现价比价脚本算，valuation_html 不再手写 DCF 表）")
+        return
+    missing = [k for k in ("value", "fcf0", "growth_5y", "g_perp", "wacc", "net_cash",
+                           "implied_g", "verdict") if not str(d.get(k) or "").strip()]
+    if missing:
+        warns.append(f"dcf 缺键 {missing}：八键应齐全（value/implied_g/verdict 缺一时整卡不生成）")
+    verdict_len = len(_plain_text(str(d.get("verdict") or "")).strip())
+    if 0 < verdict_len < 40:
+        warns.append(f"dcf.verdict {verdict_len} 字 < 40：判词须含隐含 g 对照与互证结论"
+                     "（与现价比价由脚本算后自动拼接，不用手写）")
+    vh = fill.get("valuation_html") or ""
+    if "<table" in vh and re.search(r">[^<]*DCF", vh):
+        warns.append("valuation_html 仍含手写 DCF 表：v4.11.3 起 DCF 由 dcf 字段承载，请删除手写表")

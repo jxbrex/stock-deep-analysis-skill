@@ -495,6 +495,49 @@ def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
     return ('<span class="section-tag">估值分计算</span>' + table + legend)
 
 
+def build_dcf_cards(fill: dict) -> str:
+    """7 估值章·DCF 双卡（fill["dcf"]，v4.11.3）：DCF 强制三行从 valuation_html 手写表格
+    改为字段承载——卡 1=保守参数 DCF 每股值（参数口径进 sub），卡 2=现价隐含永续增速
+    （反推口径进 sub），判词 info-card 收尾；「较现价高/低 X%」脚本算
+    （value ÷ _num(fill.price) − 1，防伪链同源的现价比价，模型不手算）。
+    dcf: {"value":422.8,"fcf0":"908.8亿（2025 OCF 1,332.2−资本开支 423.4）","growth_5y":"5%",
+          "g_perp":"2.5%","wacc":"8.5%","net_cash":"2,263亿","implied_g":"0.1",
+          "implied_note":"g=WACC−FCF₁/EV=…；EV=…","verdict":"隐含 g≈0 vs …（判词，不含现价比价）"}
+    （value/implied_g/verdict 缺一 → 返回空串；implied_g 填数值文本不带 %，% 脚本加）"""
+    d = fill.get("dcf") or {}
+    value = _num(d.get("value"))
+    implied_g = str(d.get("implied_g") or "").strip().rstrip("%").strip()
+    verdict = str(d.get("verdict") or "").strip()
+    if value is None or not implied_g or not verdict:
+        return ""
+
+    fcf0 = str(d.get("fcf0") or "").strip()
+    params = "、".join(p for p in (
+        f"5年增速 {str(d.get('growth_5y') or '').strip()}" if str(d.get("growth_5y") or "").strip() else "",
+        f"永续 g={str(d.get('g_perp') or '').strip()}" if str(d.get("g_perp") or "").strip() else "",
+        f"WACC={str(d.get('wacc') or '').strip()}" if str(d.get("wacc") or "").strip() else "") if p)
+    net_cash = str(d.get("net_cash") or "").strip()
+    sub1 = "；".join(p for p in (f"FCF₀={_esc(fcf0)}" if fcf0 else "",
+                                 _esc(params) if params else "",
+                                 f"含净现金 {_esc(net_cash)}" if net_cash else "") if p)
+    card1 = ('<div class="metric-card"><div class="label">保守参数 DCF 每股值</div>'
+             f'<div class="value">{_esc(_fmt(value))}<span class="unit">元</span></div>'
+             + (f'<div class="sub">{sub1}</div>' if sub1 else "") + '</div>')
+
+    implied_note = str(d.get("implied_note") or "").strip()
+    card2 = ('<div class="metric-card"><div class="label">现价隐含永续增速</div>'
+             f'<div class="value">{_esc(implied_g)}<span class="unit">%</span></div>'
+             + (f'<div class="sub">{_esc(implied_note)}</div>' if implied_note else "") + '</div>')
+
+    price = _num(fill.get("price"))
+    pct_txt = ""
+    if price and price > 0:
+        pct = (value / price - 1) * 100
+        pct_txt = f" 保守 DCF 每股值较现价{'高' if pct >= 0 else '低'} {abs(pct):.1f}%（脚本算）。"
+    verdict_html = (f'<div class="info-card"><strong>判词：</strong>{_esc(verdict)}{pct_txt}</div>')
+    return '<div class="metric-row">' + card1 + card2 + '</div>' + verdict_html
+
+
 # 仓位档位序列（上浮 20% 硬顶、下调 0 兜底；规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步）
 _POS_LADDER = [0, 5, 10, 20]
 # 兜底档位文案常量：validate 红灯校验按此字面消费，改文案只许改这里（否则校验静默失效）

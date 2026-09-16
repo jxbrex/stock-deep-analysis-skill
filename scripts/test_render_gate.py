@@ -660,3 +660,46 @@ if __name__ == "__main__":
         t()
         print(f"OK {t.__name__}")
     print(f"全部 {len(tests)} 项测试通过")
+
+
+def test_driver_cards_validate():
+    """v4.11.3 驱动卡校验：缺失告警；chips 非三情景档告警；first_var 与 sensitivity 首行
+    不同名告警；p0_html 手写「为什么…」info-card 且 drivers 已填 → 重复告警。"""
+    warns = validate_stderr(minimal_fill())
+    assert "drivers 字段未填" in warns
+    warns = validate_stderr(minimal_fill(
+        drivers=[{"name": "金价", "first_var": True, "elastic": "x",
+                  "chips": [{"label": "高", "value": "1"}]}],
+        driver_verdict="v", sensitivity=[{"name": "铜价", "impact": 10}]))
+    assert "chips 情景档" in warns and "不同名" in warns
+    warns = validate_stderr(minimal_fill(
+        p0_html='<div class="info-card"><strong>为什么X是第一变量</strong></div>',
+        drivers=[{"name": "金价", "first_var": True, "elastic": "x",
+                  "chips": [{"label": "悲观", "value": "1"}, {"label": "基础", "value": "2"},
+                            {"label": "乐观", "value": "3"}]}],
+        driver_verdict="v"))
+    assert "info-card" in warns and "为什么" in warns
+
+
+def test_cycle_stages_validate():
+    """v4.11.3 阶段卡校验：手写阶段表迁移告警；current 非 1 个告警；driver 超 24 字告警。"""
+    warns = validate_stderr(minimal_fill(cycle_html='<table><tr><th>阶段</th></tr></table>'))
+    assert "迁移 cycle_stages" in warns
+    warns = validate_stderr(minimal_fill(cycle_stages=[
+        {"name": "a", "period": "2021", "current": True},
+        {"name": "b", "period": "2022", "current": True},
+        {"name": "c", "period": "2023", "driver": "长" * 30}]))
+    assert "current" in warns and "> 48" in warns
+
+
+def test_dcf_validate():
+    """v4.11.3 DCF 校验：稳健成长缺 dcf 告警；缺键告警；valuation_html 手写 DCF 表重复告警。"""
+    warns = validate_stderr(minimal_fill(stock_type="稳健成长股"))
+    assert "dcf 字段未填" in warns
+    warns = validate_stderr(minimal_fill(dcf={"value": 12}))
+    assert "缺键" in warns
+    warns = validate_stderr(minimal_fill(
+        dcf={"value": 12, "fcf0": "1", "growth_5y": "1", "g_perp": "1", "wacc": "1",
+             "net_cash": "1", "implied_g": "1", "verdict": "长" * 50},
+        valuation_html='<table><tr><th>DCF三行</th></tr></table>'))
+    assert "手写 DCF 表" in warns

@@ -669,3 +669,76 @@ if __name__ == "__main__":
         t()
         print(f"OK {t.__name__}")
     print(f"全部 {len(tests)} 项测试通过")
+
+
+def test_driver_cards():
+    """v4.11.3 P0 驱动卡：drivers/driver_verdict → drv-strip + 判词横条；第一变量角标；
+    判词前缀取 first_var 名（无 first_var 退化「第一变量判词：」）；缺字段返回空串。"""
+    from charts_misc import build_driver_cards
+    fill = minimal_fill(drivers=[
+        {"name": "金价", "first_var": True, "elastic": "±10% → 净利 ±20%",
+         "elastic_sub": "±10%", "note": "当前约 900 元/g。",
+         "chips": [{"label": "悲观", "value": "800"}, {"label": "基础", "value": "900"},
+                   {"label": "乐观", "value": "1,000"}, {"label": "元/g", "unit": True}]},
+        {"name": "产量", "elastic": "±10% → 净利 ±13%", "note": "2026E 约 50 吨。",
+         "chips": [{"label": "悲观", "value": "45"}, {"label": "基础", "value": "50"},
+                   {"label": "乐观", "value": "55"}]}],
+        driver_verdict="弹性更大且不确定性不对称。")
+    html = build_driver_cards(fill)
+    assert 'class="drv-strip"' in html and html.count('class="drv"') == 2
+    assert 'drv-badge">第一变量' in html
+    assert '为什么金价是第一变量：' in html and '弹性更大且不确定性不对称。' in html
+    assert build_driver_cards(minimal_fill()) == ""
+    h2 = build_driver_cards(minimal_fill(drivers=[{"name": "量", "elastic": "±1"}],
+                                         driver_verdict="x"))
+    assert 'drv-badge' not in h2 and '第一变量判词：' in h2
+
+
+def test_cycle_stages():
+    """v4.11.3 周期阶段卡：序号自动编排（跳过非法项仍连续）、current 高亮+「本轮」角标、
+    pe/price 可省不炸；缺字段返回空串。"""
+    from charts_misc import build_cycle_stages
+    fill = minimal_fill(cycle_stages=[
+        {"name": "景气顶", "period": "2021", "pe": "30x", "price": "9", "driver": "价格见顶"},
+        {"name": "出清", "period": "2022", "driver": "估值先杀", "current": True}])
+    html = build_cycle_stages(fill)
+    assert 'class="stage-strip"' in html
+    assert '>01<' in html and '>02<' in html
+    assert 'class="stage current"' in html and 'stage-cur-tag">本轮' in html
+    assert build_cycle_stages(minimal_fill()) == ""
+
+
+def test_dcf_cards():
+    """v4.11.3 DCF 双卡：双 metric-card + 判词；现价比价脚本算（12.5 vs price 10 → 较现价高
+    25.0%）；value/implied_g/verdict 缺一返回空串。"""
+    from scoring import build_dcf_cards
+    dcf = {"value": 12.5, "fcf0": "95亿", "growth_5y": "5%", "g_perp": "2.5%", "wacc": "8.5%",
+           "net_cash": "120亿", "implied_g": "0.5", "implied_note": "g=WACC−FCF₁/EV",
+           "verdict": "隐含 g 极低、市场白送增长——判词足够长，超过四十字的地板要求啊啊。"}
+    html = build_dcf_cards(minimal_fill(dcf=dcf))
+    assert '保守参数 DCF 每股值' in html and '现价隐含永续增速' in html
+    assert '较现价高 25.0%' in html
+    assert build_dcf_cards(minimal_fill()) == ""
+    assert build_dcf_cards(minimal_fill(dcf={"value": 12.5})) == ""
+
+
+def test_three_cards_land_in_sections():
+    """v4.11.3：三卡占位符落位——drv-strip 在 s2、stage-strip 在 s10、DCF 双卡在 s7
+    （各字段缺失时对应位置无残留，占位符空串替换）。"""
+    html = render_fill(minimal_fill(
+        drivers=[{"name": "金价", "first_var": True, "elastic": "±10% → ±20%",
+                  "chips": [{"label": "悲观", "value": "1"}, {"label": "基础", "value": "2"},
+                            {"label": "乐观", "value": "3"}]}],
+        cycle_html="<p>当前位置。</p>",
+        cycle_stages=[{"name": "景气顶", "period": "2021", "current": True},
+                      {"name": "出清", "period": "2022"},
+                      {"name": "修复", "period": "2024"}],
+        dcf={"value": 12.5, "implied_g": "0.5", "verdict": "判词足够长，超过四十字的地板要求啊啊啊啊啊。"}))
+    s2 = html.split('id="s2"')[1].split('id="s3"')[0]
+    assert 'class="drv-strip"' in s2 and 'drv-badge">第一变量' in s2
+    s10 = html.split('id="s10"')[1].split('id="s11"')[0]
+    assert 'class="stage-strip"' in s10
+    s7 = html.split('id="s7"')[1].split('id="s8"')[0]
+    assert '保守参数 DCF 每股值' in s7 and '较现价高 25.0%' in s7
+    html2 = render_fill(minimal_fill())
+    assert 'drv-strip' not in html2 and 'stage-strip' not in html2

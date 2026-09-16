@@ -35,7 +35,7 @@ from scoring import (
     _esc, compute_scores,
     build_score_summary, build_valuation_process_card, build_position_card,
     _quality_verdict, _valuation_verdict,
-    compute_valuation, compute_valuation_score,
+    compute_valuation, compute_valuation_score, build_dcf_cards,
 )
 from charts_base import _fmt_px, _prev_track_rows
 from charts_scenario import (
@@ -46,7 +46,7 @@ from charts_l1 import _inject_l1_charts
 from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
-    _inject_gap_chart,
+    _inject_gap_chart, build_driver_cards, build_cycle_stages,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
 from validate import validate_content
@@ -54,7 +54,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.11.1"
+RENDERER_VERSION = "v4.11.3"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -305,6 +305,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "TARGET_SUB_HTML": fill.get("target_sub_html", ""),
         "CONCLUSION_HTML": fill.get("conclusion_html", ""),
         "P0_HTML": fill.get("p0_html", ""),
+        # v4.11.3：P0 驱动卡（drivers/driver_verdict 字段，垫在敏感性龙卷风前；空串替换）
+        "DRIVER_CARDS_HTML": build_driver_cards(fill),
         # v4.8：3.1 业务构成图 / 3.2 产业链图由锚点 <!--SEGMENTS--> / <!--CHAIN--> 注入 l1_html
         # v4.9：3.4 财务趋势图墙 <!--FIN_TREND--> 同注入；4.1 利润增长图 <!--GROWTH--> 注入 l3_html
         "L1_HTML": _inject_l1_charts(fill.get("l1_html", ""), fill),
@@ -322,6 +324,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "SCENARIO_BLOCK_HTML": scenario_block_html,
         "PEERS_PLOT_HTML": peers_plot_html,
         "CYCLE_META": fill.get("cycle_meta", ""),
+        # v4.11.3：周期阶段卡（cycle_stages 字段，垫在手写 cycle_html 前；空串替换）
+        "CYCLE_STAGES_HTML": build_cycle_stages(fill),
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
         # v4.9：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
@@ -341,6 +345,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "PRICE_HIST_HTML": build_price_history(fill),
         "HOLDERS_PLOT_HTML": build_holders_plot(fill),
         "REVIEW_PLOT_HTML": build_review_dumbbell(prev, quality, valuation, timing),
+        # v4.11.3：DCF 双卡（dcf 字段，垫在估值分计算过程卡前；空串替换）
+        "DCF_CARDS_HTML": build_dcf_cards(fill),
         "VALUATION_PROCESS_HTML": build_valuation_process_card(calc, valuation_calc,
                                                                fill.get("valuation_inputs") or {}),
         "POSITION_CARD_HTML": build_position_card(fill, quality, valuation, timing, calc, red_flag),

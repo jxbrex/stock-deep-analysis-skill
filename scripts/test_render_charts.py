@@ -36,13 +36,13 @@ def test_optional_charts_render():
     """v4.8 可选图：sensitivity/pe_history 填了才出图，缺省时条件块整块删除；
     评分横条图（数据现成）与侧栏目录始终生成；走廊图横版含单位注；
     明细表已并入横条图（不再出现）；龙卷风 delta/amount 子行承载金额影响。
-    v4.7.1：PE 历史带挪挂第 10 章（cycle_html 必填），垫在手写时段拆解前；milestones 时点标注。"""
+    v4.7.1：PE 历史带挪挂第 11 章（cycle_html 必填），垫在手写时段拆解前；milestones 时点标注。"""
     extra = {
         "sensitivity": [{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
                         {"name": "产量", "impact": 13}],
         "pe_history": {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年",
                        "milestones": [{"label": "2021H1", "pe": 46.9}, {"label": "2023Q2", "pe": 13.7}]},
-        # v4.7.1 起 PE 历史带挂第 10 章：pe_history 与 cycle_html 绑定（schema 新规则）
+        # v4.7.1 起 PE 历史带挂第 11 章：pe_history 与 cycle_html 绑定（schema 新规则）
         "cycle_html": '<table><thead><tr><th>阶段</th><th class="num">时间</th><th class="num">PE</th>'
                       '<th>驱动</th></tr></thead><tbody><tr><td>景气顶</td><td class="num">2021H1</td>'
                       '<td class="num">46.9x</td><td>商品价格见顶</td></tr></tbody></table>'
@@ -56,18 +56,18 @@ def test_optional_charts_render():
     assert "单位：元" in html, "走廊图应标注币种单位"
     assert "质量分明细" not in html, "明细表已并入评分横条图，不应再出现"
     assert "良好" in html, "横条图条端应含判词（7.0 → 良好）"
-    # v4.7.1：历史带位于第 10 章内、手写时段拆解之前（概览→明细）；milestones 时点标注渲染
-    s10_pos = html.find('id="s10"')
+    # v4.7.1：历史带位于第 11 章内、手写时段拆解之前（概览→明细）；milestones 时点标注渲染
+    s11_pos = html.find('id="s11"')
     band_pos = html.find('aria-label="PE(TTM)历史带"')
     cycle_pos = html.find("景气顶")
-    assert 0 <= s10_pos < band_pos < cycle_pos, "历史带应位于第 10 章内、时段表之前"
+    assert 0 <= s11_pos < band_pos < cycle_pos, "历史带应位于第 11 章内、时段表之前"
     assert "2021H1 46.9x" in html, "milestones 时点标注应渲染"
     # 缺省渲染：可选图条件块必须整块删除
     html2 = render_fill(minimal_fill())
     for label in ("敏感性龙卷风", "PE(TTM)历史带"):
         assert f'aria-label="{label}"' not in html2, f"缺字段时图应整块删除：{label}"
     assert 'aria-label="九维评分分布"' in html2, "评分横条图数据现成，应始终生成"
-    assert 'class="toc-side"' in html2 and 'href="#s11"' in html2, "侧栏目录应生成且指向章节锚点"
+    assert 'class="toc-side"' in html2 and 'href="#s12"' in html2, "侧栏目录应生成且指向章节锚点"
 
 
 def test_tornado_long_names():
@@ -116,7 +116,7 @@ def test_peers_label_within_bounds():
 
 
 def test_segments_chain_charts():
-    """v4.8 业务构成图（3.1 锚点 <!--SEGMENTS-->）与产业链图（3.2 锚点 <!--CHAIN-->）：
+    """v4.8 业务构成图（4.1 锚点 <!--SEGMENTS-->）与产业链图（4.2 锚点 <!--CHAIN-->）：
     锚点在位→原位替换；锚点缺失→追加章末+告警；字段缺失→锚点静默清除；占比和偏离→告警。"""
     extra = {
         "segments": {"period": "2025年报", "by": "按产品", "items": [
@@ -131,7 +131,7 @@ def test_segments_chain_charts():
     }
     long_text = "该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。"
     dims = [f'<div class="dim-block"><p>{long_text}</p></div>' for _ in range(6)]
-    # 锚点在位：分别钉在 3.1 / 3.2 维度块后
+    # 锚点在位：分别钉在 4.1 / 4.2 维度块后
     dims[0] += "<!--SEGMENTS-->"
     dims[1] += "<!--CHAIN-->"
     fill = minimal_fill(l1_html="".join(dims), **extra)
@@ -142,7 +142,7 @@ def test_segments_chain_charts():
     assert "毛利 56.8亿（占 62%）" in html, "柱下应标注毛利与毛利占比（_fmt 为 %g，62.0→62）"
     assert "利润口径为毛利" in html, "毛利口径注记必须在位（分部净利无公开披露）"
     assert "上游 · 供给端" in html and "煤制烯烃一体化" in html, "产业链三栏与公司定位注应渲染"
-    # 锚点缺失但字段已填 → 追加第 3 章末尾 + stderr 告警
+    # 锚点缺失但字段已填 → 追加第 4 章末尾 + stderr 告警
     l1_no_anchor = "".join(f'<div class="dim-block"><p>{long_text}</p></div>' for _ in range(6))
     fill2 = minimal_fill(l1_html=l1_no_anchor, **extra)
     html2, err2 = capture_stderr_value(lambda: R._fill_template(R._build_repl_map(
@@ -153,7 +153,7 @@ def test_segments_chain_charts():
         R.build_scenario_block(R.compute_valuation(fill2), "元"),
         R.build_peers_plot(fill2))))
     assert "缺 <!--SEGMENTS--> 锚点" in err2, "锚点缺失应告警"
-    assert 'aria-label="业务构成"' in html2, "锚点缺失时图应追加第 3 章末尾"
+    assert 'aria-label="业务构成"' in html2, "锚点缺失时图应追加第 4 章末尾"
     # 字段缺失但锚点在 → 锚点静默清除、图不生成
     fill3 = minimal_fill(l1_html="".join(dims))  # dims 带锚点，但无 segments/industry_chain
     html3 = R._fill_template(R._build_repl_map(
@@ -184,7 +184,7 @@ def test_segments_chain_charts():
 
 
 def test_price_history_and_holders():
-    """v4.8 ①发丝图挂第 10 章（历史带之后、时段表之前）；②户数趋势挂第 11 章（v4.9.1 起
+    """v4.8 ①发丝图挂第 11 章（历史带之后、时段表之前）；②户数趋势挂第 12 章（v4.9.1 起
     移至章首：时机判定小表前、三轨判定卡之前）；缺字段时两图整块消失。"""
     months = []
     for y in (2023, 2024, 2025):
@@ -203,14 +203,14 @@ def test_price_history_and_holders():
     html = render_fill(minimal_fill(**extra))
     assert 'aria-label="股价与PE历史走势"' in html, "发丝图应生成"
     assert 'aria-label="股东户数趋势"' in html, "户数趋势图应生成"
-    # 发丝图在第 10 章内；户数图在第 11 章章首（v4.9.1：时机判定小表前、三轨判定卡之前）
-    assert html.find('id="s10"') < html.find('aria-label="股价与PE历史走势"'), "发丝图应在第 10 章"
-    s11_pos = html.find('id="s11"')
+    # 发丝图在第 11 章内；户数图在第 12 章章首（v4.9.1：时机判定小表前、三轨判定卡之前）
+    assert html.find('id="s11"') < html.find('aria-label="股价与PE历史走势"'), "发丝图应在第 11 章"
+    s12_pos = html.find('id="s12"')
     holders_pos = html.find('aria-label="股东户数趋势"')
     position_pos = html.find("时机判定与决策逻辑")
     card_pos = html.find("三轨判定与仓位结论")
-    assert s11_pos < holders_pos < position_pos < card_pos, \
-        "户数图应在第 11 章章首（时机判定小表前、三轨判定卡之前）"
+    assert s12_pos < holders_pos < position_pos < card_pos, \
+        "户数图应在第 12 章章首（时机判定小表前、三轨判定卡之前）"
     assert "188,153" in html, "户数应带千位符"
     # v4.8.2 原位美化：面积填充 / 发丝加粗 / 年末竖网格 / 末端药丸标签
     ph_seg = html.split('aria-label="股价与PE历史走势"', 1)[1].split('</svg>', 1)[0]
@@ -520,7 +520,7 @@ _GAP_DIMS_A = [
 
 
 def test_gap_plot():
-    """gap_plot 第 8 章预期差图（demo v3 定稿数据）：A 档=逐机构横向分布（灰/橙/蓝/◆ 计数 +
+    """gap_plot 第 9 章预期差图（demo v3 定稿数据）：A 档=逐机构横向分布（灰/橙/蓝/◆ 计数 +
     偏离右列 + ◆标签落位阶梯 + pct_pt 一位小数），B 档=零轴偏离哑铃（tag/行注/反推口径），
     consensus ≤0 行剔除、有效维度 <2 空串、防叠错位确定性（同输入两跑一致）。"""
     from charts_misc import build_gap_plot, _inject_gap_chart
@@ -723,8 +723,9 @@ def test_dcf_cards():
 
 
 def test_three_cards_land_in_sections():
-    """v4.11.3：三卡占位符落位——drv-strip 在 s2、stage-strip 在 s10、DCF 双卡在 s7
-    （各字段缺失时对应位置无残留，占位符空串替换）。"""
+    """v4.11.3：三卡占位符落位——drv-strip 在 s2、stage-strip 在 s11、DCF 双卡在 s8
+    （各字段缺失时对应位置无残留，占位符空串替换）。
+    v5.0：s2 右界取 s4 而非 s3——新第 3 章（最新报告期透视）无数据时整章消失，split 会扑空。"""
     html = render_fill(minimal_fill(
         drivers=[{"name": "金价", "first_var": True, "elastic": "±10% → ±20%",
                   "chips": [{"label": "悲观", "value": "1"}, {"label": "基础", "value": "2"},
@@ -734,11 +735,13 @@ def test_three_cards_land_in_sections():
                       {"name": "出清", "period": "2022"},
                       {"name": "修复", "period": "2024"}],
         dcf={"value": 12.5, "implied_g": "0.5", "verdict": "判词足够长，超过四十字的地板要求啊啊啊啊啊。"}))
-    s2 = html.split('id="s2"')[1].split('id="s3"')[0]
+    s2 = html.split('id="s2"')[1].split('id="s4"')[0]
     assert 'class="drv-strip"' in s2 and 'drv-badge">第一变量' in s2
-    s10 = html.split('id="s10"')[1].split('id="s11"')[0]
-    assert 'class="stage-strip"' in s10
-    s7 = html.split('id="s7"')[1].split('id="s8"')[0]
-    assert '保守参数 DCF 每股值' in s7 and '较现价高 25.0%' in s7
+    s11 = html.split('id="s11"')[1].split('id="s12"')[0]
+    assert 'class="stage-strip"' in s11
+    s8 = html.split('id="s8"')[1].split('id="s9"')[0]
+    assert '保守参数 DCF 每股值' in s8 and '较现价高 25.0%' in s8
     html2 = render_fill(minimal_fill())
-    assert 'drv-strip' not in html2 and 'stage-strip' not in html2
+    # 模板 <style> 含 .drv-strip/.stage-strip 类定义——断言对象限定 </style> 之后的渲染内容
+    body2 = html2.split('</style>', 1)[1]
+    assert 'drv-strip' not in body2 and 'stage-strip' not in body2

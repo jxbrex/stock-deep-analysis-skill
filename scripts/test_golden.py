@@ -20,7 +20,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report as R
-from conftest import minimal_fill, full_fill, mcap_fill
+from conftest import minimal_fill, full_fill, mcap_fill, period_fill
 
 GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
 
@@ -73,11 +73,34 @@ def test_golden_mcap_fill():
     _assert_snapshot("mcap_fill", mcap_fill())
 
 
+def test_golden_period_h1():
+    """端到端快照（v5.0 第 3 章中报态）：进度子弹图（双分母刻度+节奏带）/ 单季双柱 /
+    绝对额同比表全开，TOC 含「透视」。"""
+    _assert_snapshot("period_h1", period_fill("h1"))
+
+
+def test_golden_period_q1():
+    """端到端快照（第 3 章一季态）：单季图退化单柱（累计即单季），0331 口径节奏带。"""
+    _assert_snapshot("period_q1", period_fill("q1"))
+
+
+def test_golden_period_q3():
+    """端到端快照（第 3 章三季态）：覆盖「无法判定」浅灰徽章。"""
+    _assert_snapshot("period_q3", period_fill("q3"))
+
+
+def test_golden_period_annual():
+    """端到端快照（年报期 is_annual=true）：第 3 章整章消失（TOC 亦无「透视」条目）。"""
+    _assert_snapshot("period_annual", period_fill("annual"))
+
+
 def test_golden_catches_mutation():
-    """自证有效：fill 内容改动必须导致输出偏离快照（快照不是摆设）——三份快照逐份验证。"""
+    """自证有效：fill 内容改动必须导致输出偏离快照（快照不是摆设）——四份快照逐份验证
+    （F19：扩入 period_h1——第 3 章中报态快照同样纳入变异自证）。"""
     if os.environ.get("GOLDEN_UPDATE") == "1":
         return  # 更新模式下快照尚未生成，跳过
-    for name, fn in (("minimal_fill", minimal_fill), ("full_fill", full_fill), ("mcap_fill", mcap_fill)):
+    for name, fn in (("minimal_fill", minimal_fill), ("full_fill", full_fill),
+                     ("mcap_fill", mcap_fill), ("period_h1", lambda **kw: period_fill("h1", **kw))):
         path = os.path.join(GOLDEN_DIR, f"{name}.html")
         assert os.path.exists(path), f"依赖已生成的快照: {path}"
         expected = open(path, encoding="utf-8").read()

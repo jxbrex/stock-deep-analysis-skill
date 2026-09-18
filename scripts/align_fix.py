@@ -92,7 +92,7 @@ def _content_vote(inner: str):
     """裸 td（无对齐类）按内容投票：数值/短数值串 → 'num'，文字/长句 → 'left'。
     解决两类不一致：th 有 num 而 td 全裸（表头右、数据左）；文字格被误标 num（核心业务行）。
     判定：剥括号注释后，去掉数字与数值符号所剩字符为空或仅为单位 → num，否则 left
-    （"3.1 赛道与宏观"含数字但是文字标签；"12个月"/"+70.1%"是数值）。"""
+    （"4.1 赛道与宏观"含数字但是文字标签；"12个月"/"+70.1%"是数值）。"""
     t = _plain_text(inner)
     if not t:
         return None
@@ -179,7 +179,7 @@ def fix_table_alignment(html: str) -> str:
                 decided[i] = None
                 continue
             num_n, cen_n, left_n = votes.count("num"), votes.count("center"), votes.count("left")
-            # v4.10 平票判左：文本为主的表（8 章预期差对照表等）原规则在平票时判 num，
+            # v4.10 平票判左：文本为主的表（9 章预期差对照表等）原规则在平票时判 num，
             # 同列出现「数字右、文字左」锯齿（工行 09-11 净息差判断行对齐混乱实证）——
             # 文字格右对齐比数字格左对齐更难看，平局一律让位给左
             if left_n and left_n >= num_n and left_n >= cen_n:

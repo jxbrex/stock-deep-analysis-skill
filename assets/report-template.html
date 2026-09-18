@@ -7,10 +7,42 @@
 <!--
   本模板由 scripts/render_report.py 渲染，占位符为双花括号唯一键（形如 COMPANY、DATE）。
   章节正文的 HTML 结构骨架见 references/fill-schema.md（dim-block/table/deduction/badge 等写法）。
-  条件章节：IF:CYCLE_HTML / IF:REVIEW_HTML 包裹的块在对应键为空时整块删除。
+  条件章节：IF:PERIOD_BULLETS_HTML / IF:CYCLE_HTML / IF:REVIEW_HTML 包裹的块在对应键为空时整块删除。
   三轨制：质量分（L1 六维 + L3）/ 估值分（独立价格轨）/ 时机分（微调）。
 -->
 <style>
+/* v5.0 色值 token 化：全部色值收敛为 :root 语义变量，样式表内不再出现字面 hex。
+   语义族沿用既有注释分组（纸墨/线沙/方向/评价/徽章/trig 状态/flag/scenario/警示）。 */
+:root {
+  /* 纸面与墨 */
+  --page: #faf6ef;        /* 页面底 */
+  --paper: #fffdf9;       /* 卡片纸面 */
+  --white: #fff;          /* 徽章白字 / 打印底 */
+  --ink: #2b2620;         /* 标题深墨 */
+  --text: #3a362e;        /* 正文墨 */
+  --text-soft: #57524a;   /* 次级墨（thesis/附注/判词） */
+  --muted: #6f695e;       /* 灰说明字（含原 #66604f 深灰并入） */
+  /* 线与沙：米色六档合三档（f7f2e7+fdf8f0→--sand；f2eddd+f1ebdd+efe9db→--sand-deep；faf6ef→--page） */
+  --line: #e0d7c3;        /* 外边框线（含打印边框 #ccc 并入） */
+  --line-soft: #ece7db;   /* 内部分隔细线 */
+  --sand: #f7f2e7;        /* 浅沙填充（卡头/斑马/小图底/警示卡底） */
+  --sand-deep: #f2eddd;   /* 深沙填充（hover/表头/标签/强调底，含打印表头 #e8e8e8 并入） */
+  /* 方向色与评价色（红涨绿跌 A 股惯例；评价色与方向色解耦） */
+  --red: #b84a4a;         /* 涨/坏/红灯（含原 danger 边条 #c75b5b 并入） */
+  --green: #4d804d;       /* 跌/好/通过 */
+  --amber: #96691a;       /* 中性/黄灯 */
+  --gray: #7a715e;        /* pending/灰徽章 */
+  --accent: #4a6fa5;      /* 钢蓝主色 */
+  --accent-soft: #eef2f7; /* 淡蓝底（current 阶段卡） */
+  --faint: #b3ab93;       /* 弱化装饰数字（阶段卡大序号） */
+  /* flag / 警示 / 修订家族 */
+  --pass-bg: #f0f5ec;
+  --pass-line: #cfdcc6;
+  --fail-bg: #f9eeea;
+  --fail-line: #e3c3bb;   /* 含原 deduction 边条 #f0d0d0 并入 */
+  --warn-line: #c08a2e;
+  --rev-bg: #fdf3d7;      /* 回测修订高亮 */
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   /* v4.10 栈首朱雀仿宋（F1 引用式接入，OFL，本机需自装 TrionesType/zhuque）；
@@ -18,231 +50,231 @@ body {
      当前发行版注册家族名实为「朱雀仿宋（预览测试版）」（2026-09-11 本机实证），
      必须放栈首；无前缀名保留以兼容未来正式版与英文系统名 */
   font-family: "朱雀仿宋（预览测试版）", "Zhuque Fangsong", "朱雀仿宋", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-  font-size: 14px; line-height: 1.7; color: #3a362e;
-  background: #faf6ef; max-width: 1100px; margin: 0 auto; padding: 24px 16px;
+  font-size: 14px; line-height: 1.7; color: var(--text);
+  background: var(--page); max-width: 1100px; margin: 0 auto; padding: 24px 16px;
 }
 .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
 /* 方向色：红涨绿跌（A 股惯例；v4.9 自国际惯例绿涨红跌翻转）。
    文字/徽章统一用加深系（pastel 仅留给 SVG 大面积填充）：白字/小字对比度达 WCAG AA */
-.up { color: #b84a4a; }
-.down { color: #4d804d; }
-.mid { color: #96691a; }
+.up { color: var(--red); }
+.down { color: var(--green); }
+.mid { color: var(--amber); }
 /* 评价色：绿好红坏——评分/赔率/有利不利等好坏语义用这对，与方向色解耦 */
-.good { color: #4d804d; }
-.bad { color: #b84a4a; }
-.plot-wrap { margin: 4px 0 6px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 12px 10px 6px; overflow-x: auto; }
+.good { color: var(--green); }
+.bad { color: var(--red); }
+.plot-wrap { margin: 4px 0 6px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--sand); padding: 12px 10px 6px; overflow-x: auto; }
 .plot-wrap svg { max-width: 1000px; margin: 0 auto; }
-.hero { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
+.hero { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 18px 28px 14px; margin-bottom: 16px; }
 .hero-top { display: flex; justify-content: space-between; align-items: stretch; gap: 28px; margin-bottom: 8px; }
 .hero-scores-col { display: flex; flex-direction: column; flex-shrink: 0; justify-content: center; }
 .hero-id { min-width: 0; flex: 1; display: flex; flex-direction: column; justify-content: flex-start; }
-.hero h1 { font-size: 26px; font-weight: 700; color: #2b2620; margin: 0 0 4px; }
-.hero .subtitle { font-size: 12.5px; color: #6f695e; }
-.hero .thesis { font-size: 14px; line-height: 1.8; color: #57524a; border-left: 3px solid #4a6fa5; padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
+.hero h1 { font-size: 24px; font-weight: 700; color: var(--ink); margin: 0 0 4px; }
+.hero .subtitle { font-size: 13px; color: var(--muted); }
+.hero .thesis { font-size: 14px; line-height: 1.8; color: var(--text-soft); border-left: 3px solid var(--accent); padding-left: 16px; margin: 12px 0 4px; max-width: 75ch; }
 /* Hero 三轨：质量分 + 估值分 独立卡片（带边框），时机分紧跟下方 */
 .hero-tracks { display: flex; gap: 16px; align-items: stretch; flex-shrink: 0; }
-.hero-track { text-align: center; border: 1px solid #e0d7c3; border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
-.hero-track.quality { background: #f2eddd; }
-.hero-track.valuation { background: #fffdf9; }
-.hero-track .s-label { font-size: 12px; color: #6f695e; letter-spacing: 1.2px; margin-bottom: 4px; }
+.hero-track { text-align: center; border: 1px solid var(--line); border-radius: 8px; padding: 20px 38px; min-width: 165px; flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; }
+.hero-track.quality { background: var(--sand-deep); }
+.hero-track.valuation { background: var(--paper); }
+.hero-track .s-label { font-size: 12px; color: var(--muted); letter-spacing: 1.2px; margin-bottom: 4px; }
 .hero-track .s-value { font-size: 46px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; }
-.hero-track.quality .s-value { color: #4a6fa5; }
-.hero-track.valuation .s-value.score-good { color: #4d804d; }
-.hero-track.valuation .s-value.score-mid { color: #96691a; }
-.hero-track.valuation .s-value.score-bad { color: #b84a4a; }
-.hero-track .s-sub { font-size: 12px; color: #6f695e; margin-top: 3px; }
+.hero-track.quality .s-value { color: var(--accent); }
+.hero-track.valuation .s-value.score-good { color: var(--green); }
+.hero-track.valuation .s-value.score-mid { color: var(--amber); }
+.hero-track.valuation .s-value.score-bad { color: var(--red); }
+.hero-track .s-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
 /* 时机分：一行灰字，弱化但可读（不偷感） */
-.hero-timing-mini { margin-top: 10px; font-size: 12.5px; color: #6f695e; letter-spacing: 0.3px; text-align: center; }
+.hero-timing-mini { margin-top: 10px; font-size: 13px; color: var(--muted); letter-spacing: 0.3px; text-align: center; }
 .hero-timing-mini .tv { font-variant-numeric: tabular-nums; }
-.hero-data-strip { display: flex; border-top: 1px solid #ece7db; padding-top: 10px; }
+.hero-data-strip { display: flex; border-top: 1px solid var(--line-soft); padding-top: 10px; }
 .hero-data-strip .d-item { flex: 1; min-width: 0; text-align: center; }
-.hero-data-strip .d-item + .d-item { border-left: 1px solid #ece7db; padding-left: 18px; margin-left: 18px; }
-.hero-data-strip .d-label { font-size: 11px; color: #6f695e; margin-bottom: 3px; }
-.hero-data-strip .d-value { font-size: 21px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
-.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: #6f695e; }
-.hero-data-strip .d-sub { font-size: 11px; color: #6f695e; margin-top: 3px; }
+.hero-data-strip .d-item + .d-item { border-left: 1px solid var(--line-soft); padding-left: 18px; margin-left: 18px; }
+.hero-data-strip .d-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+.hero-data-strip .d-value { font-size: 18px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.hero-data-strip .d-value .unit { font-size: 12px; font-weight: 400; color: var(--muted); }
+.hero-data-strip .d-sub { font-size: 11px; color: var(--muted); margin-top: 3px; }
 .metric-row { display: flex; gap: 12px; margin-bottom: 16px; }
-.metric-card { flex: 1; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; padding: 16px 18px; text-align: center; }
-.metric-card .label { font-size: 11px; color: #6f695e; margin-bottom: 4px; }
-.metric-card .value { font-size: 24px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
-.metric-card .value .unit { font-size: 13px; font-weight: 400; color: #6f695e; }
-.metric-card .sub { font-size: 11px; color: #6f695e; margin-top: 4px; }
+.metric-card { flex: 1; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; text-align: center; }
+.metric-card .label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.metric-card .value { font-size: 24px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.metric-card .value .unit { font-size: 13px; font-weight: 400; color: var(--muted); }
+.metric-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
 /* 三指标卡 value 着色（优先级高于 .metric-card .value 的默认色） */
-.metric-card .value.up { color: #b84a4a; }
-.metric-card .value.down { color: #4d804d; }
-.metric-card .value.mid { color: #96691a; }
-.metric-card .value.good { color: #4d804d; }
-.metric-card .value.bad { color: #b84a4a; }
-.section { background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
-.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #ece7db; background: #f7f2e7; }
-.section-num { font-size: 12px; font-weight: 700; color: #4a6fa5; background: #efe9db; border-radius: 4px; padding: 2px 8px; }
+.metric-card .value.up { color: var(--red); }
+.metric-card .value.down { color: var(--green); }
+.metric-card .value.mid { color: var(--amber); }
+.metric-card .value.good { color: var(--green); }
+.metric-card .value.bad { color: var(--red); }
+.section { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+.section-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid var(--line-soft); background: var(--sand); }
+.section-num { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--sand-deep); border-radius: 4px; padding: 2px 8px; }
 /* v4.11.3：桌面标题不缩、meta 可缩——长 section-meta（同业口径/触发条件长句）曾把标题
-   挤到逐字折行（宁德时代 s9/s10 视觉审计实证），压力改由 11px 灰字 meta 折行吸收；
+   挤到逐字折行（宁德时代 s10/s11 视觉审计实证），压力改由 11px 灰字 meta 折行吸收；
    仅桌面生效——移动端正标题自身超宽（如「估值与安全边际（PE历史时段匹配法+DCF强制三行）」
    26 字 ≈390px > 358px 内容盒），禁缩会把徽章顶出右缘 34px（同为审计实证），
    故 ≤768px 恢复可缩、允许标题自然折两行 */
-.section-title { font-size: 15px; font-weight: 600; color: #2b2620; }
+.section-title { font-size: 14px; font-weight: 600; color: var(--ink); }
 @media (min-width: 769px) { .section-title { flex-shrink: 0; } }
-.section-meta { margin-left: auto; font-size: 11px; color: #6f695e; min-width: 0; }
+.section-meta { margin-left: auto; font-size: 11px; color: var(--muted); min-width: 0; }
 .section-body { padding: 20px 24px; }
 /* v4.11.3：徽章不折行——390px 下被压缩的 section-meta 曾把「估值分 7.4」徽章
    挤成逐字 4 行（视觉审计实证）；徽章是短词槽位，宁可外层 meta 换行 */
-.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.badge-green { background: #4d804d; }
-.badge-orange { background: #96691a; }
-.badge-red { background: #b84a4a; }
-.badge-blue { background: #4a6fa5; }
-.badge-gray { background: #7a715e; }
-.badge-lg { font-size: 15px; padding: 3px 10px; }
+.badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; color: var(--white); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.badge-green { background: var(--green); }
+.badge-orange { background: var(--amber); }
+.badge-red { background: var(--red); }
+.badge-blue { background: var(--accent); }
+.badge-gray { background: var(--gray); }
+.badge-lg { font-size: 14px; padding: 3px 10px; }
 /* block + fit-content：标签独占一行，防手写正文直接跟在 span 后粘连（v4.7.1） */
-.section-tag { display: block; width: fit-content; background: #efe9db; color: #4a6fa5; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.section-tag { display: block; width: fit-content; background: var(--sand-deep); color: var(--accent); border: 1px solid var(--line); border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
 .score-line { margin: 4px 0 12px; }
-.muted { color: #6f695e; }
+.muted { color: var(--muted); }
 table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; font-variant-numeric: tabular-nums; }
-th { background: #f1ebdd; color: #6f695e; padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid #e0d7c3; }
+th { background: var(--sand-deep); color: var(--muted); padding: 8px 12px; text-align: left; font-weight: 600; font-size: 12px; letter-spacing: 0.3px; border-bottom: 2px solid var(--line); }
 /* v4.10：tbody 内 th（行标题写法，如同业表公司名列）归一为 td 同式——否则 th 底色米黄穿透
    斑马纹、首列条带断裂（工行 09-11 同业两表实证）；thead 表头样式不受影响 */
-tbody th { background: transparent; color: #3a362e; font-size: 13px; font-weight: 600; letter-spacing: 0; border-bottom: 1px solid #ece7db; }
-td { padding: 8px 12px; border-bottom: 1px solid #ece7db; color: #3a362e; }
-tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background: #f7f2e7; }
-tr:hover td, tr:hover th { background: #f2eddd; }
+tbody th { background: transparent; color: var(--text); font-size: 13px; font-weight: 600; letter-spacing: 0; border-bottom: 1px solid var(--line-soft); }
+td { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--text); }
+tbody tr:nth-child(even) td, tbody tr:nth-child(even) th { background: var(--sand); }
+tr:hover td, tr:hover th { background: var(--sand-deep); }
 td.num, th.num { text-align: right; }
 td.center, th.center { text-align: center; }
-.freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: #fffdf9; z-index: 2; box-shadow: 1px 0 0 #ece7db; }
-.freeze-first thead th:first-child { background: #f1ebdd; z-index: 3; }
-.freeze-first tbody tr:nth-child(even) td:first-child, .freeze-first tbody tr:nth-child(even) th:first-child { background: #f7f2e7; }
-.freeze-first tbody tr:hover td:first-child, .freeze-first tbody tr:hover th:first-child { background: #f2eddd; }
+.freeze-first th:first-child, .freeze-first td:first-child { position: sticky; left: 0; background: var(--paper); z-index: 2; box-shadow: 1px 0 0 var(--line-soft); }
+.freeze-first thead th:first-child { background: var(--sand-deep); z-index: 3; }
+.freeze-first tbody tr:nth-child(even) td:first-child, .freeze-first tbody tr:nth-child(even) th:first-child { background: var(--sand); }
+.freeze-first tbody tr:hover td:first-child, .freeze-first tbody tr:hover th:first-child { background: var(--sand-deep); }
 /* v4.9.2 同业对比当前指标表最优/最差标注：取消染底（与隔行斑马纹叠加显花，
    甘李 4 行 12 处高亮实证），改纯文字——best 红加粗（红=强，A 股惯例）、worst 黑加粗；
    斑马/hover 只动背景，不与文字色冲突，选择器随之简化 */
-td.cell-best { color: #b84a4a; font-weight: 700; }
-td.cell-worst { color: #2b2620; font-weight: 700; }
-.source { display: block; font-size: 11px; color: #6f695e; margin: 4px 0 12px; }
-/* 8 章预期差图下附注（gap_plot 字段）：编号悬挂缩进，<b> 深色承载维度短名（demo v3 定稿样式） */
-.gap-notes { font-size: 12px; color: #57524a; margin: 4px 0 14px; padding-left: 0; list-style: none; }
+td.cell-best { color: var(--red); font-weight: 700; }
+td.cell-worst { color: var(--ink); font-weight: 700; }
+.source { display: block; font-size: 11px; color: var(--muted); margin: 4px 0 12px; }
+/* 9 章预期差图下附注（gap_plot 字段）：编号悬挂缩进，<b> 深色承载维度短名（demo v3 定稿样式） */
+.gap-notes { font-size: 12px; color: var(--text-soft); margin: 4px 0 14px; padding-left: 0; list-style: none; }
 .gap-notes li { margin: 3px 0; padding-left: 24px; text-indent: -24px; }
-.gap-notes b { color: #3a362e; }
-/* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 3.4 维度块）：两列网格双轴组合图 */
+.gap-notes b { color: var(--text); }
+/* v4.9 财务健康五年组合图墙（fin_trend 字段，挂 4.4 维度块）：两列网格双轴组合图 */
 .mini-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0 8px; }
-.mini-cell { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; padding: 8px 8px 2px; }
-.mini-cell .m-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; margin-bottom: 2px; }
-.mini-cell .m-name { color: #57524a; font-weight: 600; }
-.mini-cell .m-val { font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; }
-.mini-cell .m-yoy { font-size: 10px; font-weight: 400; color: #6f695e; }
-/* v4.9 触发条件状态条（triggers 字段，垫 13 章手写仪表盘前）；hit/miss/pending 走评价色 */
+.mini-cell { border: 1px solid var(--line-soft); border-radius: 6px; background: var(--sand); padding: 8px 8px 2px; }
+.mini-cell .m-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 2px; }
+.mini-cell .m-name { color: var(--text-soft); font-weight: 600; }
+.mini-cell .m-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.mini-cell .m-yoy { font-size: 11px; font-weight: 400; color: var(--muted); }
+/* v4.9 触发条件状态条（triggers 字段，垫 14 章手写仪表盘前）；hit/miss/pending 走评价色 */
 /* v4.9.1 补充修订四 卡片化重排：HTML 结构（dot/cond/mt/status 四 span）不变，纯 CSS order 重排——
    标题居中独占行（允许两行）、dot+状态居中徽章行、论据独占行左对齐；
    桌面 3 列（5 块=3+2、6 条=3+3），≤1024px 2 列，≤768px 单列（媒体查询块内）；
    v4.9.2：恰 2/4 张时桌面改 2 列取整分排（4=2+2、2=1+1，见下方 :has 规则） */
 .trig-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 4px 0 10px; }
-/* v4.9.2 双数取整（甘李 3.3 护城河 4 卡 3+1 失衡实证）；:has 优先级高于下方 ≤1024px 媒体查询，
+/* v4.9.2 双数取整（甘李 4.3 护城河 4 卡 3+1 失衡实证）；:has 优先级高于下方 ≤1024px 媒体查询，
    故包在 min-width:1025px 内互斥；旧浏览器无 :has 回退 3 列（优雅降级） */
 @media (min-width: 1025px) {
   .trig-strip:has(> .trig:nth-child(2):last-child),
   .trig-strip:has(> .trig:nth-child(4):last-child) { grid-template-columns: repeat(2, 1fr); }
 }
 /* v4.9.2：align-content 默认 stretch 会把短内容卡片的多余空间摊进各行线盒、标题被居中下推
-   （甘李 3.5「股权与控制权」行内下沉实证）——改贴顶排布，同行标题/徽章/论据起点恒对齐 */
-.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: flex-start; gap: 3px 6px; font-size: 12.5px; padding: 12px 14px; border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; text-align: center; }
+   （甘李 4.5「股权与控制权」行内下沉实证）——改贴顶排布，同行标题/徽章/论据起点恒对齐 */
+.trig { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; align-content: flex-start; gap: 3px 6px; font-size: 13px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--sand); text-align: center; }
 .trig-dot { order: 2; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.trig-dot.hit { background: #4d804d; }
-.trig-dot.miss { background: #b84a4a; }
-.trig-dot.pending { background: #7a715e; }
+.trig-dot.hit { background: var(--green); }
+.trig-dot.miss { background: var(--red); }
+.trig-dot.pending { background: var(--gray); }
 /* mt 灰字内 strong 深色加粗承载关键事实（金额/时间窗/比例） */
-.trig-cond { order: 1; flex: 0 0 100%; font-weight: 600; color: #2b2620; font-size: 13px; text-align: center; }
-.trig-mt { order: 4; flex: 0 0 100%; color: #6f695e; font-size: 11.5px; text-align: left; margin-top: 3px; }
-.trig-mt strong { color: #2b2620; font-weight: 700; }
+.trig-cond { order: 1; flex: 0 0 100%; font-weight: 600; color: var(--ink); font-size: 13px; text-align: center; }
+.trig-mt { order: 4; flex: 0 0 100%; color: var(--muted); font-size: 12px; text-align: left; margin-top: 3px; }
+.trig-mt strong { color: var(--ink); font-weight: 700; }
 .trig-status { order: 3; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-.trig-status.hit { color: #4d804d; }
-.trig-status.miss { color: #b84a4a; }
-.trig-status.pending { color: #7a715e; }
+.trig-status.hit { color: var(--green); }
+.trig-status.miss { color: var(--red); }
+.trig-status.pending { color: var(--gray); }
 @media (max-width: 1024px) { .trig-strip { grid-template-columns: repeat(2, 1fr); } }
 /* v4.11.3 P0 驱动卡（drivers 字段，挂 2 章）：1-2 个关键利润驱动的弹性值 + 三情景锚标签，
    判词横条复用 .layer-summary */
 .drv-strip { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
-.drv { border: 1px solid #e0d7c3; border-radius: 8px; background: #f7f2e7; padding: 14px 16px; }
+.drv { border: 1px solid var(--line); border-radius: 8px; background: var(--sand); padding: 14px 16px; }
 .drv-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.drv-name { font-size: 14px; font-weight: 700; color: #2b2620; }
-.drv-badge { font-size: 10.5px; font-weight: 700; color: #fff; background: #4a6fa5; border-radius: 3px; padding: 1px 6px; }
-.drv-elastic { font-size: 19px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; margin: 2px 0 4px; }
-.drv-elastic .unit { font-size: 12px; font-weight: 400; color: #6f695e; }
-.drv-note { font-size: 11.5px; color: #57524a; margin-bottom: 8px; }
+.drv-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.drv-badge { font-size: 11px; font-weight: 700; color: var(--white); background: var(--accent); border-radius: 3px; padding: 1px 6px; }
+.drv-elastic { font-size: 18px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; margin: 2px 0 4px; }
+.drv-elastic .unit { font-size: 12px; font-weight: 400; color: var(--muted); }
+.drv-note { font-size: 12px; color: var(--text-soft); margin-bottom: 8px; }
 .drv-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; }
-.drv-chips span { border: 1px solid #e0d7c3; border-radius: 4px; padding: 1px 7px; background: #fffdf9; color: #57524a; }
+.drv-chips span { border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px; background: var(--paper); color: var(--text-soft); }
 .drv-chips b { font-weight: 700; }
-/* v4.11.3 周期阶段卡（cycle_stages 字段，挂 10 章）：网格去箭头——03→04 跨行箭头会误指 06
+/* v4.11.3 周期阶段卡（cycle_stages 字段，挂 11 章）：网格去箭头——03→04 跨行箭头会误指 06
    （demo 实证），顺序由大序号 + 加粗日期行承载；current 卡蓝框高亮 +「本轮」角标 */
 .stage-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 4px 0 12px; }
-.stage { position: relative; border: 1px solid #e0d7c3; border-radius: 8px; background: #f7f2e7; padding: 12px 14px; }
+.stage { position: relative; border: 1px solid var(--line); border-radius: 8px; background: var(--sand); padding: 12px 14px; }
 .stage-top { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
-.stage-num { font-size: 18px; font-weight: 700; color: #b3ab93; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
-.stage-name { font-size: 14px; font-weight: 700; color: #2b2620; }
-.stage-meta { font-size: 12.5px; font-weight: 700; color: #2b2620; font-variant-numeric: tabular-nums; margin-bottom: 4px; }
-.stage-driver { font-size: 11.5px; color: #6f695e; }
-.stage.current { border-color: #4a6fa5; background: #eef2f7; }
-.stage.current .stage-name { color: #4a6fa5; }
-.stage-cur-tag { position: absolute; top: 10px; right: 12px; font-size: 10.5px; font-weight: 700; color: #fff; background: #4a6fa5; border-radius: 3px; padding: 1px 6px; }
+.stage-num { font-size: 18px; font-weight: 700; color: var(--faint); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+.stage-name { font-size: 14px; font-weight: 700; color: var(--ink); }
+.stage-meta { font-size: 13px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; margin-bottom: 4px; }
+.stage-driver { font-size: 12px; color: var(--muted); }
+.stage.current { border-color: var(--accent); background: var(--accent-soft); }
+.stage.current .stage-name { color: var(--accent); }
+.stage-cur-tag { position: absolute; top: 10px; right: 12px; font-size: 11px; font-weight: 700; color: var(--white); background: var(--accent); border-radius: 3px; padding: 1px 6px; }
 /* 双数取整（trig-strip v4.9.2 同款）：恰 2/4 张时桌面 2 列 */
 @media (min-width: 1025px) {
   .stage-strip:has(> .stage:nth-child(2):last-child),
   .stage-strip:has(> .stage:nth-child(4):last-child) { grid-template-columns: repeat(2, 1fr); }
 }
-/* v4.9.1 补充修订二：5 章红灯检查 hero 三卡（l4_html 章首手写）；pass=通过（绿）/fail=不通过（红） */
+/* v4.9.1 补充修订二：6 章红灯检查 hero 三卡（l4_html 章首手写）；pass=通过（绿）/fail=不通过（红） */
 .flag-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
-.flag-hero-card { border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 16px; text-align: center; background: #fffdf9; }
-.flag-hero-card .fh-name { font-size: 12px; color: #6f695e; margin-bottom: 4px; }
-.flag-hero-card .fh-verdict { font-size: 26px; font-weight: 700; }
-.flag-hero-card .fh-desc { font-size: 11px; color: #6f695e; margin-top: 4px; }
-.flag-hero-card.pass { background: #f0f5ec; border-color: #cfdcc6; }
-.flag-hero-card.pass .fh-verdict { color: #4d804d; }
-.flag-hero-card.fail { background: #f9eeea; border-color: #e3c3bb; }
-.flag-hero-card.fail .fh-verdict { color: #b84a4a; }
+.flag-hero-card { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; text-align: center; background: var(--paper); }
+.flag-hero-card .fh-name { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.flag-hero-card .fh-verdict { font-size: 24px; font-weight: 700; }
+.flag-hero-card .fh-desc { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.flag-hero-card.pass { background: var(--pass-bg); border-color: var(--pass-line); }
+.flag-hero-card.pass .fh-verdict { color: var(--green); }
+.flag-hero-card.fail { background: var(--fail-bg); border-color: var(--fail-line); }
+.flag-hero-card.fail .fh-verdict { color: var(--red); }
 .mini-cell svg { width: 100%; height: auto; display: block; font-family: inherit; }
-.conclusion-box { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
-.warning-card { background: #fdf8f0; border-left: 3px solid #c08a2e; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
-.danger-card { background: #f9eeea; border-left: 3px solid #c75b5b; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.conclusion-box { background: var(--sand); border: 1px solid var(--line); border-radius: 6px; padding: 18px 22px; margin: 14px 0; }
+.warning-card { background: var(--sand); border-left: 3px solid var(--warn-line); padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.danger-card { background: var(--fail-bg); border-left: 3px solid var(--red); padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
 /* v4.10 损失预演三联卡（l4_html 固定骨架）：三卡=最可能的亏损故事/与红黄灯清单重合度/
    清单外新风险，与 scoring.md 损失预演强制三步一一对应；danger 家族红色语义 */
 .pm-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0 14px; }
-.pm-card { background: #f9eeea; border-left: 3px solid #c75b5b; border-radius: 0 6px 6px 0; padding: 12px 14px; font-size: 13px; }
-.pm-head { font-size: 12px; font-weight: 700; color: #b84a4a; margin-bottom: 5px; }
-.info-card { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
-.deduction { color: #b84a4a; font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid #f0d0d0; margin: 4px 0; }
+.pm-card { background: var(--fail-bg); border-left: 3px solid var(--red); border-radius: 0 6px 6px 0; padding: 12px 14px; font-size: 13px; }
+.pm-head { font-size: 12px; font-weight: 700; color: var(--red); margin-bottom: 5px; }
+.info-card { background: var(--sand-deep); border-left: 3px solid var(--accent); padding: 14px 18px; margin: 14px 0; border-radius: 0 6px 6px 0; }
+.deduction { color: var(--red); font-size: 13px; display: block; padding: 4px 0 4px 12px; border-left: 2px solid var(--fail-line); margin: 4px 0; }
 .deduction + br { display: none; }
 .scenario-table th:first-child, .scenario-table td:first-child { white-space: nowrap; }
 .timing-table th:not(:last-child), .timing-table td:not(:last-child) { white-space: nowrap; }
 /* 时机判定小表合计行（渲染器给含「合计/时机分」的末行补 tr.total）加粗+浅底，与前两列明细行区分；
    v4.10.3：选择器补 th——行首维度格多为 <th>，只选 td 时被 tbody th 的 transparent 归一，合计行条纹断裂 */
-.timing-table tr.total td, .timing-table tr.total th { font-weight: 700; background: #f2eddd; }
-/* v4.9.1 跟踪与触发合并单表（13 章 dash_html）：指标/当前值/触发阈值列防折行，
+.timing-table tr.total td, .timing-table tr.total th { font-weight: 700; background: var(--sand-deep); }
+/* v4.9.1 跟踪与触发合并单表（14 章 dash_html）：指标/当前值/触发阈值列防折行，
    触发后操作/数据来源长文列小字允许换行，行高不再被长文撑飞 */
 .dash-table th:nth-child(-n+3), .dash-table td:nth-child(-n+3) { white-space: nowrap; }
 .dash-table td:nth-child(4), .dash-table td:nth-child(5) { font-size: 12px; }
-.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ece7db; font-size: 12px; color: #66604f; }
-.prev-tag { display: inline-block; background: #efe9db; color: #4a6fa5; font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
-.rev { background: #fdf3d7; border-radius: 2px; padding: 0 2px; }
+.prev-strip { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--muted); }
+.prev-tag { display: inline-block; background: var(--sand-deep); color: var(--accent); font-weight: 700; border-radius: 4px; padding: 2px 8px; margin-right: 8px; font-size: 11px; }
+.rev { background: var(--rev-bg); border-radius: 2px; padding: 0 2px; }
 td.rev, th.rev { padding: 8px 12px; }
-.scenario-pess { color: #b84a4a; }
-.scenario-base { color: #96691a; }
-.scenario-opt { color: #4d804d; }
-.flag-ok { color: #4d804d; font-weight: 600; }
-.flag-bad { color: #b84a4a; font-weight: 600; }
-.flag-na { color: #96691a; font-weight: 600; }
+.scenario-pess { color: var(--red); }
+.scenario-base { color: var(--amber); }
+.scenario-opt { color: var(--green); }
+.flag-ok { color: var(--green); font-weight: 600; }
+.flag-bad { color: var(--red); font-weight: 600; }
+.flag-na { color: var(--amber); font-weight: 600; }
 .matrix-table th, .matrix-table td { text-align: center; font-size: 12px; padding: 14px 10px; }
-.matrix-table .target { background: #efe9db; font-weight: 700; color: #4a6fa5; }
-.layer-summary { background: #f2eddd; border-left: 3px solid #4a6fa5; padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
+.matrix-table .target { background: var(--sand-deep); font-weight: 700; color: var(--accent); }
+.layer-summary { background: var(--sand-deep); border-left: 3px solid var(--accent); padding: 12px 16px; margin: 16px 0 0; border-radius: 0 6px 6px 0; font-size: 13px; }
 .dim-block { margin-bottom: 20px; }
-.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #ece7db; }
-.dim-name { font-size: 14px; font-weight: 600; color: #3a362e; }
-.dim-weight { font-size: 11px; color: #6f695e; }
-/* 10 三轨评分三行公式（精简汇总） */
-.track-summary { background: #f7f2e7; border: 1px solid #e0d7c3; border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
+.dim-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
+.dim-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.dim-weight { font-size: 11px; color: var(--muted); }
+/* 12 三轨评分三行公式（精简汇总） */
+.track-summary { background: var(--sand); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; margin: 0 0 16px; }
 .ts-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 13px; }
-.ts-row + .ts-row { border-top: 1px solid #ece7db; }
-.ts-label { min-width: 48px; color: #6f695e; font-size: 12px; }
-.ts-formula { color: #66604f; font-variant-numeric: tabular-nums; }
-.decision-bar { background: #f2eddd; border: 1px solid #e0d7c3; border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
-.disclaimer { color: #6f695e; font-size: 11px; padding-top: 16px; margin-top: 24px; }
+.ts-row + .ts-row { border-top: 1px solid var(--line-soft); }
+.ts-label { min-width: 48px; color: var(--muted); font-size: 12px; }
+.ts-formula { color: var(--muted); font-variant-numeric: tabular-nums; }
+.decision-bar { background: var(--sand-deep); border: 1px solid var(--line); border-radius: 8px; padding: 14px 18px; margin: 14px 0; font-size: 13px; }
+.disclaimer { color: var(--muted); font-size: 11px; padding-top: 16px; margin-top: 24px; }
 .table-scroll { overflow-x: auto; }
 /* v4.8 版式修复：段落间距（此前 p 零间距导致核心结论四段粘合）/ 侧栏目录（固定右缘，宽屏显示） */
 .section-body p + p { margin-top: 10px; }
@@ -250,20 +282,20 @@ td.rev, th.rev { padding: 8px 12px; }
 /* v4.9.1 补充修订二：1 核心结论 2×2 结论卡网格（四卡固定序：关键优势/关键弱点/当前市场认知/
    核心投资逻辑；卡尾 concl-ref「详见 X 章」锚索引，浓缩要点+章节索引替代四段长文） */
 .concl-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 2px 0 12px; }
-.concl-card { border: 1px solid #e0d7c3; border-radius: 6px; background: #f7f2e7; padding: 12px 16px; font-size: 13px; line-height: 1.7; }
-.concl-card .concl-head { font-weight: 700; color: #3a362e; margin-bottom: 4px; }
-.concl-card .concl-ref { font-size: 11px; color: #6f695e; margin-top: 6px; }
-.concl-card .concl-ref a { color: #4a6fa5; text-decoration: none; }
-/* v4.9.1 补充修订四 ①关键优势卡特许 <ul> 三条壁垒短语（≤12 字/条、不带数据——数据论证留 s3）：
+.concl-card { border: 1px solid var(--line); border-radius: 6px; background: var(--sand); padding: 12px 16px; font-size: 13px; line-height: 1.7; }
+.concl-card .concl-head { font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.concl-card .concl-ref { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.concl-card .concl-ref a { color: var(--accent); text-decoration: none; }
+/* v4.9.1 补充修订四 ①关键优势卡特许 <ul> 三条壁垒短语（≤12 字/条、不带数据——数据论证留 s4）：
    去 bullet、加粗深色、钢蓝色点前缀，让三条短语在卡内视觉突出 */
 .concl-card ul { list-style: none; padding-left: 0; margin: 4px 0; }
-.concl-card ul li { font-weight: 600; color: #2b2620; padding: 2px 0; }
-.concl-card ul li::before { content: "▪ "; color: #4a6fa5; }
+.concl-card ul li { font-weight: 600; color: var(--ink); padding: 2px 0; }
+.concl-card ul li::before { content: "▪ "; color: var(--accent); }
 .section { scroll-margin-top: 10px; }
 html { scroll-behavior: smooth; }
 .toc-side { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; z-index: 50; }
-.toc-side a { font-size: 11px; color: #6f695e; text-decoration: none; background: #fffdf9; border: 1px solid #e0d7c3; border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
-.toc-side a:hover { background: #f2eddd; color: #2b2620; opacity: 1; }
+.toc-side a { font-size: 11px; color: var(--muted); text-decoration: none; background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 2px 7px; text-align: center; opacity: 0.75; }
+.toc-side a:hover { background: var(--sand-deep); color: var(--ink); opacity: 1; }
 @media (max-width: 1279px) { .toc-side { display: none; } }
 @media (max-width: 768px) {
   body { padding: 12px 8px; }
@@ -274,7 +306,7 @@ html { scroll-behavior: smooth; }
   .hero-top { flex-direction: column; gap: 14px; }
   .hero-tracks { align-self: stretch; justify-content: space-around; gap: 12px; }
   .hero-track { flex: 1; min-width: 0; }
-  .hero-track .s-value { font-size: 30px; }
+  .hero-track .s-value { font-size: 24px; }
   .hero-data-strip { flex-wrap: wrap; }
   .hero-data-strip .d-item { flex: 1 1 calc(50% - 12px); margin-top: 10px; }
   .hero-data-strip .d-item + .d-item { border-left: none; padding-left: 0; margin-left: 0; }
@@ -296,13 +328,13 @@ html { scroll-behavior: smooth; }
   .dash-table, .dash-table tbody, .dash-table tr, .dash-table td { display: block; width: 100%; }
   /* 表头手写为 <tr><th>（无 thead 包裹，浏览器自动归入 tbody）：整行隐藏靠 tr:has(th) */
   .dash-table thead, .dash-table tr:has(th) { display: none; }
-  .dash-table tr { border: 1px solid #ece7db; border-radius: 6px; background: #f7f2e7; margin: 0 0 10px; padding: 4px 0; }
+  .dash-table tr { border: 1px solid var(--line-soft); border-radius: 6px; background: var(--sand); margin: 0 0 10px; padding: 4px 0; }
   .dash-table tbody tr:nth-child(even) td { background: transparent; }
   .dash-table td { border-bottom: none; padding: 3px 12px; }
   .dash-table td:nth-child(-n+3) { white-space: normal; }
   .dash-table td:first-child { position: static; box-shadow: none; font-weight: 600; }
   .dash-table td.num { text-align: left; }
-  .dash-table td::before { display: block; font-size: 10.5px; font-weight: 400; color: #6f695e; }
+  .dash-table td::before { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
   .dash-table td:nth-child(1)::before { content: "指标"; }
   .dash-table td:nth-child(2)::before { content: "当前值"; }
   .dash-table td:nth-child(3)::before { content: "触发阈值"; }
@@ -311,9 +343,9 @@ html { scroll-behavior: smooth; }
   .dash-table td:nth-child(6)::before { content: "更新频率"; }
 }
 @media print {
-  body { background: #fff; padding: 12px; }
-  .section, .hero, .metric-card { border: 1px solid #ccc; }
-  th { background: #e8e8e8; }
+  body { background: var(--white); padding: 12px; }
+  .section, .hero, .metric-card { border: 1px solid var(--line); }
+  th { background: var(--sand-deep); }
   .toc-side { display: none; }
 }
 </style>
@@ -405,10 +437,29 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 3 公司本质 -->
+<!--IF:PERIOD_BULLETS_HTML-->
+<!-- 3 最新报告期透视（v5.0 条件章节）：PERIOD_BULLETS_HTML 空串时整章删除（CYCLE_HTML 同款先例） -->
 <div class="section" id="s3">
   <div class="section-header">
     <span class="section-num">3</span>
+    <span class="section-title">最新报告期透视</span>
+    <span class="section-meta">{{PERIOD_SUB}}</span>
+  </div>
+  <div class="section-body">
+    {{PERIOD_BULLETS_HTML}}
+    {{PERIOD_SQPLOT_HTML}}
+    {{PERIOD_TABLE_HTML}}
+    {{PERIOD_INDUSTRY_HTML}}
+    {{PERIOD_FORECAST_HTML}}
+    {{PERIOD_NOTE_HTML}}
+  </div>
+</div>
+<!--ENDIF-->
+
+<!-- 4 公司本质 -->
+<div class="section" id="s4">
+  <div class="section-header">
+    <span class="section-num">4</span>
     <span class="section-title">公司本质 — 什么成色</span>
     <span class="section-meta"><span class="badge badge-blue badge-lg">{{L1_SCORE}}</span> 占质量分 {{L1_W}}%</span>
   </div>
@@ -417,10 +468,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 4 未来预期 -->
-<div class="section" id="s4">
+<!-- 5 未来预期 -->
+<div class="section" id="s5">
   <div class="section-header">
-    <span class="section-num">4</span>
+    <span class="section-num">5</span>
     <span class="section-title">未来预期 — 利润往哪走</span>
     <span class="section-meta"><span class="badge badge-blue badge-lg">{{L3_SCORE}}</span> 占质量分 {{L3_W}}%</span>
   </div>
@@ -429,10 +480,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 5 风险评估（质量轨门禁） -->
-<div class="section" id="s5">
+<!-- 6 风险评估（质量轨门禁） -->
+<div class="section" id="s6">
   <div class="section-header">
-    <span class="section-num">5</span>
+    <span class="section-num">6</span>
     <span class="section-title">风险评估（红/黄灯）— 质量轨门禁</span>
     <span class="section-meta"><span class="badge badge-red">扣 {{YELLOW_TOTAL}} 分</span></span>
   </div>
@@ -441,10 +492,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 6 质量分汇总（脚本生成，模型不写） -->
-<div class="section" id="s6">
+<!-- 7 质量分汇总（脚本生成，模型不写） -->
+<div class="section" id="s7">
   <div class="section-header">
-    <span class="section-num">6</span>
+    <span class="section-num">7</span>
     <span class="section-title">质量分汇总</span>
     <span class="section-meta">质量分 {{QUALITY_SCORE}}</span>
   </div>
@@ -454,10 +505,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 7 估值与安全边际（估值轨，原 05） -->
-<div class="section" id="s7">
+<!-- 8 估值与安全边际（估值轨，原 05） -->
+<div class="section" id="s8">
   <div class="section-header">
-    <span class="section-num">7</span>
+    <span class="section-num">8</span>
     <span class="section-title">估值与安全边际（{{VALUATION_METHOD}}）</span>
     <span class="section-meta"><span class="badge {{VALUATION_BADGE_CLASS}} badge-lg">估值分 {{VALUATION_SCORE}}</span> ｜ {{STOCK_TYPE}}</span>
   </div>
@@ -474,10 +525,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 8 市场预期差拆解 -->
-<div class="section" id="s8">
+<!-- 9 市场预期差拆解 -->
+<div class="section" id="s9">
   <div class="section-header">
-    <span class="section-num">8</span>
+    <span class="section-num">9</span>
     <span class="section-title">市场预期差拆解</span>
     <span class="section-meta">档位 {{GAP_TIER}}</span>
   </div>
@@ -486,10 +537,10 @@ html { scroll-behavior: smooth; }
   </div>
 </div>
 
-<!-- 9 同业横向对比 -->
-<div class="section" id="s9">
+<!-- 10 同业横向对比 -->
+<div class="section" id="s10">
   <div class="section-header">
-    <span class="section-num">9</span>
+    <span class="section-num">10</span>
     <span class="section-title">同业横向对比</span>
     <span class="section-meta">{{PEERS_META}}</span>
   </div>
@@ -502,11 +553,11 @@ html { scroll-behavior: smooth; }
 </div>
 
 <!--IF:CYCLE_HTML-->
-<!-- 10 周期规律（条件章节）：历史带图垫在手写时段拆解前（概览→明细；条件块嵌套不支持，
+<!-- 11 周期规律（条件章节）：历史带图垫在手写时段拆解前（概览→明细；条件块嵌套不支持，
      PE_BAND_HTML 空串时占位符替换为空、无残留） -->
-<div class="section" id="s10">
+<div class="section" id="s11">
   <div class="section-header">
-    <span class="section-num">10</span>
+    <span class="section-num">11</span>
     <span class="section-title">周期规律</span>
     <span class="section-meta">{{CYCLE_META}}</span>
   </div>
@@ -517,10 +568,10 @@ html { scroll-behavior: smooth; }
 </div>
 <!--ENDIF-->
 
-<!-- 11 仓位与时机决策 -->
-<div class="section" id="s11">
+<!-- 12 仓位与时机决策 -->
+<div class="section" id="s12">
   <div class="section-header">
-    <span class="section-num">11</span>
+    <span class="section-num">12</span>
     <span class="section-title">仓位与时机决策</span>
     <span class="section-meta">质量分 {{QUALITY_SCORE}} × 估值分 {{VALUATION_SCORE}} ｜ 时机分 {{TIMING_SCORE}} 微调</span>
   </div>
@@ -531,10 +582,10 @@ html { scroll-behavior: smooth; }
 </div>
 
 <!--IF:REVIEW_HTML-->
-<!-- 12 回测复盘（条件章节；v4.8.1 起提前：先复盘旧指标，后定新跟踪指标） -->
-<div class="section" id="s12">
+<!-- 13 回测复盘（条件章节；v4.8.1 起提前：先复盘旧指标，后定新跟踪指标） -->
+<div class="section" id="s13">
   <div class="section-header">
-    <span class="section-num">12</span>
+    <span class="section-num">13</span>
     <span class="section-title">回测复盘</span>
     <span class="section-meta">基于 {{PREV_DATE}} 版报告</span>
   </div>
@@ -545,10 +596,10 @@ html { scroll-behavior: smooth; }
 </div>
 <!--ENDIF-->
 
-<!-- 13 跟踪仪表盘 -->
-<div class="section" id="s13">
+<!-- 14 跟踪仪表盘 -->
+<div class="section" id="s14">
   <div class="section-header">
-    <span class="section-num">13</span>
+    <span class="section-num">14</span>
     <span class="section-title">跟踪仪表盘</span>
     <span class="section-meta">下次审查：{{NEXT_REVIEW}}</span>
   </div>

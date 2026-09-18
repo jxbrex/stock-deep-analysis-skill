@@ -11,10 +11,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report as R
-from scoring import _position_steps, _quality_verdict, _valuation_verdict
+from scoring import (_position_steps, _quality_verdict, _valuation_verdict,
+                     _edge_info, build_edge_upgrade_rows)
 from conftest import (
     minimal_fill, _dim, _calc, expect_valueerror,
-    capture_stderr, validate_stderr, render_workspace, write_fill,
+    capture_stderr, validate_stderr, render_workspace, write_fill, render_fill, period_fill,
 )
 
 
@@ -27,12 +28,14 @@ def test_p0_low_quality_not_observation_pool():
 
 
 def test_uplift_cap_blocks_heavy_from_light():
-    """上浮封顶：质地一般（4.27×4.3）落轻仓，时机+离散度+赔率三连浮
+    """上浮封顶：质地一般（4.5×4.5，非临界——v5.0 机制一：原 4.27/4.3 距 4.0 边界 ≤0.3
+    属临界会降档冻结上浮）落轻仓，时机+离散度+赔率三连浮
     合计净效应 ≤1 档 → 最终标准仓 ≤10%，绝不允许重仓 ≤20%。"""
-    html = R.build_position_card(minimal_fill(), quality=4.27, valuation=4.3,
-                                 timing=7.0, calc=_calc(dispersion=0.30, odds=None),
+    html = R.build_position_card(minimal_fill(), quality=4.5, valuation=4.5,
+                                 timing=7.0, calc=_calc(dispersion=0.30, odds=None,
+                                                        floor_type="net_cash"),
                                  red_flag="")
-    assert "矩阵落位：质量 4.27 × 估值 4.3 → 质地一般 → 轻仓 ≤5%" in html, \
+    assert "矩阵落位：质量 4.50 × 估值 4.5 → 质地一般 → 轻仓 ≤5%" in html, \
         "落位文案缺失"
     assert "标准仓 ≤10%" in html, f"应止步标准仓，实际：{html}"
     assert "重仓 ≤20%" not in html, "轻仓不得被调节目测推成重仓"
@@ -42,7 +45,7 @@ def test_uplift_cap_blocks_heavy_from_light():
 def test_down_floors_at_zero():
     """下调兜底：轻仓落位 + 时机差(<4)降一档到 0 后，高离散度再触发下调必须
     兜底在 0，不得经 Python 负索引回卷成重仓 ≤20%。"""
-    html = R.build_position_card(minimal_fill(), quality=4.27, valuation=4.3,
+    html = R.build_position_card(minimal_fill(), quality=4.5, valuation=4.5,
                                  timing=3.5, calc=_calc(dispersion=0.95),
                                  red_flag="")
     assert "不建议参与" in html, "两连降至底应为「不建议参与」（0 兜底）"
@@ -52,7 +55,7 @@ def test_down_floors_at_zero():
 def test_matrix_direct_entry_to_heavy_untouched():
     """好公司·好价格（≥7 × ≥8）矩阵直落重仓不受封顶误伤；此时调节全被
     封顶/顶格拦截且不产生噪音条目以外的误导。"""
-    html = R.build_position_card(minimal_fill(), quality=7.2, valuation=8.5,
+    html = R.build_position_card(minimal_fill(), quality=7.5, valuation=8.5,
                                  timing=5.0, calc=_calc(),
                                  red_flag="")
     assert "重仓 ≤20%" in html, "矩阵直落重仓必须保留"
@@ -130,7 +133,7 @@ def test_peers_caliber_warn():
 
 
 def test_writing_discipline_warns():
-    """v4.7.1 写作纪律告警：四拍挤段 / 三年并排 / pe_history 无第 10 章承载。"""
+    """v4.7.1 写作纪律告警：四拍挤段 / 三年并排 / pe_history 无第 11 章承载。"""
     # 四拍挤段：同一 <p> 含 ≥2 个拍名 → 告警
     l1 = ('<div class="dim-block"><p><strong>判词：</strong>矿山服务龙头，海外占比 72% 是核心阿尔法。'
           '<strong>论据：</strong>2025 年报海外毛利 31.2 亿（+24%），续约率 91%（年报 P17）。'
@@ -154,9 +157,9 @@ def test_writing_discipline_warns():
                 '<tbody><tr><td>同业甲</td><td>8.0→30.8（大升）</td></tr></tbody></table>'
                 '<span class="source">来源：mx 批量</span>')
     assert "三年数字并排" not in validate_stderr(minimal_fill(peers_html=peers_ok)), "起→终格式不应告警"
-    # pe_history 与第 10 章绑定：cycle_html 缺失 → 告警；填了 → 不告警
+    # pe_history 与第 11 章绑定：cycle_html 缺失 → 告警；填了 → 不告警
     ph = {"hist_lo": 13.7, "hist_hi": 83.2}
-    assert "cycle_html 缺失" in validate_stderr(minimal_fill(pe_history=ph)), "pe_history 无第 10 章承载应告警"
+    assert "cycle_html 缺失" in validate_stderr(minimal_fill(pe_history=ph)), "pe_history 无第 11 章承载应告警"
     fill_ok = minimal_fill(pe_history=ph, cycle_html='<p>周期阶段分析正文，非空即渲染整章。</p>')
     assert "cycle_html 缺失" not in validate_stderr(fill_ok), "cycle_html 已填不应告警"
 
@@ -198,29 +201,31 @@ def test_quote_four_piece():
 
 def test_position_steps_direct():
     """v4.9：仓位决策链已抽成纯函数 _position_steps——直接测决策分支
-    （红灯熔断 / 中枢为负 / 直落重仓 / 上浮封顶 / 0 兜底 / 观察池下调）。"""
+    （红灯熔断 / 中枢为负 / 直落重仓 / 上浮封顶 / 0 兜底 / 观察池下调）。
+    v5.0：返回值扩为 4 元组（+crit 档位临界列表）；分支覆盖改用非临界分数
+    （原 7.2/4.27/4.3/5.8 均落在 ±0.3 临界带，临界分支见 test_position_steps_edge_critical）。"""
     # 红灯熔断：后续调节不再适用
-    label, steps, slot = _position_steps(7.2, 8.5, 7.0, _calc(odds=None), "财务造假嫌疑")
-    assert label == "不建议参与" and slot is None and "红灯熔断" in steps[0]
+    label, steps, slot, crit = _position_steps(7.5, 8.5, 7.0, _calc(odds=None), "财务造假嫌疑")
+    assert label == "不建议参与" and slot is None and "红灯熔断" in steps[0] and not crit
     # 中枢为负拦截器（不落矩阵）
-    label, steps, slot = _position_steps(7.2, 8.5, 7.0, _calc(), "")
+    label, steps, slot, crit = _position_steps(7.5, 8.5, 7.0, _calc(), "")
     assert label == "重仓 ≤20%" and "矩阵落位" in slot, "无红灯无负中枢应走矩阵直落"
-    label, steps, slot = _position_steps(7.2, 8.5, 7.0, {"central_raw": -0.1, "central": -0.1}, "")
+    label, steps, slot, crit = _position_steps(7.5, 8.5, 7.0, {"central_raw": -0.1, "central": -0.1}, "")
     assert label == "回避（中枢为负，等价格）" and slot is None and "中枢为负" in steps[0]
     # 上浮封顶：质地一般轻仓 + 时机/离散/赔率三连浮仍止步标准仓
-    label, steps, slot = _position_steps(4.27, 4.3, 7.0, _calc(dispersion=0.30, odds=None), "")
+    label, steps, slot, crit = _position_steps(4.5, 4.5, 7.0, _calc(dispersion=0.30, odds=None, floor_type="net_cash"), "")
     assert label == "标准仓 ≤10%" and "上浮封顶" in "".join(steps)
     # 下调 0 兜底：两次下调不得回卷
-    label, steps, slot = _position_steps(4.27, 4.3, 3.5, _calc(dispersion=0.95), "")
+    label, steps, slot, crit = _position_steps(4.5, 4.5, 3.5, _calc(dispersion=0.95), "")
     assert label == "不建议参与" and "重仓" not in "".join(steps)
     # 观察池：中上质地 + 差价格；时机差 → 下调不建议参与
-    label, steps, slot = _position_steps(5.8, 5.0, 5.0, None, "")
+    label, steps, slot, crit = _position_steps(5.9, 5.0, 5.0, None, "")
     assert label == "观察池" and "观察池" in slot
-    label, steps, slot = _position_steps(5.8, 5.0, 3.0, None, "")
+    label, steps, slot, crit = _position_steps(5.9, 5.0, 3.0, None, "")
     assert label == "不建议参与" and "观察池下调" in "".join(steps)
     # 与卡片渲染同源：build_position_card 输出含同一结论（行为零变更冒烟）
-    html = R.build_position_card(minimal_fill(), 4.27, 4.3, 7.0,
-                                 _calc(dispersion=0.30, odds=None), "")
+    html = R.build_position_card(minimal_fill(), 4.5, 4.5, 7.0,
+                                 _calc(dispersion=0.30, odds=None, floor_type="net_cash"), "")
     assert "标准仓 ≤10%" in html
     print("OK _position_steps 直接单测（红灯/负中枢/直落/封顶/兜底/观察池）")
 
@@ -231,15 +236,15 @@ def test_try_up_wording_nailed():
     （有空格）——1 字节漂移，因该分支零断言零快照覆盖而溜过。此处把三条路径
     （时机/离散度/赔率）的成功上浮文案逐字钉死，上浮分支统一「detail → 上浮一档」写法。"""
     # 时机分上浮成功（落轻仓 → 标准仓）
-    label, steps, _ = _position_steps(4.27, 4.3, 6.5, _calc(), "")
+    label, steps, _slot, _crit = _position_steps(4.5, 4.5, 6.5, _calc(), "")
     assert label == "标准仓 ≤10%"
     assert steps == ["时机分调节：时机分 6.50 ≥ 6 → 上浮一档（轻仓 ≤5%→标准仓 ≤10%）"], steps
     # 离散度上浮成功
-    label, steps, _ = _position_steps(4.27, 4.3, 5.0, _calc(dispersion=0.30), "")
+    label, steps, _slot, _crit = _position_steps(4.5, 4.5, 5.0, _calc(dispersion=0.30), "")
     assert label == "标准仓 ≤10%"
     assert steps == ["离散度调节：离散度 30.0% < 40% → 上浮一档（轻仓 ≤5%→标准仓 ≤10%）"], steps
     # 赔率 ∞ 上浮成功（归一化前此分支无空格，本轮有意归一——见 handoff 审计修补段）
-    label, steps, _ = _position_steps(4.27, 4.3, 5.0, _calc(dispersion=0.50, odds=None), "")
+    label, steps, _slot, _crit = _position_steps(4.5, 4.5, 5.0, _calc(dispersion=0.50, odds=None, floor_type="net_cash"), "")
     assert label == "标准仓 ≤10%"
     assert steps == ["赔率调节：赔率 ∞（悲观仍正收益） → 上浮一档（轻仓 ≤5%→标准仓 ≤10%）"], steps
     print("OK try_up 三上浮路径文案逐字钉死（时机/离散度/赔率）")
@@ -289,16 +294,16 @@ def test_conclusion_structure_warns():
         return (f'<div class="concl-card"><div class="concl-head">{head}</div>{body}'
                 f'<div class="concl-ref">详见 {ref}</div></div>')
 
-    four = ('<div class="concl-grid">' + card("关键优势", '<a href="#s3">3 公司本质</a>')
-            + card("关键弱点", '<a href="#s5">5 风险评估</a>')
-            + card("当前市场认知", '<a href="#s8">8 市场预期差</a>')
-            + card("核心投资逻辑", '<a href="#s7">7 估值与安全边际</a>') + '</div>')
+    four = ('<div class="concl-grid">' + card("关键优势", '<a href="#s4">4 公司本质</a>')
+            + card("关键弱点", '<a href="#s6">6 风险评估</a>')
+            + card("当前市场认知", '<a href="#s9">9 市场预期差</a>')
+            + card("核心投资逻辑", '<a href="#s8">8 估值与安全边际</a>') + '</div>')
     assert "缺卡" not in validate_stderr(minimal_fill(conclusion_html=four)), "四卡齐全不应告警"
-    three = four.replace(card("当前市场认知", '<a href="#s8">8 市场预期差</a>'), "")
+    three = four.replace(card("当前市场认知", '<a href="#s9">9 市场预期差</a>'), "")
     out = validate_stderr(minimal_fill(conclusion_html=three))
     assert "缺卡" in out and "当前市场认知" in out, "缺卡应告警并点名缺失卡头"
-    mixed = ('<div class="concl-grid">' + card("核心投资逻辑", "7") + card("关键优势", "3")
-             + card("关键弱点", "5") + card("当前市场认知", "8") + '</div>')
+    mixed = ('<div class="concl-grid">' + card("核心投资逻辑", "8") + card("关键优势", "4")
+             + card("关键弱点", "6") + card("当前市场认知", "9") + '</div>')
     out = validate_stderr(minimal_fill(conclusion_html=mixed))
     assert "顺序错误" in out, "四卡乱序应告警"
     print("OK conclusion 四卡结构（齐全放行 / 缺卡点名 / 乱序告警）")
@@ -397,14 +402,14 @@ def test_backtest_triggers_warning():
 
 
 def test_governance_strip_compact_warns():
-    """v4.9.1 补充修订二：3.5 治理块单行化——trig-strip 块内 <p> 恰为 2（判词+评分）→ 不告警；
-    trig 行后另起 <p> 正文（>2 个 <p>）→ 告警；3.5 未用 trig-strip 的存量写法 → 不打扰。"""
+    """v4.9.1 补充修订二：4.5 治理块单行化——trig-strip 块内 <p> 恰为 2（判词+评分）→ 不告警；
+    trig 行后另起 <p> 正文（>2 个 <p>）→ 告警；4.5 未用 trig-strip 的存量写法 → 不打扰。"""
 
     def l1_with_35(inner):
         dims = [('<div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，'
                  '论据详实可靠，行业地位稳固，具备长期参考价值。</p></div>')] * 5
         return "".join(dims) + ('<div class="dim-block"><div class="dim-header">'
-                                '<span class="dim-name">3.5 治理与资本配置</span></div>'
+                                '<span class="dim-name">4.5 治理与资本配置</span></div>'
                                 + inner + '</div>')
 
     trig = ('<div class="trig"><span class="trig-dot hit"></span>'
@@ -424,19 +429,19 @@ def test_governance_strip_compact_warns():
               '治理结构稳定，激励到位，分红持续。</p>')
     assert "恰为 2" not in validate_stderr(minimal_fill(l1_html=l1_with_35(legacy))), "未用 trig-strip 不打扰"
 
-    # 补充修订四：3.3 护城河 / 4.3 催化剂同款 <p> 恰为 2 规则
+    # 补充修订四：4.3 护城河 / 5.3 催化剂同款 <p> 恰为 2 规则
     def dim_with(name, inner):
         return ('<div class="dim-block"><div class="dim-header">'
                 f'<span class="dim-name">{name}</span></div>' + inner + '</div>')
     dims5 = [('<div class="dim-block"><p>该维度分析：公司基本面稳健，数据支撑充分，'
               '论据详实可靠，行业地位稳固，具备长期参考价值。</p></div>')] * 5
     assert "恰为 2" not in validate_stderr(minimal_fill(
-        l1_html="".join(dims5) + dim_with("3.3 商业模式与护城河", compact))), "3.3 紧凑形态不应告警"
+        l1_html="".join(dims5) + dim_with("4.3 商业模式与护城河", compact))), "4.3 紧凑形态不应告警"
     assert "恰为 2" in validate_stderr(minimal_fill(
-        l1_html="".join(dims5) + dim_with("3.3 商业模式与护城河", loose))), "3.3 另起正文应告警"
-    l3_43 = ("".join(dims5[:2]) + dim_with("4.3 催化剂", loose))
-    assert "恰为 2" in validate_stderr(minimal_fill(l3_html=l3_43)), "4.3 另起正文应告警"
-    print("OK 3.5 治理块单行化（紧凑放行 / 另起正文告警 / 存量不打扰 / 3.3+4.3 同款覆盖）")
+        l1_html="".join(dims5) + dim_with("4.3 商业模式与护城河", loose))), "4.3 另起正文应告警"
+    l3_43 = ("".join(dims5[:2]) + dim_with("5.3 催化剂", loose))
+    assert "恰为 2" in validate_stderr(minimal_fill(l3_html=l3_43)), "5.3 另起正文应告警"
+    print("OK 4.5 治理块单行化（紧凑放行 / 另起正文告警 / 存量不打扰 / 4.3+5.3 同款覆盖）")
 
 
 def test_peers_orientation_warns():
@@ -484,11 +489,11 @@ def test_peers_bestworst_warn():
 
 
 def test_governance_deduct_row_warn():
-    """v4.11.0：3.5 治理块评分段含扣分项时，trig 行必须有 miss「扣分」状态行
+    """v4.11.0：4.5 治理块评分段含扣分项时，trig 行必须有 miss「扣分」状态行
     （天齐 09-13 实证：评分段写「折价配售摊薄 −0.3」，四个方块却无一扣分档，结论断层）。"""
     import conftest as C
     gov = C._L1_GOV_BLOCK
-    deducted = gov.replace("关联交易关注项不扣分但列入 13 章跟踪",
+    deducted = gov.replace("关联交易关注项不扣分但列入 14 章跟踪",
                            "扣分项（H 股折价配售摊薄 −0.3）")
     l1 = "".join(C._dim(C._LONG_TEXT) for _ in range(5)) + deducted
     err = validate_stderr(minimal_fill(l1_html=l1))
@@ -573,7 +578,7 @@ def test_negative_profit_central_no_crash():
     calc = R.compute_valuation(f)
     assert isinstance(calc["central"], float), f"负中枢不得年化为复数：{calc['central']!r}"
     assert calc["central"] < -1, f"central_raw=-6（-50×11/10/10−1），实际 {calc['central']}"
-    label, steps, _ = _position_steps(6.0, 5.0, 5.0, calc, "")
+    label, steps, _slot, _crit = _position_steps(6.0, 5.0, 5.0, calc, "")
     assert "中枢为负" in label, f"负中枢应走拦截器，实际 {label}"
     f["thesis_html"] = "<p>困境反转论点：产能出清后正常化利润回归，本句仅作测试占位文本。</p>"
     warns = validate_stderr(f)
@@ -597,7 +602,7 @@ def test_cross_scenario_inversion_rejected():
 
 def test_dim_blocks_by_dim_name():
     """v4.11.1（审核 D3）：dim-block 乱序时按 dim-name 编号映射维度——
-    3.3 块写最前，极端分 1C=8.5 的证据校验仍须命中 3.3 块（旧位置 zip 会错配到 1A 漏检）。"""
+    4.3 块写最前，极端分 1C=8.5 的证据校验仍须命中 4.3 块（旧位置 zip 会错配到 1A 漏检）。"""
     f = minimal_fill()
     f["scores"]["1C"] = 8.5
     thin_txt = "护城河论据较薄但越过地板线，此处补充字数" + "据" * 13   # 块总长 45（含头部11字）：过 40 地板、踩 <50 极端分门槛
@@ -606,13 +611,13 @@ def test_dim_blocks_by_dim_name():
         return (f'<div class="dim-block"><div class="dim-header">'
                 f'<span class="dim-name">{num} {name}</span></div><p>{txt}</p></div>')
     long_txt = "该维度分析：论据与数据充分，行业地位稳固，具备长期参考价值，结论可靠。"
-    f["l1_html"] = (_named("3.3", "商业模式与护城河", thin_txt)
-                    + _named("3.1", "赛道与宏观", long_txt) + _named("3.2", "产业链位置", long_txt)
-                    + _named("3.4", "财务健康", long_txt) + _named("3.5", "治理与资本配置", long_txt)
-                    + _named("3.6", "资本回报质量", long_txt))
+    f["l1_html"] = (_named("4.3", "商业模式与护城河", thin_txt)
+                    + _named("4.1", "赛道与宏观", long_txt) + _named("4.2", "产业链位置", long_txt)
+                    + _named("4.4", "财务健康", long_txt) + _named("4.5", "治理与资本配置", long_txt)
+                    + _named("4.6", "资本回报质量", long_txt))
     err = validate_stderr(f)
-    assert "3.3 商业模式与护城河 得分 8.5（极端分）" in err, \
-        f"乱序下极端分校验应命中 3.3 块，实际 stderr：{err[:400]}"
+    assert "4.3 商业模式与护城河 得分 8.5（极端分）" in err, \
+        f"乱序下极端分校验应命中 4.3 块，实际 stderr：{err[:400]}"
 
 
 def test_quote_present_date_gate():
@@ -701,5 +706,535 @@ def test_dcf_validate():
     warns = validate_stderr(minimal_fill(
         dcf={"value": 12, "fcf0": "1", "growth_5y": "1", "g_perp": "1", "wacc": "1",
              "net_cash": "1", "implied_g": "1", "verdict": "长" * 50},
-        valuation_html='<table><tr><th>DCF三行</th></tr></table>'))
+        valuation_html='<table><tr><th>DCF三行</th></tr></table>'
+                       '<span class="source">数据来源：测试</span>'))  # 表须带来源标注，否则先撞内容地板硬拒
     assert "手写 DCF 表" in warns
+
+
+# ---------------- v5.0 第 3 章「最新报告期透视」校验与渲染 ----------------
+
+def test_period_track_cross_check():
+    """v5.0 period_track 落盘交叉校验（quote 防伪同款纪律）：一致过 / 数值偏差>1% 拒 /
+    照抄字段夹带文字拒 / 落盘无 period_track 键拒 / 文字同比完全一致 / fill 有值落盘 None
+    （手估嫌疑）拒 / consensus_np 失配拒 / 漏抄软告警 / quote 缺失软告警。"""
+    f = period_fill()
+    R.validate_content(f, R.compute_valuation(f))  # 一致 → 过
+    f = period_fill()
+    f["period_track"]["np"] = 120.0
+    expect_valueerror(f, "period_track.np 与落盘不一致应拒")
+    f = period_fill()
+    f["period_track"]["rev"] = "301.98（H股口径）"
+    expect_valueerror(f, "照抄字段夹带文字应拒")
+    f = period_fill()
+    f["period_track"]["consensus_np"] = 150.0
+    expect_valueerror(f, "consensus_np 与落盘 np_avg 不一致应拒")
+    with render_workspace() as d:
+        # 落盘无 period_track 键 → 拒（禁手估，神华同款）
+        ref = write_fill({"price": 10.0, "pe_ttm": 11.0}, d, name="em_ref.json")
+        f = period_fill(quote={"source_file": ref, "date": "2026-08-27"})
+        expect_valueerror(f, "落盘无 period_track 键应拒")
+        # 文字同比：完全一致过 / 不一致拒
+        pt_ref = {"period": "2026中报", "is_annual": False, "rev": 10.0, "np": 5.2,
+                  "np_yoy": "扭亏", "sq_label": None, "band_years": []}
+        ref2 = write_fill({"price": 10.0, "pe_ttm": 11.0, "period_track": pt_ref},
+                          d, name="em_ref2.json")
+        pt = dict(pt_ref, goal_np=200.0)
+        f = minimal_fill(quote={"source_file": ref2, "date": "2026-08-27"}, period_track=pt)
+        R.validate_content(f, R.compute_valuation(f))  # 文字一致 → 过
+        f["period_track"]["np_yoy"] = "转亏"
+        expect_valueerror(f, "文字同比不完全一致应拒")
+        # fill 有值而落盘 None（手估嫌疑）→ 拒
+        f = minimal_fill(quote={"source_file": ref2, "date": "2026-08-27"},
+                         period_track=dict(pt, np_dedt=9.99))
+        expect_valueerror(f, "落盘无值 fill 手估应拒")
+        # 落盘有 period_track 而 fill 未回填 → 软告警不拒
+        out = validate_stderr(minimal_fill(quote={"source_file": ref2, "date": "2026-08-27"}))
+        assert "第 3 章" in out and "将缺席" in out, "落盘有 fill 无应软告警"
+    # 漏抄（fill None 落盘有值）→ 软告警不拒
+    f = period_fill()
+    f["period_track"]["np_dedt"] = None
+    out = validate_stderr(f)
+    assert "漏抄" in out and "np_dedt" in out, "漏抄字段应软告警"
+    # F5：is_annual 进交叉校验——fill 篡改 true→false 拒渲染（年报期整章消失是硬约束）
+    f = period_fill("annual")
+    f["period_track"]["is_annual"] = False
+    try:
+        R.validate_content(f, R.compute_valuation(f))
+        raise AssertionError("is_annual 篡改应拒但未拒")
+    except ValueError as e:
+        assert "is_annual" in str(e), f"应报 is_annual 不一致，实际: {e}"
+    # quote 缺失（存量日期软门禁）→ 无法交叉校验软告警，不拒
+    f = period_fill()
+    del f["quote"]
+    assert "无法交叉校验" in validate_stderr(f), "quote 缺失应软告警不拒"
+    print("OK period_track 交叉校验（一致过/偏差拒/夹带文字拒/落盘缺键拒/文字同比/手估拒/漏抄告警）")
+
+
+def test_period_track_verdict_goal_gate():
+    """v5.0：verdict_* 非四选一拒 / 缺失软告警（渲染兜底无法判定）；goal_* 非正数或夹带
+    文字拒；年报期填 industry/forecast/note 软告警不拒；note_html 纯文本 >120 字软告警。"""
+    f = period_fill()
+    f["period_track"]["verdict_np"] = "超预期"
+    expect_valueerror(f, "判词非法取值应拒")
+    f = period_fill()
+    del f["period_track"]["verdict_np"]
+    out = validate_stderr(f)
+    assert "verdict_np 未填" in out and "无法判定" in out, "判词缺失应软告警"
+    f = period_fill()
+    f["period_track"]["goal_np"] = -5
+    expect_valueerror(f, "经营目标负数应拒")
+    f = period_fill()
+    f["period_track"]["goal_np"] = "约200亿"
+    expect_valueerror(f, "经营目标夹带文字应拒")
+    # 年报期填内容 → 软告警不拒；verdict 缺失不告警（整章消失，判词无意义）
+    f = period_fill("annual")
+    f["period_track"]["note_html"] = "年报口径提示一句。"
+    out = validate_stderr(f)
+    assert "整章消失" in out and "不会渲染" in out, "年报期填内容应软告警"
+    assert "verdict_" not in validate_stderr(period_fill("annual")), "年报期判词缺失不告警"
+    f = period_fill()
+    f["period_track"]["note_html"] = "口径提示超长" * 25
+    out = validate_stderr(f)
+    assert "note_html" in out and "> 120" in out, "note_html 超长应软告警"
+    print("OK period_track 判词/目标门禁（非法拒/缺失告警/负数拒/年报期内容告警/note 超长告警）")
+
+
+def test_period_chapter_render():
+    """v5.0 第 3 章渲染：TOC 与章节同生共灭（死链硬约束）；子弹图/单季双柱/绝对额表落位；
+    双分母缺失 → 刻度与节奏带缺席、图注标未披露；子弹图空串 → 表格兜底章节不死。"""
+    html = render_fill(period_fill())
+    assert 'href="#s3"' in html and 'id="s3"' in html, "has_period 时 TOC 与章节同生"
+    assert 'aria-label="报告期进度子弹图"' in html and 'aria-label="单季同比对比图"' in html
+    assert "经营目标 200 亿" in html and "一致预期 165 亿" in html, "双分母刻度标注"
+    assert "节奏带（按" in html and "48.6%" in html and "58.9%" in html, "节奏带注与表格完成度"
+    assert html.find('id="s3"') < html.find('id="s4"'), "第 3 章应插在原 s3（现 s4）之前"
+    # 年报期：TOC 与章节同灭
+    html_a = render_fill(period_fill("annual"))
+    assert 'href="#s3"' not in html_a and 'id="s3"' not in html_a, "年报期整章消失"
+    # 双分母缺失：刻度/节奏带缺席，图注与表格标未披露
+    f = period_fill()
+    f["period_track"]["goal_np"] = None
+    f["period_track"]["consensus_np"] = None
+    html2 = render_fill(f)
+    assert "一致预期 165 亿" not in html2 and "经营目标 200 亿" not in html2, "分母缺失不画刻度"
+    assert "未披露" in html2 and "节奏带（按" not in html2, "节奏带随分母双缺缺席"
+    # 子弹图四值全缺 → 表格兜底（TOC 死链硬约束）
+    f = period_fill()
+    f["period_track"] = {"period": "2026中报", "is_annual": False}
+    html3 = render_fill(f)
+    assert 'id="s3"' in html3 and 'href="#s3"' in html3, "子弹图空串时章节不得死（表格兜底）"
+    assert 'aria-label="报告期进度子弹图"' not in html3 and "<table" in html3
+    # F4：兜底路径表格二选一——s3 章内 <table 恰出现 1 次（旧版子弹图槽+表格槽双渲染）
+    s3_blk = html3.split('id="s3"', 1)[1].split('id="s4"', 1)[0]
+    assert s3_blk.count("<table") == 1, "兜底路径表格不得渲染两次"
+    print("OK 第 3 章渲染（TOC 同生共灭/双分母刻度/未披露标/表格兜底）")
+
+
+def test_period_charts_shapes():
+    """v5.0 图函数形态：双柱图 Q1 退化单柱 / 缺 sq_label 或值全 None 返回空串；
+    子弹图扣非无双分母刻度与节奏带 / 缺判词渲染兜底无法判定 / 四值全 None 返回空串。"""
+    from charts_misc import build_period_bullets, build_period_sqplot, build_period_table
+    h1 = period_fill("h1")["period_track"]
+    svg = build_period_sqplot(h1)
+    assert "2025Q2" in svg and "2026Q2" in svg and "+40.8%" in svg and "+84.9%" in svg
+    q1 = build_period_sqplot(period_fill("q1")["period_track"])
+    assert "2025Q1" not in q1 and "累计即单季" in q1, "Q1 期应退化单柱"
+    assert build_period_sqplot({"sq_rev": 1}) == "", "缺 sq_label 返回空串"
+    assert build_period_sqplot({"sq_label": "2026Q2", "sq_rev": None, "sq_np": None}) == ""
+    b = build_period_bullets(h1)
+    assert b.count("经营目标 200 亿") == 1, "经营目标刻度仅归母净利行（营收行 goal_rev=None）"
+    assert ">超前</text>" in b and ">滞后</text>" not in b and ">无法判定</text>" not in b
+    assert "营业收入经营目标：未披露" in b, "营收行分母缺失图注"
+    b3 = build_period_bullets(period_fill("q3")["period_track"])
+    assert ">无法判定</text>" in b3, "缺判词渲染兜底无法判定"
+    assert build_period_bullets({"rev": None, "np": None, "np_dedt": None}) == ""
+    t = build_period_table(period_fill("annual")["period_track"])
+    assert "<table" in t, "年报期表格照常可构建（整章消失由 render 层决定）"
+    assert build_period_table({}) == ""
+    print("OK 第 3 章图函数形态（Q1 单柱退化/空串门禁/扣非无分母/判词兜底）")
+
+
+# ---------------- v5.0 决策层三机制（临界档透明化 / 乐观税门禁 / 赔率∞地板分级） ----------------
+
+def test_position_steps_edge_critical():
+    """v5.0 机制一（临界档透明化）：距最近边界 ≤0.3 → 有效分压到边界下侧（相邻两档孰低），
+    上浮类调节（时机≥6/离散度<40%/赔率∞）一律冻结、下调照常；slot_txt 带临界说明。"""
+    # q=7.2 临界（距 7.0 边界 0.2）→ 降档落 10 档（中上·好价格）；三条上浮路径全冻结
+    label, steps, slot, crit = _position_steps(
+        7.2, 8.5, 7.0, _calc(dispersion=0.30, odds=None, floor_type="net_cash"), "")
+    assert label == "标准仓 ≤10%", f"临界降档+上浮冻结应止步标准仓，实际 {label}"
+    assert [c["track"] for c in crit] == ["质量"] and abs(crit[0]["dist"] - 0.2) < 1e-9
+    assert "档位临界：质量分 7.20 距 7.0 边界 0.20，按相邻两档孰低降档执行" in slot
+    assert sum("上浮冻结" in s for s in steps) == 3, f"三条上浮路径应全冻结：{steps}"
+    assert "重仓" not in label
+    # q=7.0 恰在边界（dist=0）→ 同样降档
+    label, steps, slot, crit = _position_steps(7.0, 8.5, 5.0, _calc(), "")
+    assert label == "标准仓 ≤10%" and crit and crit[0]["dist"] == 0.0
+    # v=8.2 临界 → 落「中上·合理偏便宜」5 档（质量 5.5-7 行 × 估值 6-8 列）
+    label, steps, slot, crit = _position_steps(6.0, 8.2, 5.0, _calc(), "")
+    assert label == "轻仓 ≤5%" and [c["track"] for c in crit] == ["估值"]
+    assert "估值分 8.20 距 8.0 边界 0.20" in slot
+    # 临界 + 时机 3.5 → 下调照常（10 档 → 5 档），无冻结噪音
+    label, steps, slot, crit = _position_steps(7.2, 8.5, 3.5, _calc(), "")
+    assert label == "轻仓 ≤5%", f"下调照常应落轻仓，实际 {label}"
+    assert any("下调一档" in s for s in steps) and not any("上浮冻结" in s for s in steps)
+    # 非临界对照：7.5×8.5 直落重仓，crit 为空
+    label, steps, slot, crit = _position_steps(7.5, 8.5, 5.0, _calc(), "")
+    assert label == "重仓 ≤20%" and crit == []
+    # 双轨同时临界：7.2×8.2 → 双双降档（中上·合理偏便宜 5 档）
+    label, steps, slot, crit = _position_steps(7.2, 8.2, 5.0, _calc(), "")
+    assert label == "轻仓 ≤5%" and len(crit) == 2
+    print("OK 临界档决策链（降档执行/上浮冻结/下调照常/边界值/双轨临界）")
+
+
+def test_position_steps_odds_floor_gate():
+    """v5.0 机制三（调节链侧）：赔率 ∞ 上浮一档仅硬地板=net_cash 享受；dividend 软地板
+    记「估值分 +1 封顶 7.5，调节链不上浮」；floor 缺失不上浮（防御，validate 已硬拒）。"""
+    label, steps, _s, _c = _position_steps(
+        4.5, 4.5, 5.0, _calc(dispersion=0.50, odds=None, floor_type="net_cash"), "")
+    assert label == "标准仓 ≤10%"
+    assert steps == ["赔率调节：赔率 ∞（悲观仍正收益） → 上浮一档（轻仓 ≤5%→标准仓 ≤10%）"], steps
+    label, steps, _s, _c = _position_steps(
+        4.5, 4.5, 5.0, _calc(dispersion=0.50, odds=None, floor_type="dividend"), "")
+    assert label == "轻仓 ≤5%"
+    assert steps == ["赔率 ∞（软地板=保底分红折现）：估值分 +1 封顶 7.5，调节链不上浮"], steps
+    label, steps, _s, _c = _position_steps(
+        4.5, 4.5, 5.0, _calc(dispersion=0.50, odds=None), "")
+    assert label == "轻仓 ≤5%" and steps == ["矩阵落位直接生效，无调节项触发"], steps
+    print("OK 赔率 ∞ 地板分级调节链（硬地板上浮/软地板不上浮/无地板不上浮）")
+
+
+def test_optimism_tax_gate():
+    """v5.0 机制二（乐观税门禁）：base 净利 ÷ 一致预期 > 1.15 且非 A 档 → 中枢分封顶 6
+    重算总分；A 档解封；缺 consensus_np 跳过（tax=None）；过程卡三态标注。"""
+    calc = R.compute_valuation(minimal_fill())   # base 情景 profit=100
+    inputs = {"pe_ttm": 11, "pe_band": [10, 12], "div_yield": 2, "risk_free": 1.7}
+    # ratio = 100/80 = 1.25 > 1.15，gap_tier=B → 中枢 7.0 封顶 6 → 总分 6×.4+3.5×.25+5×.25+6×.1=5.1
+    vc = R.compute_valuation_score(calc, dict(inputs, consensus_np=80), gap_tier="B")
+    assert vc["tax"]["capped"] is True and vc["tax"]["exempt"] is False
+    assert abs(vc["tax"]["ratio"] - 1.25) < 1e-9
+    assert vc["central_s"] == 6.0 and vc["score"] == 5.1
+    # A 档解封（去空格大写判定）：不封顶，分数回 5.5
+    vc_a = R.compute_valuation_score(calc, dict(inputs, consensus_np=80), gap_tier=" a ")
+    assert vc_a["tax"]["exempt"] is True and vc_a["tax"]["capped"] is False
+    assert vc_a["central_s"] == 7.0 and vc_a["score"] == 5.5
+    # ratio ≤ 1.15 不触发（1.10 → 不封不免注）
+    vc_lo = R.compute_valuation_score(calc, dict(inputs, consensus_np=91), gap_tier="B")
+    assert vc_lo["tax"]["capped"] is False and vc_lo["central_s"] == 7.0
+    # 缺 consensus_np → tax=None 跳过
+    vc_n = R.compute_valuation_score(calc, inputs)
+    assert vc_n["tax"] is None and vc_n["score"] == 5.5
+    # F16：consensus_np 键存在但 ≤0（亏损预期）→ legend 单列，与「无卖方覆盖」区分
+    card_neg = R.build_valuation_process_card(calc, vc_n, dict(inputs, consensus_np=-5))
+    assert "一致预期为负/零，乐观税不适用" in card_neg and "无卖方覆盖" not in card_neg
+    card_zero = R.build_valuation_process_card(calc, vc_n, dict(inputs, consensus_np=0))
+    assert "一致预期为负/零，乐观税不适用" in card_zero
+    # 过程卡标注三态
+    card = R.build_valuation_process_card(calc, vc, dict(inputs, consensus_np=80))
+    assert "乐观税封顶 6" in card and "1.25" in card and "A 档" in card
+    card_a = R.build_valuation_process_card(calc, vc_a, dict(inputs, consensus_np=80))
+    assert "乐观税已检" in card_a and "A 档解封" in card_a
+    card_n = R.build_valuation_process_card(calc, vc_n, inputs)
+    assert "乐观税未检：无卖方覆盖" in card_n
+    # mcap 口径：base 无 profit → tax=None，legend 标市值口径
+    mcalc = {"central": 0.05, "central_raw": 0.05, "odds": 1.0, "dispersion": 0.5,
+             "mode": "mcap", "horizon": "12个月",
+             "rows": [{"key": "pess", "low": 7.0}, {"key": "base", "profit": None}]}
+    vc_m = R.compute_valuation_score(mcalc, dict(inputs, consensus_np=80), gap_tier="B")
+    assert vc_m["tax"] is None
+    assert "乐观税未检：市值口径无净利可比" in R.build_valuation_process_card(mcalc, vc_m, inputs)
+    print("OK 乐观税门禁（>1.15 封顶 6 / A 档解封 / 未触发 / 缺一致预期跳过 / 卡三态标注）")
+
+
+def test_floor_uplift_grading():
+    """v5.0 机制三（估值分侧）：赔率 ∞ 上浮分级——net_cash 硬地板 max(score,8.0)；
+    dividend 软地板 +1 封顶 7.5（保送不减分）；floor 缺失不上浮；过程卡赔率行与 legend 标注。"""
+    inputs = {"pe_ttm": 11, "pe_band": [10, 12], "div_yield": 2, "risk_free": 1.7}
+    # 底分：中枢 5%→6.0×0.4 + 赔率∞→10×0.25 + 合理倍数 5.0×0.25 + 股息 6.0×0.1 = 6.75→6.8
+    base_calc = {"central": 0.05, "central_raw": 0.05, "odds": None, "dispersion": 0.5,
+                 "horizon": "12个月",
+                 "rows": [{"key": "pess", "low": 10.5}, {"key": "base", "profit": 100}]}
+    vc = R.compute_valuation_score(
+        dict(base_calc, pess_floor={"type": "net_cash", "value": 12.5,
+                                    "evidence": "净现金125亿÷总股本10亿"}), inputs)
+    assert vc["score"] == 8.0
+    assert vc["floor_uplift"] == {"type": "net_cash", "before": 6.8, "after": 8.0}
+    vc2 = R.compute_valuation_score(
+        dict(base_calc, pess_floor={"type": "dividend", "value": 10.6,
+                                    "evidence": "保底分红0.7元/股×15年折现"}), inputs)
+    assert vc2["score"] == 7.5 and vc2["floor_uplift"]["type"] == "dividend"
+    vc3 = R.compute_valuation_score(base_calc, inputs)
+    assert vc3["score"] == 6.8 and vc3["floor_uplift"] is None
+    # 过程卡赔率分行地板信息 + legend 上浮说明（软地板注明调节链不上浮）
+    calc_hard = dict(base_calc, pess_floor={"type": "net_cash", "value": 12.5,
+                                            "evidence": "净现金125亿÷总股本10亿"})
+    calc_soft = dict(base_calc, pess_floor={"type": "dividend", "value": 10.6,
+                                            "evidence": "保底分红0.7元/股×15年折现"})
+    card = R.build_valuation_process_card(calc_hard, vc, inputs)
+    assert "悲观下限 10.5 ≥ 现价" in card and "硬地板=净现金/股 12.5：净现金125亿÷总股本10亿" in card
+    assert "上浮至 8" in card
+    card2 = R.build_valuation_process_card(calc_soft, vc2, inputs)
+    assert "软地板=保底分红折现/股 10.6" in card2 and "调节链不上浮" in card2
+    # F14：floor.type 空白/大小写归一（compute_valuation 透传层，三处消费口径同源）
+    f_nc = minimal_fill()
+    f_nc["valuation"]["scenarios"][0]["floor"] = {"type": " Net_Cash ", "value": 6.5,
+                                                  "evidence": "净现金65亿÷总股本10亿"}
+    assert R.compute_valuation(f_nc)["pess_floor"]["type"] == "net_cash"
+    # F15：floor.evidence / metric_label 进过程卡前逐段 _esc（不双重转义、不裸注入）
+    ev = '净现金 A&B <实测> "引号"'
+    calc_ev = dict(base_calc, pess_floor={"type": "net_cash", "value": 12.5, "evidence": ev})
+    card_ev = R.build_valuation_process_card(calc_ev, vc, inputs)
+    assert "A&amp;B &lt;实测&gt; &quot;引号&quot;" in card_ev and ev not in card_ev, \
+        "evidence 应转义一次且不双重转义"
+    card_ml = R.build_valuation_process_card(base_calc, vc3, dict(inputs, metric_label="PE<b>"))
+    assert "PE&lt;b&gt;" in card_ml
+    print("OK 赔率 ∞ 估值分地板分级（硬地板到 8 / 软地板 +1 封顶 7.5 / 无地板不上浮 / 卡标注）")
+
+
+def test_odds_floor_validate():
+    """v5.0 机制三（校验侧 _check_odds_floor）：悲观下限 ≥ 现价（赔率 ∞）时——无 floor 拒 /
+    type 非法拒 / evidence 空拒 / floor.value < 下限×0.99 拒 / 合规硬软地板过；
+    赔率有限时 floor 软告警（无作用可删）。"""
+    def odds_inf_fill(floor=None):
+        f = minimal_fill()
+        # 悲观下限 = 110×9.5/100 = 10.45 ≥ 现价 10；中枢 11 ≤ base 中枢 11，不触倒挂
+        f["valuation"]["scenarios"][0] = {"key": "pess", "label": "悲观", "trigger": "下行",
+                                          "profit": 110, "pe": [9.5, 10.5]}
+        if floor:
+            f["valuation"]["scenarios"][0]["floor"] = floor
+        f["thesis_html"] = f["thesis_html"].replace(
+            '<span class="scenario-pess">7.2</span>', '<span class="scenario-pess">11</span>')
+        return f
+    expect_valueerror(odds_inf_fill(), "赔率 ∞ 无地板应拒渲染")
+    expect_valueerror(odds_inf_fill({"type": "净资产", "value": 11, "evidence": "x"}),
+                      "floor.type 非法应拒")
+    expect_valueerror(odds_inf_fill({"type": "net_cash", "value": 11, "evidence": ""}),
+                      "floor.evidence 空应拒")
+    expect_valueerror(odds_inf_fill({"type": "net_cash", "value": 10.0,
+                                     "evidence": "净现金100亿÷总股本10亿"}),
+                      "地板值 10.0 < 悲观下限 10.45×0.99 应拒")
+    ok = odds_inf_fill({"type": "net_cash", "value": 10.5, "evidence": "净现金105亿÷总股本10亿"})
+    R.validate_content(ok, R.compute_valuation(ok))   # 硬地板合规 → 过
+    ok2 = odds_inf_fill({"type": "dividend", "value": 10.5, "evidence": "保底分红0.7元/股×15年折现"})
+    R.validate_content(ok2, R.compute_valuation(ok2))  # 软地板合规 → 过
+    # 赔率有限（下限 < 现价）+ floor → 软告警不拒
+    f = minimal_fill()
+    f["valuation"]["scenarios"][0]["floor"] = {"type": "net_cash", "value": 6.5,
+                                               "evidence": "净现金65亿÷总股本10亿"}
+    out = validate_stderr(f)
+    assert "floor" in out and "无作用" in out, "赔率有限时 floor 应软告警"
+    # F17：floor 写在 base/opt → 软告警不拒（floor 是悲观情景子键，写错位置不生效）
+    f = minimal_fill()
+    f["valuation"]["scenarios"][1]["floor"] = {"type": "net_cash", "value": 6.5,
+                                               "evidence": "净现金65亿÷总股本10亿"}
+    out = validate_stderr(f)
+    assert "floor" in out and "写错位置不生效" in out, "floor 写错位置应软告警"
+    # F17：相等边界（悲观下限 == 现价）报错文案用「不低于（≥）」而非「高于」
+    f_eq = minimal_fill()
+    f_eq["valuation"]["scenarios"][0] = {"key": "pess", "label": "悲观", "trigger": "下行",
+                                         "profit": 100, "pe": [10, 11]}  # 下限=100×10÷100=10 == 现价
+    f_eq["thesis_html"] = f_eq["thesis_html"].replace(
+        '<span class="scenario-pess">7.2</span>', '<span class="scenario-pess">10.5</span>')
+    try:
+        R.validate_content(f_eq, R.compute_valuation(f_eq))
+        raise AssertionError("下限等于现价且无地板应拒")
+    except ValueError as e:
+        assert "不低于" in str(e) and "≥" in str(e), f"文案应改「不低于（≥）」，实际 {e}"
+    print("OK 赔率 ∞ 地板校验（无地板拒/非法拒/空证据拒/托不住拒/软硬地板过/有限时软告警）")
+
+
+def test_consensus_np_cross_check():
+    """v5.0 机制二（校验侧 _check_consensus_np）：valuation_inputs.consensus_np 照抄落盘
+    consensus_np.np_avg——一致过 / 偏差 >1% 拒 / fill 有值落盘无键拒（手估嫌疑）/
+    落盘有 fill 无软告警（漏抄，乐观税未检）/ 双向皆缺过。"""
+    with render_workspace() as d:
+        ref = write_fill({"price": 10.0, "pe_ttm": 11.0,
+                          "consensus_np": {"year": 2026, "np_avg": 100.0, "orgs": 12}},
+                         d, name="em_ref.json")
+        q = {"source_file": ref, "date": "2026-08-27"}
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["consensus_np"] = 100.5   # 0.5% 偏差 → 过
+        R.validate_content(f, R.compute_valuation(f))
+        f = minimal_fill(quote=q)
+        f["valuation_inputs"]["consensus_np"] = 105.0   # 5% 偏差 → 拒
+        expect_valueerror(f, "consensus_np 与落盘偏差>1% 应拒")
+        # fill 有值落盘无键 → 拒（手估嫌疑）
+        ref2 = write_fill({"price": 10.0, "pe_ttm": 11.0}, d, name="em_ref2.json")
+        f = minimal_fill(quote={"source_file": ref2, "date": "2026-08-27"})
+        f["valuation_inputs"]["consensus_np"] = 100.0
+        expect_valueerror(f, "落盘无 consensus_np 键而 fill 手填应拒")
+        # 落盘有 fill 无 → 软告警（漏抄，乐观税未检）
+        out = validate_stderr(minimal_fill(quote=q))
+        assert "consensus_np" in out and "漏抄" in out, "落盘有 fill 无应软告警"
+        # 双向皆缺 → 通过且无告警
+        out2 = validate_stderr(minimal_fill(quote={"source_file": ref2, "date": "2026-08-27"}))
+        assert "consensus_np" not in out2, "双向皆缺不应告警"
+    print("OK consensus_np 交叉校验（一致过/偏差拒/手估拒/漏抄告警/双缺过）")
+
+
+def test_edge_upgrade_rows():
+    """v5.0 机制一：build_edge_upgrade_rows 输出——每条临界轨一条 pending 灰态 trig
+    （升档路径 + 复核证据），块首 section-tag；空 crit 返回空串。"""
+    crit, q_eff, v_eff = _edge_info(7.2, 8.5)
+    assert len(crit) == 1 and q_eff < 7.0 and v_eff == 8.5
+    html = build_edge_upgrade_rows(crit)
+    assert "档位临界升档路径（脚本生成）" in html
+    assert "档位临界升档复核：质量分 7.20（距 7.0 边界 0.20）" in html
+    assert "复核期质量分 ≥7.31" in html and "复核证据" in html
+    assert 'trig-dot pending' in html and '<span class="trig-status pending">待验证</span>' in html
+    assert build_edge_upgrade_rows([]) == ""
+    # 下侧临界（6.8 距 7.0 为 0.2）：有效分压边界下侧但档位归属不变（行为等价孰低）
+    crit2, q_eff2, _v2 = _edge_info(6.8, 5.0)
+    assert len(crit2) == 1 and crit2[0]["bound"] == 7.0
+    assert 6.8 < q_eff2 < 7.0
+    assert "质量分 6.80（距 7.0 边界 0.20）" in build_edge_upgrade_rows(crit2)
+    print("OK 临界升档路径行（结构/文案/空串/下侧临界）")
+
+
+def test_position_card_edge_badge():
+    """v5.0 机制一：三轨判定卡临界轨 sub 追加「档位临界」橙徽章 + 距离说明；非临界不带。"""
+    html = R.build_position_card(minimal_fill(), quality=7.2, valuation=8.5,
+                                 timing=5.0, calc=_calc(), red_flag="")
+    assert '<span class="badge badge-orange">档位临界</span>' in html
+    assert "距 7.0 边界 0.20，按降档执行" in html
+    assert "标准仓 ≤10%" in html, "临界降档应落中上·好价格 10 档"
+    html2 = R.build_position_card(minimal_fill(), quality=7.5, valuation=8.5,
+                                  timing=5.0, calc=_calc(), red_flag="")
+    assert "档位临界" not in html2, "非临界不应带徽章"
+    html3 = R.build_position_card(minimal_fill(), quality=6.0, valuation=8.2,
+                                  timing=5.0, calc=_calc(), red_flag="")
+    assert "距 8.0 边界 0.20，按降档执行" in html3, "估值轨临界徽章"
+    print("OK 仓位卡临界徽章（质量轨/估值轨/非临界对照）")
+
+
+def test_edge_upgrade_mounted_in_ch14():
+    """v5.0 机制一：升档路径行挂 14 章跟踪仪表盘（TRIGGERS_HTML 拼接）；红灯熔断时不挂
+    （仓位未走矩阵）。minimal_fill 质量分恰 7.00（dist 0）→ 渲染必出临界行。"""
+    html = render_fill(minimal_fill())
+    s14 = html.split('id="s14"', 1)[1]
+    assert "档位临界升档路径（脚本生成）" in s14
+    assert "档位临界升档复核：质量分 7.00（距 7.0 边界 0.00）" in s14
+    f = minimal_fill(red_flag="测试红灯占位",
+                     position_html="<p>不建议参与。" + "时机判定与决策逻辑。" * 12 + "</p>")
+    html2 = render_fill(f)
+    assert "档位临界升档路径" not in html2, "红灯熔断时不得挂临界升档行"
+    print("OK 临界升档行 14 章挂载（常挂/红灯不挂）")
+
+
+def test_period_charts_negative_domain():
+    """F1/F2 负值域修复：子弹图——扣非亏损（其余正）/全行负值/零值/负一致预期渲染不炸且
+    语义正确（负值条自零轴左伸、负分母不画节奏带且图注标不适用、域退化兜底不除零）；
+    单季双柱——双负（减亏/增亏季）/单负（最新季负）不炸、柱体在 viewBox 内。"""
+    import re as _re
+    from charts_misc import build_period_bullets, build_period_sqplot
+    # ① 扣非亏损（np_dedt<0 其余正）：不炸；负值条标签存在；其余行刻度/节奏带照常
+    pt = {"rev": 100.0, "np": 5.0, "np_dedt": -2.0, "np_dedt_yoy": "增亏",
+          "goal_np": 200.0, "consensus_np": 165.0, "band_np": [39.9, 52.1],
+          "verdict_rev": "正常", "verdict_np": "正常", "verdict_dedt": "无法判定"}
+    b = build_period_bullets(pt)
+    assert b and 'aria-label="报告期进度子弹图"' in b
+    assert "-2 亿" in b and "增亏" in b, "扣非负值条与文字同比应渲染"
+    assert "一致预期 165 亿" in b and "节奏带（按" in b, "正值行分母刻度与节奏带不受影响"
+    # ② 全行负值：域含 0、条自零轴左伸（不再夹成 2px 细条钉零位）、不除零
+    b2 = build_period_bullets({"rev": -50.0, "np": -20.0, "np_dedt": -25.0})
+    assert b2, "全负值应渲染"
+    assert "-50 亿" in b2 and 'width="2.0"' not in b2, "负值条不得被夹成 2px 细条"
+    # ③ 零值：全 0 → 域退化兜底 lo+1.0，不炸
+    b3 = build_period_bullets({"rev": 0.0, "np": 0.0, "np_dedt": 0.0})
+    assert b3 and 'aria-label="报告期进度子弹图"' in b3
+    # ④ 负一致预期：节奏带不画、图注标「分母为负…节奏带不适用」；负刻度在画布内
+    b4 = build_period_bullets({"np": -5.0, "consensus_np": -50.0, "band_np": [40.0, 55.0]})
+    assert "分母为负" in b4 and "节奏带不适用" in b4, "负分母应出图注"
+    assert "节奏带（按" not in b4, "负分母不得换算节奏带"
+    assert "一致预期 -50 亿" in b4, "负一致预期刻度应在负域内画出"
+    # F2：双负（增亏/减亏季）与单负（最新季负）不炸、所有 rect 在 viewBox 内
+    sq1 = build_period_sqplot({"sq_label": "2026Q2", "sq_rev": -10.0, "sq_np": -3.0,
+                               "sq_prev_label": "2025Q2", "sq_prev_rev": -8.0,
+                               "sq_prev_np": -5.0, "sq_np_yoy": "减亏"})
+    assert sq1 and "减亏" in sq1, "双负季应渲染"
+    sq2 = build_period_sqplot({"sq_label": "2026Q2", "sq_rev": 100.0, "sq_np": -3.0,
+                               "sq_prev_label": "2025Q2", "sq_prev_rev": 90.0,
+                               "sq_prev_np": 5.0, "sq_np_yoy": "转亏"})
+    assert sq2 and "转亏" in sq2
+    for svg, W, H in ((sq1, 1000, 236), (sq2, 1000, 236)):
+        for m in _re.finditer(r'<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.-]+)" '
+                              r'height="([\d.-]+)"', svg):
+            x, y, w, h = (float(m.group(i)) for i in (1, 2, 3, 4))
+            assert -1 <= x and x + w <= W + 1, f"rect 横向越界: {m.group(0)}"
+            assert -1 <= y and y + h <= H + 1, f"rect 纵向越界: {m.group(0)}"
+    print("OK 负值域（子弹图扣非亏损/全负/零值/负一致预期 + 单季双柱双负/单负）")
+
+
+def test_net_cash_floor_edge_exemption():
+    """F3 机制碰撞修复：net_cash 硬地板上浮恰落 8.0 → 估值轨豁免临界判定（落点是机制产物
+    非测量噪声）——票面 8.0 不挂临界徽章、矩阵按 8.0 落 ≥8 列、赔率 ∞ 上浮不冻结；
+    对照：不传 floor_uplift 旧行为仍判临界；dividend 软地板落 7.5 行为不变；
+    质量轨临界+估值轨豁免组合只质量降档。"""
+    calc = _calc(dispersion=0.50, odds=None, floor_type="net_cash")
+    fu = {"type": "net_cash", "before": 6.8, "after": 8.0}
+    # 底分 6.8 上浮 8.0 + 质量 7.5 → 矩阵直落「好公司·好价格」重仓，crit 空、无徽章
+    label, steps, slot, crit = _position_steps(7.5, 8.0, 5.0, calc, "", floor_uplift=fu)
+    assert label == "重仓 ≤20%" and crit == [], f"豁免后应直落重仓，实际 {label}/{crit}"
+    assert "档位临界" not in slot
+    # 对照：不传 floor_uplift（旧行为）→ 恰落 8.0 判临界，降档 10 档 + 上浮冻结
+    label2, steps2, slot2, crit2 = _position_steps(7.5, 8.0, 5.0, calc, "")
+    assert label2 == "标准仓 ≤10%" and [c["track"] for c in crit2] == ["估值"]
+    assert "估值分 8.00 距 8.0 边界 0.00" in slot2
+    # 质量轨临界 + 估值轨豁免 → 只质量降档（中上·好价格 10 档）
+    label3, _s3, slot3, crit3 = _position_steps(7.2, 8.0, 5.0, calc, "", floor_uplift=fu)
+    assert label3 == "标准仓 ≤10%" and [c["track"] for c in crit3] == ["质量"]
+    assert "估值分 8.00 距" not in slot3, "估值轨豁免后不挂临界说明"
+    # dividend 软地板落 7.5 → 不豁免（本就不临界），落 6-7.9 列行为不变
+    fu_d = {"type": "dividend", "before": 6.8, "after": 7.5}
+    label4, _s4, _sl4, crit4 = _position_steps(7.5, 7.5, 5.0, _calc(odds=None, floor_type="dividend"),
+                                               "", floor_uplift=fu_d)
+    assert label4 == "标准仓 ≤10%" and crit4 == []
+    # 赔率 ∞ 上浮生效轨迹（不被没收）：质量 4.5 落轻仓 → 硬地板上浮标准仓
+    label5, steps5, _sl5, _c5 = _position_steps(4.5, 8.0, 5.0, calc, "", floor_uplift=fu)
+    assert label5 == "标准仓 ≤10%"
+    assert any("赔率调节" in s and "上浮一档" in s for s in steps5), f"上浮轨迹应出现：{steps5}"
+    # _edge_info 直测：豁免后 crit 空且有效分保持 8.0（矩阵按 ≥8 列落位）
+    crit_e, _q_e, v_eff_e = _edge_info(7.5, 8.0, fu)
+    assert crit_e == [] and v_eff_e == 8.0
+    # 卡片口径（build_position_card 透传 floor_uplift）：票面 8.0 无临界徽章、落重仓
+    html = R.build_position_card(minimal_fill(), quality=7.5, valuation=8.0,
+                                 timing=5.0, calc=calc, red_flag="", floor_uplift=fu)
+    assert "档位临界" not in html and "重仓 ≤20%" in html
+    print("OK 净现金硬地板临界豁免（重仓直落/徽章不挂/上浮不冻结/对照组不变）")
+
+
+def test_scenario_dup_key_rejected():
+    """F6：valuation.scenarios key 重复即拒渲染——双 pess 曾绕过地板门禁
+    （next() 首个 vs by_key 末个口径分裂）；重复 key 没有合法语义。"""
+    f = minimal_fill()
+    f["valuation"]["scenarios"].append({"key": "PESS", "label": "悲观B", "trigger": "x",
+                                        "profit": 70, "pe": [7, 9]})
+    try:
+        R.validate_content(f, R.compute_valuation(f))
+        raise AssertionError("双 pess 应拒但未拒")
+    except ValueError as e:
+        assert "key 重复" in str(e), f"应报 key 重复，实际: {e}"
+    print("OK scenarios 重复 key 拒渲染（双 pess 门禁绕过修复）")
+
+
+def test_position_edge_true_min():
+    """临界孰低必须两侧实算（热核审计发现）：矩阵质量 5.5 行非单调（v<6 时上侧=观察池、
+    下侧=质地一般 5），只算压边界一侧会把观察池抬成轻仓——违反「降档不抬档」。"""
+    # 5.5 边界 + v<6：原落位观察池，压边界后 5 → 孰低=观察池（修复前误抬轻仓）
+    label, steps, slot, crit = _position_steps(5.6, 5.0, 5.0, None, "")
+    assert label == "观察池" and "中上·差价格" in slot and "观察池" in slot, \
+        f"孰低应保观察池，实际 {label}/{slot}"
+    assert [c["track"] for c in crit] == ["质量"] and "孰低" in slot
+    # 同边界 + v≥8：原 10、压边界 5 → 孰低=5（正常降档方向不受影响）
+    label2, _s2, _sl2, _c2 = _position_steps(5.6, 8.5, 5.0, None, "")
+    assert label2 == "轻仓 ≤5%", f"实际 {label2}"
+    # 下侧临界（6.8 近 7.0）：两侧同行，落位不变
+    label3, _s3, _sl3, crit3 = _position_steps(6.8, 8.5, 5.0, None, "")
+    assert label3 == "标准仓 ≤10%" and [c["track"] for c in crit3] == ["质量"]
+    # 4.0 边界上侧（4.15）：原轻仓 5、压边界 0 → 孰低=不建议参与（设计内陡降，钉住）
+    label4, _s4, _sl4, _c4 = _position_steps(4.15, 5.0, 5.0, None, "")
+    assert label4 == "不建议参与", f"实际 {label4}"
+    # 非临界对照（5.9 距 5.5 为 0.4）：观察池、无临界
+    label5, _s5, _sl5, crit5 = _position_steps(5.9, 5.0, 5.0, None, "")
+    assert label5 == "观察池" and crit5 == []
+    print("OK 临界孰低两侧实算（5.5 行非单调不抬档 / 4.0 陡降钉住 / 下侧临界不变）")

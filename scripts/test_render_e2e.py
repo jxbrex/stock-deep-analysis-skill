@@ -43,7 +43,7 @@ def test_currency_hkd():
 
 
 def test_review_dumbbell():
-    """回测模式：prev 填了才出三轨哑铃图；回测章=第 12 章（v4.8.1 起提前，在跟踪仪表盘之前）。"""
+    """回测模式：prev 填了才出三轨哑铃图；回测章=第 13 章（v4.8.1 起提前，在跟踪仪表盘之前）。"""
     fill = minimal_fill(prev={"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
                               "timing": 5.0, "target_range": "10-12"},
                         review_html='<table><tr><td>假设变更对比</td></tr></table>'
@@ -51,8 +51,8 @@ def test_review_dumbbell():
                                     '<span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>')
     html = render_fill(fill)
     assert 'aria-label="三轨分新旧对比"' in html, "回测模式应生成哑铃图"
-    assert 'id="s12"' in html and "回测复盘" in html, "回测章节应出现（v4.8.1 起为第 12 章）"
-    assert html.find('id="s12"') < html.find('id="s13"'), "回测复盘应排在跟踪仪表盘（s13）之前"
+    assert 'id="s13"' in html and "回测复盘" in html, "回测章节应出现（v4.8.1 起为第 13 章）"
+    assert html.find('id="s13"') < html.find('id="s14"'), "回测复盘应排在跟踪仪表盘（s14）之前"
 
 
 def test_fill_literal_mustache_survives():

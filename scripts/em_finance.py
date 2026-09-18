@@ -306,6 +306,168 @@ def fetch_latest_quarter(code: str, secucode: str) -> dict:
     return f10[0] if f10 else {}
 
 
+# ---------------- 最新报告期透视（v5.0 第 3 章数据源） ----------------
+
+_QTR_NAME = {"0331": "一季", "0630": "中报", "0930": "三季", "1231": "年报"}
+
+
+def _period_row_norm(r: dict, ind: dict, cf: dict, ed: str) -> dict:
+    """单期累计行归一化（东财键名同构）：营收/归母净利/扣非/经营现金流/毛利率。"""
+    return {"ED": ed,
+            "TOTALOPERATEREVE": r.get("total_revenue"),
+            "PARENTNETPROFIT": r.get("n_income_attr_p"),
+            "KCFJCXSYJLR": ind.get("profit_dedt"),
+            "NETCASH_OPERATE_PK": cf.get("n_cashflow_act"),
+            "XSMLL": ind.get("grossprofit_margin")}
+
+
+def _period_track_calc(rows: list) -> dict:
+    """由归一化累计行（含 ED=YYYYMMDD，同报告期首条优先）算 period_track dict。
+    金额输出亿元（两位小数）；同比走 _yoy（分母≤0 文字化）；单季拆分 Q2=H1−Q1、
+    Q3=前三季−H1、Q4=年报−前三季（Q1 期本身即单季）；占比带=近三年同期累计÷全年
+    （全年分母≤0 或缺值的年度该带不收录；band_years 按任一带实际收录的年份登记，
+    <2 年样本返回 None——判词走「无法判定」口径）。"""
+    by_ed = {}
+    for r in rows:
+        ed = r.get("ED") or ""
+        if len(ed) == 8:
+            by_ed.setdefault(ed, r)
+    if not by_ed:
+        return {}
+    ed = max(by_ed)
+    y, mmdd = ed[:4], ed[4:]
+    cur = by_ed[ed]
+    prev = by_ed.get(f"{int(y) - 1}{mmdd}") or {}
+
+    def _sub(a, b):
+        return a - b if isinstance(a, (int, float)) and isinstance(b, (int, float)) else None
+
+    def _yi2(v):
+        return round(v / 1e8, 2) if isinstance(v, (int, float)) else None
+
+    # 单季拆分基数期：0331→本身；0630→减当季0331；0930→减当季0630；1231→减当季0930
+    qn = {"0331": 1, "0630": 2, "0930": 3, "1231": 4}.get(mmdd)
+    base_mmdd = {"0331": None, "0630": "0331", "0930": "0630", "1231": "0930"}.get(mmdd)
+    sq = {}
+    if qn:
+        py = int(y) - 1
+        for tag, yy in (("", y), ("prev_", str(py))):
+            c2 = by_ed.get(f"{yy}{mmdd}") or {}
+            b2 = by_ed.get(f"{yy}{base_mmdd}") if base_mmdd else None
+            b2 = b2 or {}
+            sq[f"{tag}rev"] = (c2.get("TOTALOPERATEREVE") if base_mmdd is None
+                               else _sub(c2.get("TOTALOPERATEREVE"), b2.get("TOTALOPERATEREVE")))
+            sq[f"{tag}np"] = (c2.get("PARENTNETPROFIT") if base_mmdd is None
+                              else _sub(c2.get("PARENTNETPROFIT"), b2.get("PARENTNETPROFIT")))
+    # 近三年同期占比带（年报期无带——整章消失，数据照常输出供其他消费方）
+    band_np, band_rev, years = [], [], []
+    if mmdd != "1231":
+        for yy in range(int(y) - 3, int(y)):
+            cum, ann = by_ed.get(f"{yy}{mmdd}"), by_ed.get(f"{yy}1231")
+            if not cum or not ann:
+                continue
+            # F12：band_years 按「任一带实际收录」登记——np 无效而 rev 有效（或反之）的年份
+            # 不再虚挂（旧版 append 先于有效性检查，带样本与年份会错位）
+            hit = False
+            for src, dst in (("PARENTNETPROFIT", band_np), ("TOTALOPERATEREVE", band_rev)):
+                c, a = cum.get(src), ann.get(src)
+                if isinstance(c, (int, float)) and isinstance(a, (int, float)) and a > 0:
+                    dst.append(c / a * 100)
+                    hit = True
+            if hit:
+                years.append(yy)
+
+    def _band(v):
+        return [round(min(v), 1), round(max(v), 1)] if len(v) >= 2 else None
+
+    return {"period": f"{y}{_QTR_NAME.get(mmdd, mmdd)}", "end_date": ed,
+            "is_annual": mmdd == "1231",
+            "rev": _yi2(cur.get("TOTALOPERATEREVE")),
+            "np": _yi2(cur.get("PARENTNETPROFIT")),
+            "np_dedt": _yi2(cur.get("KCFJCXSYJLR")),
+            "ocf": _yi2(cur.get("NETCASH_OPERATE_PK")),
+            "gm": round(cur["XSMLL"], 1) if isinstance(cur.get("XSMLL"), (int, float)) else None,
+            "rev_yoy": _yoy(cur.get("TOTALOPERATEREVE"), prev.get("TOTALOPERATEREVE")),
+            "np_yoy": _yoy(cur.get("PARENTNETPROFIT"), prev.get("PARENTNETPROFIT")),
+            "np_dedt_yoy": _yoy(cur.get("KCFJCXSYJLR"), prev.get("KCFJCXSYJLR")),
+            "ocf_yoy": _yoy(cur.get("NETCASH_OPERATE_PK"), prev.get("NETCASH_OPERATE_PK")),
+            "sq_label": f"{y}Q{qn}" if qn else None,
+            "sq_rev": _yi2(sq.get("rev")), "sq_np": _yi2(sq.get("np")),
+            "sq_prev_label": f"{int(y) - 1}Q{qn}" if qn else None,
+            "sq_prev_rev": _yi2(sq.get("prev_rev")), "sq_prev_np": _yi2(sq.get("prev_np")),
+            "sq_rev_yoy": _yoy(sq.get("rev"), sq.get("prev_rev")),
+            "sq_np_yoy": _yoy(sq.get("np"), sq.get("prev_np")),
+            "band_np": _band(band_np), "band_rev": _band(band_rev), "band_years": years}
+
+
+def fetch_period_track(code: str, secucode: str = None) -> dict:
+    """最新报告期透视（A股，v5.0 第 3 章数据源）：累计四值+同比、单季拆分、近三年同期占比带。
+    tushare 统一窗口本地过滤全报告期（income/cashflow/fina_indicator 与年表共享缓存），
+    扣非/毛利率缺期次用东财 F10 最新行字段级补齐；tushare 空/失败 → 东财 F10 混合期行兜底。
+    返回 {} 表示两链皆空。"""
+    try:
+        ts = to_ts_code(code)
+        rng = _fin_rng()
+        inc = _pick_latest_per_period([r for r in _C.ts_call("income", {"ts_code": ts, **rng})
+                                       if str(r.get("report_type")) == "1"])
+        if not inc:
+            raise RuntimeError("tushare income 无数据")
+        try:
+            ind_map = {r["end_date"]: r for r in _C.ts_call("fina_indicator", {"ts_code": ts, **rng})}
+        except Exception:
+            ind_map = {}
+        try:
+            cf_map = {r["end_date"]: r for r in _C.ts_call("cashflow", {"ts_code": ts, **rng})}
+        except Exception:
+            cf_map = {}
+        rows = [_period_row_norm(r, ind_map.get(r["end_date"]) or {},
+                                 cf_map.get(r["end_date"]) or {}, r["end_date"]) for r in inc]
+        t = _period_track_calc(rows)
+        if t and secucode and (t["np_dedt"] is None or t["gm"] is None):
+            # 字段级补齐（同 _ts_latest_quarter 纪律）：tushare 季报期扣非/毛利率覆盖不全时
+            em = (_em_f10(secucode, size=1) or [{}])[0]
+            # F8：期次校验——F10 最新行可能快于 tushare（中报披露当晚），期次不一致不借新期数据
+            em_ed = str(em.get("REPORT_DATE") or "")[:10].replace("-", "")
+            if em_ed == t["end_date"]:
+                if t["np_dedt"] is None and isinstance(em.get("KCFJCXSYJLR"), (int, float)):
+                    t["np_dedt"] = round(em["KCFJCXSYJLR"] / 1e8, 2)
+                if t["gm"] is None and isinstance(em.get("XSMLL"), (int, float)):
+                    t["gm"] = round(em["XSMLL"], 1)
+        if t:
+            return t
+    except Exception:
+        pass
+    try:  # 东财 F10 兜底：混合报告期 20 行（与年表/最新季度共享 _EM_F10_CACHE）
+        rows = []
+        for r in _em_f10(secucode, size=_EM_F10_PAGE):
+            ed = str(r.get("REPORT_DATE") or "")[:10].replace("-", "")
+            if len(ed) == 8:
+                rows.append({**r, "ED": ed})
+        return _period_track_calc(rows)
+    except Exception:
+        return {}
+
+
+def fetch_hk_period_track(code: str) -> dict:
+    """港股最新报告期透视（hk_income 中报口径，v5.0）：累计 营收/归母净利 + 同比 + 占比带。
+    港股无季报/扣非/经营现金流口径——对应字段为 None，宿主输出标注「港股口径未获取」。
+    空/失败返回 {}。"""
+    try:
+        ts = to_ts_code(code)
+        beg, end = _win_years(5)
+        inc = _pick_latest_per_period(
+            _C.ts_call("hk_income", {"ts_code": ts, "start_date": beg, "end_date": end}))
+        if not inc:
+            return {}
+        rows = [{"ED": r["end_date"],
+                 "TOTALOPERATEREVE": r.get("total_revenue") or r.get("revenue"),
+                 "PARENTNETPROFIT": r.get("n_income_attr_p") or r.get("parent_netprofit")}
+                for r in inc if r.get("end_date")]
+        return _period_track_calc(rows)
+    except Exception:
+        return {}
+
+
 # ---------------- 审计意见（供 L4 红灯 a 项判定，不计入 1D 红旗） ----------------
 def fetch_audit(code: str):
     """tushare fina_audit 最新年报审计意见。失败/无数据返回 None。"""

@@ -159,7 +159,13 @@ def _check_valuation_scenarios(fill: dict, warns: list = None) -> None:
     modes = set()
     mids = {}
     for s in v.get("scenarios") or []:
-        skeys.add(str(s.get("key") or "").lower())
+        skey = str(s.get("key") or "").lower()
+        if skey in skeys:
+            # F6：重复 key 拒渲染——双 pess 曾使地板门禁（next() 首个）与计算层（by_key 末个）
+            # 口径分裂，重复键没有合法语义
+            raise ValueError(f"valuation.scenarios key 重复: {skey!r}——同一情景只许一条，"
+                             f"重复键会让地板门禁与估值计算取到不同情景（口径分裂），请去重后重渲")
+        skeys.add(skey)
         slab = s.get("label") or s.get("key") or "?"
         # 三组数值机械解析与 compute_valuation 共用（_scenario_numbers），口径唯一
         profit, pe_lo, pe_hi, mc_lo, mc_hi = _scenario_numbers(s)
@@ -253,12 +259,12 @@ def _check_gap_plot(fill: dict, calc: dict, warns: list) -> None:
 
 
 def _check_chart_fields(fill: dict) -> None:
-    """v4.9 必填图字段硬校验：fin_trend（3.4 小图墙，替手写年表）/ growth_plot（4.1 增长图）。
+    """v4.9 必填图字段硬校验：fin_trend（4.4 小图墙，替手写年表）/ growth_plot（5.1 增长图）。
     两字段数据均来自标准采集（E3 年表 / E5 一致预期），缺失=空心趋势章节 → 拒渲染。
     growth_plot 豁免：stock_type 含「未盈利/管线」（净利无意义）。"""
     ft = fill.get("fin_trend")
     if not isinstance(ft, dict):
-        raise ValueError('fin_trend 为必填字段（v4.9 起 3.4 财务健康年表由脚本图墙替代）：'
+        raise ValueError('fin_trend 为必填字段（v4.9 起 4.4 财务健康年表由脚本图墙替代）：'
                          '{"years":["2021",...,"2025"], "panels":[{"title":"营收 × 毛利率",'
                          '"bars":[{"name":"营收","unit":"亿","values":[...]}], '
                          '"lines":[{"name":"毛利率","pct":true,"values":[...]}]}, ...]}'
@@ -287,7 +293,7 @@ def _check_chart_fields(fill: dict) -> None:
     if "未盈利" not in st and "管线" not in st:
         gp = fill.get("growth_plot")
         if not isinstance(gp, dict):
-            raise ValueError('growth_plot 为必填字段（v4.9 起 4.1 利润增长配历史+预测图）：'
+            raise ValueError('growth_plot 为必填字段（v4.9 起 5.1 利润增长配历史+预测图）：'
                              '{"hist":[{"y":"2023","rev":…,"np":…}, ...≥3年], '
                              '"fcst":[{"y":"2026E","np_lo":…,"np_hi":…,"np_consensus":…}, ...]}'
                              '——历史取 E3 同比，一致预期取 E5；未盈利/管线分型豁免')
@@ -307,6 +313,111 @@ def _check_red_flag_breaker(fill: dict) -> None:
     pos_html = fill.get("position_html") or ""
     if red_flag and _LABEL_REFUSE not in _plain_text(pos_html):
         raise ValueError(f"红灯熔断：red_flag「{red_flag}」非空，position_html 必须包含「{_LABEL_REFUSE}」结论")
+
+
+def _check_odds_floor(fill: dict, warns: list) -> None:
+    """v5.0 机制三（赔率 ∞ 收紧·地板分级）：悲观下限 ≥ 现价（即 compute_valuation 赔率 ∞
+    条件，down = price − pess_low ≤ 0）时，pess 情景必须带 floor 证据对象且托得住下限——
+    floor 存在、type ∈ {net_cash, dividend}、evidence 非空、value ≥ 悲观下限×0.99
+    （「悲观下限 ≤ 证据地板值」容差 1%）；任一不满足 → 拒渲染。
+    floor 存在但赔率有限（下限 < 现价）→ 软告警（此时 floor 无作用）。
+    挂载在 _check_valuation_scenarios 之后：shares/scenarios 合法性已由前者硬拒，
+    这里取不到数时静默跳过（不重复报错）。"""
+    v = fill.get("valuation")
+    if not isinstance(v, dict):
+        return
+    # F17：floor 是悲观情景（pess）子键——写在 base/opt 不生效，软告警提示挪位
+    for s in v.get("scenarios") or []:
+        k = str((s or {}).get("key") or "").lower()
+        if k != "pess" and isinstance((s or {}).get("floor"), dict):
+            warns.append(f"valuation.scenarios[{k or '?'}] 含 floor 子键：floor 是悲观情景子键，"
+                         f"写错位置不生效——请移到 pess 情景或删除")
+    price = _num(fill.get("price"))
+    shares = _num(v.get("shares"))
+    if price is None or shares is None or shares <= 0:
+        return
+    pess = next((s for s in v.get("scenarios") or []
+                 if str((s or {}).get("key") or "").lower() == "pess"), None)
+    if not pess:
+        return
+    # 与 compute_valuation 同口径复算悲观下限：profit×pe_lo÷shares 或 mcap_lo÷shares
+    profit, pe_lo, _pe_hi, mc_lo, _mc_hi = _scenario_numbers(pess)
+    if mc_lo is not None:
+        low = mc_lo / shares
+    elif profit is not None and pe_lo is not None:
+        low = profit * pe_lo / shares
+    else:
+        return
+    floor = pess.get("floor")
+    if low < price:
+        if floor:
+            warns.append(f"valuation.scenarios[悲观].floor 在赔率有限时无作用"
+                         f"（悲观下限 {low:g} < 现价 {price:g}），可删——"
+                         f"floor 只在悲观下限 ≥ 现价（赔率 ∞）时生效")
+        return
+    why = None
+    if not isinstance(floor, dict):
+        why = "floor 字段缺失"
+    else:
+        ftype = str(floor.get("type") or "").strip()
+        fvalue = _num(floor.get("value"))
+        fevidence = str(floor.get("evidence") or "").strip()
+        if ftype not in ("net_cash", "dividend"):
+            why = f"floor.type 非法: {floor.get('type')!r}（只接受 net_cash 净现金 / dividend 保底分红折现）"
+        elif not fevidence:
+            why = "floor.evidence 为空（须写明地板值推导，如「净现金123亿÷总股本10亿」）"
+        elif fvalue is None or fvalue < low * 0.99:
+            why = f"floor.value {floor.get('value')!r} 托不住悲观下限 {low:g}（须 ≥ 下限×0.99，容差 1%）"
+    if why:
+        raise ValueError(f"悲观下限 {low:g} 不低于现价 {price:g}（≥，含相等边界）但地板证据缺失/不足（{why}），"
+                         f"赔率 ∞ 不予认定；请下修悲观情景或补 floor 字段"
+                         f'（pess 情景加 "floor": {{"type":"net_cash"/"dividend",'
+                         f'"value":元/股,"evidence":"地板值推导"}}）')
+
+
+def _check_consensus_np(fill: dict, warns: list) -> None:
+    """v5.0 机制二（乐观税门禁）交叉校验：valuation_inputs.consensus_np（当年卖方一致预期
+    归母净利均值，亿元）必须照抄 em_fetch --out 落盘 JSON 的 consensus_np.np_avg——
+    偏差 >1% 拒渲染；fill 有值落盘无键 → 拒渲染（手估嫌疑）；落盘有 fill 无 → 软告警
+    （漏抄，乐观税未检）；双向皆缺 → 通过。读取套路复用 _check_period_track 同款
+    （quote.source_file 落盘 JSON；落盘读不到时降级跳过比对——主键门禁已管）。"""
+    vi = fill.get("valuation_inputs") or {}
+    raw = vi.get("consensus_np")
+    fc = _strict_num(raw)
+    if raw is not None and str(raw).strip() and fc is None:
+        raise ValueError(f"valuation_inputs.consensus_np 不是纯数字: {raw!r}——照抄字段禁止夹带文字"
+                         f"（亿元；口径注请写进 .source 说明后重渲）")
+    q = fill.get("quote") or {}
+    src = q.get("source_file") if isinstance(q, dict) else None
+    ref = None
+    if src:
+        try:
+            with open(src, encoding="utf-8") as f:
+                ref = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            ref = None   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
+    rc = _num(((ref or {}).get("consensus_np") or {}).get("np_avg")) if ref is not None else None
+    if fc is None and rc is None:
+        return
+    if fc is None:
+        warns.append(f"valuation_inputs.consensus_np 漏抄（落盘 consensus_np.np_avg={rc:g}）："
+                     f"乐观税未检——照抄 em_fetch --out 落盘值回填后重渲"
+                     f"（无卖方覆盖标的落盘无此键，不在此列）")
+        return
+    if rc is None:
+        if ref is None:
+            warns.append("valuation_inputs.consensus_np 已填但 quote.source_file 缺失或读不到："
+                         "无法交叉校验（quote 门禁已管主键，本条不重复硬拒）")
+            return
+        raise ValueError(f"valuation_inputs.consensus_np 落盘无值而 fill 填了 {fc:g}："
+                         f"E5 未覆盖标的禁止手估一致预期——以 em_fetch --out 落盘为准修正后重渲")
+    dev = abs(fc - rc)
+    bad = abs(fc) > 0.005 if rc == 0 else dev / abs(rc) > 0.01
+    if bad:
+        pct = f"（偏差 {dev / abs(rc) * 100:.1f}% > 1%）" if rc else ""
+        raise ValueError(f"valuation_inputs.consensus_np 与 em_fetch 落盘值不一致: fill={fc:g} vs "
+                         f"落盘 consensus_np.np_avg={rc:g}{pct}——一致预期照抄落盘禁手改，"
+                         f"以落盘值为准修正后重渲")
 
 
 def _check_thesis_consistency(fill: dict, calc: dict) -> None:
@@ -467,7 +578,7 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
     for field, layer in (("l1_html", "L1"), ("l3_html", "L3")):
         blocks = _split_dim_blocks(fill.get(field) or "")
         dims = [d for d in DIMS if d[1] == layer]
-        by_num = {d[2].split()[0]: d for d in dims}   # "3.1 赛道与宏观" → "3.1"
+        by_num = {d[2].split()[0]: d for d in dims}   # "4.1 赛道与宏观" → "4.1"
         fallback = 0
         for pos, blk in enumerate(blocks):
             m = re.search(r'dim-name[^>]*>\s*(\d\.\d)', blk)
@@ -494,7 +605,7 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
                              f"≥8 或 ≤3 必须配具体量化依据")
         if fallback:
             warns.append(f"{field} 有 {fallback} 个 dim-block 未从 dim-name 提取到有效编号，"
-                         f"已按位置兜底匹配——dim-name 请写「编号+名称」规范形态（如 3.1 赛道与宏观），"
+                         f"已按位置兜底匹配——dim-name 请写「编号+名称」规范形态（如 4.1 赛道与宏观），"
                          f"乱序块的极端分证据校验依赖编号识别")
     if thin_reject:
         raise ValueError("dim-block 内容地板：" + "；".join(thin_reject)
@@ -512,11 +623,11 @@ def _check_internal_codes(fill: dict, warns: list) -> None:
         hits = sorted(set(re.findall(r"(?<![A-Za-z0-9])(?:L[134]|1D)(?![A-Za-z0-9])", txt)))
         if hits:
             warns.append(f"{name} 正文出现框架内部代号 {'/'.join(hits)}："
-                         f"请改用章节编号/名称（第 3 章 / 3.4 / 第 5 章风险评估）")
+                         f"请改用章节编号/名称（第 4 章 / 4.4 / 第 6 章风险评估）")
 
 
 def _check_writing_discipline(fill: dict, warns: list) -> None:
-    """v4.7.1 写作纪律告警（东方电气反馈）：四拍挤段 / 3 年趋势三年并排 / pe_history 无第 10 章承载。"""
+    """v4.7.1 写作纪律告警（东方电气反馈）：四拍挤段 / 3 年趋势三年并排 / pe_history 无第 11 章承载。"""
     # 四拍各自成段（fill-schema dim-block 四拍结构）：判词/论据/对比/评分挤进同一个 <p> → 提示拆段
     beats = ("判词：", "论据：", "对比：", "评分：")
     for name in ("l1_html", "l3_html"):
@@ -538,10 +649,10 @@ def _check_writing_discipline(fill: dict, warns: list) -> None:
         if any(yseq[i] and yseq[i + 1] and yseq[i + 2] for i in range(len(yseq) - 2)) or stacked:
             warns.append("3 年趋势表疑似三年数字并排：应写「起→终（方向词）」"
                          "（如 8.0→30.8（大升），方向词按指标语义着色），见 fill-schema 趋势表规则")
-    # pe_history 图已挂第 10 章（v4.7.1）：cycle_html 缺失 → 整章删除，图无处显示
+    # pe_history 图已挂第 11 章（v4.7.1）：cycle_html 缺失 → 整章删除，图无处显示
     if (fill.get("pe_history") or {}).get("hist_lo") is not None and not (fill.get("cycle_html") or "").strip():
-        warns.append("pe_history 已填但 cycle_html 缺失：PE 历史带图挂第 10 章，整章被删后图不显示"
-                     "——v4.7.1 起四类分型（周期/稳健成长/稳定价值/困境反转）应写第 10 章，或删除 pe_history")
+        warns.append("pe_history 已填但 cycle_html 缺失：PE 历史带图挂第 11 章，整章被删后图不显示"
+                     "——v4.7.1 起四类分型（周期/稳健成长/稳定价值/困境反转）应写第 11 章，或删除 pe_history")
 
 
 def _check_prev_fields(fill: dict, warns: list) -> None:
@@ -591,7 +702,7 @@ def _check_quote_present(fill: dict, warns: list) -> None:
 
 
 def _check_optional_charts(fill: dict, warns: list) -> None:
-    """v4.8 可选图字段纪律：业务构成占比和 / 产业链两端 / 发丝图与第 10 章绑定 / 户数期数。"""
+    """v4.8 可选图字段纪律：业务构成占比和 / 产业链两端 / 发丝图与第 11 章绑定 / 户数期数。"""
     seg = fill.get("segments") or {}
     items = seg.get("items") or []
     if items:
@@ -611,7 +722,7 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
     if ch and (not ch.get("upstream") or not ch.get("downstream")):
         warns.append("industry_chain 上游/下游缺一：链条图需两端各至少 1 个行业，缺端图不生成")
     if (fill.get("price_history") or {}).get("series") and not (fill.get("cycle_html") or "").strip():
-        warns.append("price_history 已填但 cycle_html 缺失：股价/PE 发丝图挂第 10 章，整章被删后图不显示"
+        warns.append("price_history 已填但 cycle_html 缺失：股价/PE 发丝图挂第 11 章，整章被删后图不显示"
                      "——与 pe_history 同规则（v4.7.1 绑定关系）")
     holders = fill.get("holders") or []
     if holders and len(holders) < 3:
@@ -639,7 +750,7 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
 
 def _check_hero_band_claims(fill: dict, warns: list) -> None:
     """Hero 文案引用「分位/历史带」概念时的数据支撑核对（v4.9）：
-    概念必须在 pe_history（第 10 章同源数据，与 E1 落盘 pe_p25/pe_p75、历史带同口径）有对应字段
+    概念必须在 pe_history（第 11 章同源数据，与 E1 落盘 pe_p25/pe_p75、历史带同口径）有对应字段
     可佐证——「分位」→ p25/p75，「历史带/历史区间」→ hist_lo/hist_hi；有分位字段时再做
     现价 PE 相对位置的极性核对（称「低分位」而现价高于 P75、称「高分位」而现价低于 P25 即矛盾）。
     缺支撑字段 → 告警提示补数据或改文案（数据侧不存在该口径即不可信）。"""
@@ -691,15 +802,15 @@ def _check_conclusion_structure(fill: dict, warns: list) -> None:
 
 
 def _check_governance_strip(fill: dict, warns: list) -> None:
-    """v4.9.1 补充修订二：3.5 治理与资本配置分块单行化——整块 <p> 恰为 2 个
+    """v4.9.1 补充修订二：4.5 治理与资本配置分块单行化——整块 <p> 恰为 2 个
     （判词段 + 评分末拍段）；trig 行后另起 <p> 正文 → 告警（论据应内联进 .trig-mt）。
     未用 trig-strip 的旧存量 fill 不打扰。
-    补充修订四：同款清单推广到 3.3 护城河 / 4.3 催化剂（4.2 为可选形态不强制），
-    <p> 恰为 2 规则同步覆盖（4.3 评分段可省，校验只看 >2）。"""
-    for field, tags in (("l1_html", ("3.3", "3.5")), ("l3_html", ("4.3",))):
+    补充修订四：同款清单推广到 4.3 护城河 / 5.3 催化剂（5.2 为可选形态不强制），
+    <p> 恰为 2 规则同步覆盖（5.3 评分段可省，校验只看 >2）。"""
+    for field, tags in (("l1_html", ("4.3", "4.5")), ("l3_html", ("5.3",))):
         for blk in _split_dim_blocks(fill.get(field) or ""):
-            # 审计 P1-3：tag 从 dim-name 提取（旧「子串命中」会被块内正文提及的 3.3 截胡，
-            # 导致 3.5 块被当成 3.3、扣分校验整段跳过）
+            # 审计 P1-3：tag 从 dim-name 提取（旧「子串命中」会被块内正文提及的 4.3 截胡，
+            # 导致 4.5 块被当成 4.3、扣分校验整段跳过）
             _m = re.search(r'dim-name[^>]*>\s*(\d\.\d)', blk)
             tag = _m.group(1) if _m and _m.group(1) in tags else None
             if tag is None or "trig-strip" not in blk:
@@ -712,11 +823,11 @@ def _check_governance_strip(fill: dict, warns: list) -> None:
             # 方块只剩正面/中性，扣分结论断层。审计修订：扣分项识别容忍写法漂移
             #（嵌套括号/全角减号 − – －/无「扣分项（」前缀的裸负分），扣分行识别容忍 class 顺序
             # 与「已扣分/减分」文案；「不扣分」句整体豁免
-            if (tag == "3.5"
+            if (tag == "4.5"
                     and re.search(r"扣分[\s\S]{0,24}?[−\-–－]\s*\.?\d", blk)
                     and not re.search(r"不扣分", blk)
                     and not re.search(r'<span class="[^"]*\bmiss\b[^"]*"[^>]*>\s*(已)?[扣减]分', blk)):
-                warns.append("3.5 治理块评分段含扣分项，但 trig 行无「扣分」状态："
+                warns.append("4.5 治理块评分段含扣分项，但 trig 行无「扣分」状态："
                              "扣分结论也要写进方块——miss 红行状态文案写「扣分」（「关注」=不扣分仅跟踪，两者不得混用）")
 
 
@@ -886,6 +997,8 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
 
     _check_valuation_inputs(fill)
     _check_valuation_scenarios(fill, warns)
+    _check_odds_floor(fill, warns)      # v5.0 机制三：赔率 ∞ 须配悲观地板证据（floor）
+    _check_consensus_np(fill, warns)    # v5.0 机制二：乐观税一致预期照抄交叉校验
     _check_chart_fields(fill)
     _check_quote_present(fill, warns)   # v4.11.1（审核 D5）：date ≥ 2026-09-02 缺 quote 拒渲染
     _check_gap_plot(fill, calc, warns)  # v4.11.1：gap_plot 分布图字段校验（可选字段，缺失不查）
@@ -919,6 +1032,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_driver_cards(fill, warns)      # v4.11.3：P0 驱动卡字段（drivers/driver_verdict）
     _check_cycle_stages(fill, warns)      # v4.11.3：周期阶段卡字段（cycle_stages）
     _check_dcf(fill, warns)               # v4.11.3：DCF 双卡字段（dcf）
+    _check_period_track(fill, warns)      # v5.0：3 章 period_track（照抄落盘交叉校验/判词四选一/年报期整章消失）
 
 
 def validate_content(fill: dict, calc: dict = None) -> None:
@@ -1050,3 +1164,185 @@ def _check_dcf(fill: dict, warns: list) -> None:
     vh = fill.get("valuation_html") or ""
     if "<table" in vh and re.search(r">[^<]*DCF", vh):
         warns.append("valuation_html 仍含手写 DCF 表：v4.11.3 起 DCF 由 dcf 字段承载，请删除手写表")
+
+
+# ---------------- v5.0 第 3 章「最新报告期透视」period_track 校验 ----------------
+_PERIOD_LABEL_KEYS = ("period", "sq_label", "sq_prev_label")
+_PERIOD_NUM_KEYS = ("rev", "np", "np_dedt", "ocf", "sq_rev", "sq_np", "sq_prev_rev", "sq_prev_np")
+_PERIOD_YOY_KEYS = ("rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy", "sq_rev_yoy", "sq_np_yoy")
+_PERIOD_BAND_KEYS = ("band_np", "band_rev")
+_PERIOD_VERDICT_ENUM = ("超前", "正常", "滞后", "无法判定")
+
+
+def _check_period_track(fill: dict, warns: list) -> None:
+    """v5.0 第 3 章 period_track 校验（quote 防伪同款纪律：照抄 em_fetch --out 落盘，禁手估）。
+    硬拒：fill 有 period_track 而落盘无该键；照抄字段与落盘不一致（标签/文字同比完全一致，
+    数值偏差 >1%；fill 有值而落盘 None=手估嫌疑）；consensus_np 与落盘 np_avg 失配；
+    verdict_* 非四选一；goal_* 非正数。
+    软告警：落盘有 period_track 而 fill 未回填（第 3 章缺席）；quote 缺失/落盘读不到
+    （主键门禁 _check_quote_consistency/_check_quote_present 已管，不重复硬拒）；
+    fill None 而落盘有值（漏抄，章内容缩水）；判词缺失（渲染兜底「无法判定」）；
+    年报期填 industry/forecast/note（整章消失不渲染）；note_html 纯文本 >120 字。
+    数值容差与 quote 同款（相对 1%）；百分数类字段（yoy/节奏带）叠加 0.1 绝对容差——
+    fill 按一位小数照抄落盘原始 float，小值四舍五入会被纯相对容差误伤。"""
+    pt = fill.get("period_track")
+    if pt is not None and not isinstance(pt, dict):
+        raise ValueError(f"period_track 字段需为对象，实际: {type(pt).__name__}")
+    q = fill.get("quote") or {}
+    src = q.get("source_file") if isinstance(q, dict) else None
+    ref = None
+    if src:
+        try:
+            with open(src, encoding="utf-8") as f:
+                ref = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            ref = None   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
+    ref_pt = (ref or {}).get("period_track")
+    if pt and ref is None:
+        warns.append("period_track 已填但 quote.source_file 缺失或读不到：第 3 章数据无法交叉校验"
+                     "（quote 门禁已管主键，本条不重复硬拒）——请重跑 em_fetch --out 落盘并回填 quote 后重渲")
+    if pt and ref is not None and not isinstance(ref_pt, dict):
+        raise ValueError("fill.period_track 已填但 em_fetch 落盘 JSON 无 period_track 键："
+                         "第 3 章数据必须照抄 em_fetch --out 落盘的 period_track 照抄行，禁手估"
+                         "（神华现价造假同款防伪纪律）——请重跑 em_fetch --out 落盘，"
+                         "或删除 fill 的 period_track 后重渲")
+    if not pt and isinstance(ref_pt, dict):
+        warns.append("em_fetch 落盘含 period_track 但 fill 未回填：第 3 章「最新报告期透视」将缺席"
+                     "——请照抄落盘 period_track 行回填（年报期 is_annual=true 整章消失属预期，可忽略本条）")
+    if pt and isinstance(ref_pt, dict):
+        # 交叉比对（fill vs 落盘 period_track；报错带字段名/期望值/实际值/修复指向）
+        def _mismatch(key, fv, rv, extra=""):
+            raise ValueError(f"period_track.{key} 与 em_fetch 落盘值不一致: fill={fv!r} vs 落盘={rv!r}{extra}"
+                             "——第 3 章数据照抄 em_fetch --out 落盘 period_track 照抄行，禁手改；"
+                             "以落盘值为准修正后重渲")
+
+        def _close(fv, rv, pct=False):
+            """数值容差：相对 1%（quote 同款；落盘 0 时按两位小数精度 0.005 亿绝对容差）；
+            pct=True（百分数字段）叠加 0.1pct 绝对容差（一位小数照抄的四舍五入）。"""
+            if rv == 0:
+                return abs(fv) <= 0.005
+            return abs(fv - rv) / abs(rv) <= 0.01 or (pct and abs(fv - rv) <= 0.1)
+
+        def _copy_missing(key, rv):
+            warns.append(f"period_track.{key} 漏抄（落盘={rv!r}）：照抄行请完整回填")
+
+        for key in _PERIOD_LABEL_KEYS:
+            fv, rv = pt.get(key), ref_pt.get(key)
+            if fv is None and rv is None:
+                continue
+            if fv is None or not str(fv).strip():
+                _copy_missing(key, rv)
+                continue
+            if rv is None or str(fv).strip() != str(rv).strip():
+                _mismatch(key, fv, rv)
+        # F5：is_annual 进交叉校验——年报期整章消失是硬约束，布尔不等即拒渲染（不容改写）
+        if bool(pt.get("is_annual")) != bool(ref_pt.get("is_annual")):
+            _mismatch("is_annual", pt.get("is_annual"), ref_pt.get("is_annual"),
+                      "（年报期整章消失是硬约束）")
+        for key in _PERIOD_NUM_KEYS:
+            raw = pt.get(key)
+            fv = _strict_num(raw)
+            if raw is not None and str(raw).strip() and fv is None:
+                raise ValueError(f"period_track.{key} 不是纯数字: {raw!r}——照抄字段禁止夹带文字"
+                                 f"（亿元两位小数；口径注请写进 note_html 后重渲）")
+            rv = _num(ref_pt.get(key))
+            if fv is None and rv is None:
+                continue
+            if fv is None:
+                _copy_missing(key, rv)
+                continue
+            if rv is None:
+                raise ValueError(f"period_track.{key} 落盘无值而 fill 填了 {fv:g}："
+                                 f"落盘没有的数据禁止手估填入——以 em_fetch --out 落盘为准修正后重渲")
+            if not _close(fv, rv):
+                _mismatch(key, fv, rv, f"（偏差 {abs(fv - rv) / abs(rv) * 100:.1f}% > 1%）")
+        for key in _PERIOD_YOY_KEYS:
+            raw, rv_raw = pt.get(key), ref_pt.get(key)
+            fv, rv = _strict_num(raw), _strict_num(rv_raw)
+            if raw is None and rv_raw is None:
+                continue
+            if raw is None or not str(raw).strip():
+                _copy_missing(key, rv_raw)
+                continue
+            if rv_raw is None:
+                raise ValueError(f"period_track.{key} 落盘无值而 fill 填了 {raw!r}："
+                                 f"落盘没有的数据禁止手估填入——以 em_fetch --out 落盘为准修正后重渲")
+            if fv is not None and rv is not None:
+                if not _close(fv, rv, pct=True):
+                    _mismatch(key, fv, rv, f"（偏差 {abs(fv - rv):.2f}pct > 容差）")
+            elif str(raw).strip() != str(rv_raw).strip():
+                # 文字同比（扭亏/转亏/减亏/增亏）要求完全一致
+                _mismatch(key, raw, rv_raw, "（文字同比要求完全一致）")
+        for key in _PERIOD_BAND_KEYS:
+            fb, rb = pt.get(key), ref_pt.get(key)
+            if fb is None and rb is None:
+                continue
+            if fb is None:
+                _copy_missing(key, rb)
+                continue
+            if rb is None:
+                raise ValueError(f"period_track.{key} 落盘无值而 fill 填了 {fb!r}："
+                                 f"落盘没有的数据禁止手估填入——以 em_fetch --out 落盘为准修正后重渲")
+            fl = [_strict_num(x) for x in fb] if isinstance(fb, (list, tuple)) else []
+            rl = [_strict_num(x) for x in rb] if isinstance(rb, (list, tuple)) else []
+            if len(fl) < 2 or len(rl) < 2 or None in fl or None in rl:
+                raise ValueError(f"period_track.{key} 结构非法: fill={fb!r} vs 落盘={rb!r}"
+                                 f"（节奏带为 [下限%, 上限%] 两个纯数字）")
+            for i in (0, 1):
+                if not _close(fl[i], rl[i], pct=True):
+                    _mismatch(f"{key}[{i}]", fl[i], rl[i])
+        fy, ry = pt.get("band_years"), ref_pt.get("band_years")
+        if fy is None and ry is None:
+            pass
+        elif fy is None:
+            _copy_missing("band_years", ry)
+        else:
+            try:
+                same_years = [int(x) for x in fy] == [int(x) for x in (ry or [])]
+            except (TypeError, ValueError):
+                same_years = False
+            if not same_years:
+                _mismatch("band_years", fy, ry)
+        # consensus_np：fill 照抄的是落盘 consensus_np.np_avg（E5 当年净利均值）
+        raw_c = pt.get("consensus_np")
+        fc = _strict_num(raw_c)
+        if raw_c is not None and str(raw_c).strip() and fc is None:
+            raise ValueError(f"period_track.consensus_np 不是纯数字: {raw_c!r}——照抄字段禁止夹带文字")
+        rc = _num(((ref or {}).get("consensus_np") or {}).get("np_avg"))
+        if fc is not None and rc is None:
+            raise ValueError(f"period_track.consensus_np 落盘无值而 fill 填了 {fc:g}：E5 未覆盖标的"
+                             f"禁止手估一致预期——以 em_fetch --out 落盘为准修正后重渲")
+        if fc is None and rc is not None:
+            _copy_missing("consensus_np", f"consensus_np.np_avg={rc:g}")
+        if fc is not None and rc is not None and not _close(fc, rc):
+            _mismatch("consensus_np", fc, rc,
+                      f"（偏差 {abs(fc - rc) / abs(rc) * 100:.1f}% > 1%，对照落盘 consensus_np.np_avg）")
+    if pt:
+        is_annual = bool(pt.get("is_annual"))
+        for vk, ak in (("verdict_rev", "rev"), ("verdict_np", "np"), ("verdict_dedt", "np_dedt")):
+            v = str(pt.get(vk) or "").strip()
+            if v:
+                if v not in _PERIOD_VERDICT_ENUM:
+                    raise ValueError(f"period_track.{vk} 取值非法: {v!r}——判词四选一："
+                                     f"{'/'.join(_PERIOD_VERDICT_ENUM)}（模型按节奏带+完成度判定）")
+            elif not is_annual and _num(pt.get(ak)) is not None:
+                warns.append(f"period_track.{vk} 未填：章内该指标判词将显示「无法判定」（判词四选一 "
+                             f"{'/'.join(_PERIOD_VERDICT_ENUM)}，由模型按节奏带与完成度判定）")
+        for gk in ("goal_rev", "goal_np"):
+            raw = pt.get(gk)
+            if raw is None or not str(raw).strip():
+                continue
+            gv = _strict_num(raw)
+            if gv is None or gv <= 0:
+                raise ValueError(f"period_track.{gk} 必须为正数（亿元；年报「经营计划」段披露口径，"
+                                 f"未披露请填 null），实际: {raw!r}")
+        if is_annual:
+            extra = [k for k in ("industry_html", "forecast_html", "note_html")
+                     if str(pt.get(k) or "").strip()]
+            if extra:
+                warns.append(f"period_track.is_annual=true（年报期第 3 章整章消失）：{'/'.join(extra)} "
+                             f"已填内容不会渲染——年报期请省略这些字段，或留待下一季报期使用")
+        note_len = len(_plain_text(str(pt.get("note_html") or "")))
+        if note_len > 120:
+            warns.append(f"period_track.note_html 纯文本 {note_len} 字 > 120：口径提示定位 ≤3 句，"
+                         f"展开论证归各章")

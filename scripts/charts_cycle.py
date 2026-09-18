@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_cycle.py — 第 10 章（周期规律）图族（v4.9 从 charts.py 拆出）：PE 历史带（build_pe_band）/ 股价与 PE 历史发丝图（build_price_history）。依赖 charts_base 与 scoring。"""
+"""charts_cycle.py — 第 11 章（周期规律）图族（v4.9 从 charts.py 拆出）：PE 历史带（build_pe_band）/ 股价与 PE 历史发丝图（build_price_history）。依赖 charts_base 与 scoring。"""
 
 from scoring import _num, _fmt, _esc
 from charts_base import *
 
 def build_pe_band(fill: dict) -> str:
-    """07→10 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
+    """08→11 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
     横向子弹图——浅带=历史 PE 区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点。
     v4.8.1：显示域自适应截断（hist_hi 远超决策值集合×1.5 时截到该倍数，右缘「峰值→」标注），
     关键时点标签双层交错排布。
-    v4.7.1 起图挪至 10 周期规律章（手写时段拆解前，概览→明细）。
+    v4.7.1 起图挪至 11 周期规律章（手写时段拆解前，概览→明细）。
     pe_history: {"hist_lo":13.7, "hist_hi":83.2, "label":"近5年",
                  "milestones":[{"label":"2021H1","pe":46.9}, …]}（label 可选；milestones 可选，
                  建议 3-6 个关键时点：峰值/谷值/典型时段，与时段拆解表同源取数）；
@@ -108,13 +108,14 @@ def build_pe_band(fill: dict) -> str:
 
 
 def build_price_history(fill: dict) -> str:
-    """10 周期规律·股价/PE 历史图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
+    """11 周期规律·股价/PE 历史图（fill["price_history"] 可选字段，与 PE 历史带同源 E2 月线）：
     v4.11.0 起主形态=季K蜡烛（series 带 open/high/low/close 时——照抄 E2「全序列」行；按日历季度聚合：
     季首月开/季内高低/季末月收，红涨绿跌仅股价方向），无 OHLC 的旧 fill 回退月收发丝线（原形态）。
     v4.11.1 起叠加趋势均线（海油反馈：季K 单看蜡烛不易读趋势）——季K=季度收盘 MA4、
     发丝=月收盘 MA12，暖灰细线 + 图例；均线值域含于价格域内，不影响定标。
-    右轴=PE(TTM)（钢蓝发丝月频；有效 pe <12 点则只画股价；亏损期 PE 无定义自然断线分段，
-    连续缺值 ≥3 个月的段加浅灰底纹并命名「亏损期 · PE(TTM) 无定义」——缺口是诚实区间不是断数，
+    右轴=PE(TTM)（钢蓝折线：v5.0 起季K 分支按季聚合——取季末月值，与蜡烛/4 季均线同频同口径；
+    非季K 退化路径仍月频。有效 pe <12 点则只画股价；亏损期 PE 无定义自然断线分段，
+    连续缺值段加浅灰底纹并命名「亏损期 · PE(TTM) 无定义」——缺口是诚实区间不是断数，
     天齐实证 2020 亏损尾巴+2024-2025 亏损期两段）；**PE 右轴自适应截断**（max > p75×3 时域顶=p75×3、
     超限段平贴域顶、右缘标注「峰值 Nx →」，套 v4.8.1 pe_history 规则——扭亏初期净利极薄会冲出
     200x+ 把正常段压成平线，天齐 2026-03 204.6x 实证）。横轴按年 tick（带竖向浅网格线），
@@ -175,6 +176,16 @@ def build_price_history(fill: dict) -> str:
         X = lambda i: L + i / (n - 1) * (W - L - R)
         step = (W - L - R) / (n - 1)
 
+    # v5.0（F 频率统一）：季K 分支 PE(TTM) 按季聚合——取每季末月值（与季度收盘口径一致），
+    # 点过季度槽中心（与蜡烛/4 季均线同位），缺 PE 的季记 None（断线分段沿用）；
+    # (x, pe, 月槽起, 月槽止) 四元组，右轴定标/截断/亏损期底纹/折线/末端标注同消费。
+    # 非季K 退化路径（月K 发丝）保持月频不动
+    if has_ohlc:
+        pe_line = [(X((q["i0"] + q["i1"]) / 2), pts[q["i1"]]["pe"], q["i0"], q["i1"])
+                   for q in quarters]
+    else:
+        pe_line = [(X(i), p["pe"], i, i) for i, p in enumerate(pts)]
+
     if has_ohlc:
         lo_c, hi_c = _pad_domain(min(q["l"] for q in quarters), max(q["h"] for q in quarters),
                                  0.08, floor=0.0)
@@ -182,8 +193,11 @@ def build_price_history(fill: dict) -> str:
         lo_c, hi_c = _pad_domain(min(closes), max(closes), 0.08, floor=0.0)
     Yc = _lin_map(lo_c, hi_c, H - B, T)
     pe_cap = None
+    pes = sorted(v for _, v, _, _ in pe_line if v is not None)
+    if has_pe and not pes:
+        # 季K 极端情形：月末有值但季末月全缺 → 季频序列空，等同无 PE（防下方 pes[-1] 炸链）
+        has_pe = False
     if has_pe:
-        pes = sorted(p["pe"] for p in pts if p["pe"] is not None)
         hi_raw = pes[-1]
         p75 = pes[int((len(pes) - 1) * 0.75)]
         if p75 > 0 and hi_raw > p75 * 3:
@@ -213,19 +227,22 @@ def build_price_history(fill: dict) -> str:
         else f'股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}'
     parts = [f'<span class="section-tag">{tag}</span>',
              _svg_open(W, H, "股价季K与PE历史走势" if has_ohlc else "股价与PE历史走势")]
-    # 亏损期底纹（连续缺 pe ≥3 个月；先画在最底层）。审计 P0-2：尾部段（延伸到序列末，
-    # 即当前仍亏损——困境反转标的恰恰如此）旧哨兵逻辑永不收尾 → 显式收 run_start 到 n-1
+    # 亏损期底纹（连续缺 pe 段；先画在最底层）。审计 P0-2：尾部段（延伸到序列末，
+    # 即当前仍亏损——困境反转标的恰恰如此）旧哨兵逻辑永不收尾 → 显式收 run_start 到末尾。
+    # v5.0（F）：季K 分支随 PE 季频序列按季判缺（连续缺点的季成段，1 季 ≈ 旧月频 ≥3 个月口径）；
+    # 退化路径仍逐月（≥3 个月成段）。runs 存月槽索引区间，下方渲染口径不变
     runs, run_start = [], None
     if has_pe:
-        for i, p in enumerate(pts):
-            if p["pe"] is None and run_start is None:
+        min_run = 1 if has_ohlc else 3
+        for i, (_x, v, _s0, _s1) in enumerate(pe_line):
+            if v is None and run_start is None:
                 run_start = i
-            elif p["pe"] is not None and run_start is not None:
-                if i - run_start >= 3:
-                    runs.append((run_start, i - 1))
+            elif v is not None and run_start is not None:
+                if i - run_start >= min_run:
+                    runs.append((pe_line[run_start][2], pe_line[i - 1][3]))
                 run_start = None
-        if run_start is not None and n - run_start >= 3:
-            runs.append((run_start, n - 1))
+        if run_start is not None and len(pe_line) - run_start >= min_run:
+            runs.append((pe_line[run_start][2], pe_line[-1][3]))
     _shade_label = "亏损期 · PE(TTM) 无定义"
     for a, b in runs:
         x1 = max(X(a) - step / 2, L)          # 夹到绘图区（回退模式首段左溢实证）
@@ -248,6 +265,7 @@ def build_price_history(fill: dict) -> str:
     # v4.11.1（海油反馈）：叠加趋势均线——季K 模式=季度收盘 MA4，发丝模式=月收盘 MA12；
     # 中性暖灰细线，不抢蜡烛/PE 线视觉层级
     _ma_leg = "4 季均线" if has_ohlc else "12 月均线"
+    _pe_freq = "季度" if has_ohlc else "月频"   # v5.0（F）：季K 分支 PE 已季频聚合
     lx2 = L + 32 + _text_w(_leg1, 11) + 24
     if ma_pts:   # 图例与折线同门槛（无线不出图例）
         parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" '
@@ -256,7 +274,7 @@ def build_price_history(fill: dict) -> str:
         lx2 += 32 + _text_w(_ma_leg, 11) + 24
     if has_pe:
         parts.append(f'<line x1="{lx2:.0f}" y1="{T - 12}" x2="{lx2 + 26:.0f}" y2="{T - 12}" stroke="{_C_BLUE}" stroke-width="1.6"/>')
-        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴，月频）</text>')
+        parts.append(f'<text x="{lx2 + 32:.0f}" y="{T - 8}" font-size="11" fill="{_C_BLUE}">PE(TTM)（右轴，{_pe_freq}）</text>')
     # 左轴（股价）网格与刻度
     _hgrid_ticks(parts, Yc, _ticks(lo_c, hi_c, 5), L, W - R, L - 8)
     # 右轴（PE）刻度 + 截断标注
@@ -267,7 +285,7 @@ def build_price_history(fill: dict) -> str:
         if pe_cap:
             # 虚线封口（自首个超限点起）+ 峰值标签贴截断段起点（避开右缘最新值药丸区，P1-1 实证：
             # 天齐峰值恰在末点，右缘标注被药丸遮掉）
-            f0 = next(i for i, p in enumerate(pts) if p["pe"] is not None and p["pe"] >= hi_p)
+            f0 = next(s0 for _x, v, s0, _s1 in pe_line if v is not None and v >= hi_p)
             parts.append(f'<line x1="{X(f0) - step / 2:.1f}" y1="{Yp(hi_p):.1f}" x2="{W - R}" y2="{Yp(hi_p):.1f}" '
                          f'stroke="{_C_SAND}" stroke-width="1.2" stroke-dasharray="4 3"/>')
             _cap_txt = f"峰值 {_fmt(hi_raw)}x →"
@@ -305,14 +323,14 @@ def build_price_history(fill: dict) -> str:
     if ma_pts:
         parts.append('<path d="M' + " L".join(f"{x:.1f},{y:.1f}" for x, y in ma_pts)
                      + f'" fill="none" stroke="{_C_STONE}" stroke-width="1.6"/>')
-    # PE 发丝线（允许中间缺值：缺值处分段）
+    # PE 折线（允许中间缺值：缺值处分段——v5.0 起季K 分支=季末月值过季度槽中心，退化路径仍逐月）
     if has_pe:
         run = []
-        for i, p in enumerate(pts + [{"pe": None}]):  # 哨兵收尾
-            if p["pe"] is not None:
-                run.append(i)
+        for x, v, _s0, _s1 in pe_line + [(0, None, 0, 0)]:  # 哨兵收尾
+            if v is not None:
+                run.append((x, v))
             elif run:
-                d = "M" + " L".join(f"{X(j):.1f},{Yp(pts[j]['pe']):.1f}" for j in run)
+                d = "M" + " L".join(f"{px:.1f},{Yp(pv):.1f}" for px, pv in run)
                 parts.append(f'<path d="{d}" fill="none" stroke="{_C_BLUE}" stroke-width="1.8"/>')
                 run = []
     # 末端点与最新值标注（v4.8.2：药丸底色，避免压线难读）
@@ -325,15 +343,20 @@ def build_price_history(fill: dict) -> str:
     parts.append(f'<circle cx="{X(n - 1):.1f}" cy="{Yc(closes[-1]):.1f}" r="3" fill="{_C_INK}"/>')
     _pill(X(n - 1) - 6, Yc(closes[-1]) - 8, _fmt(closes[-1]), _C_INK)
     if has_pe:
-        last_pe = next((p["pe"] for p in reversed(pts) if p["pe"] is not None), None)
-        if last_pe is not None:
-            _pill(X(n - 1) - 6, Yp(last_pe) + 16, f'{_fmt(last_pe)}x', _C_BLUE)
+        last = next((t for t in reversed(pe_line) if t[1] is not None), None)
+        if last is not None:
+            # 末端药丸 x 锚 PE 折线实际末点（F18）：季K 末季不完整（序列止于季中）时 X(n-1)
+            # 与折线末点（季度槽中心）错位一个月槽；末季完整时 X(n-1) 即季末月槽，
+            # 与股价药丸同列对齐。发丝路径逐月，末点 x 即折线末端（亏损尾巴不再漂到序列末）
+            tail_incomplete = has_ohlc and quarters[-1]["i1"] - quarters[-1]["i0"] < 2
+            px = last[0] if (not has_ohlc or tail_incomplete) else X(n - 1)
+            _pill(px - 6, Yp(last[1]) + 16, f'{_fmt(last[1])}x', _C_BLUE)
     parts.append(_svg_close())
     if has_ohlc:
         src = ('股价季K/PE 历史走势（脚本按 price_history 字段生成，同源 E2 月线全序列）：'
                '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向）'
                + ('，暖灰=4 季均线' if ma_pts else '')
-               + '，钢蓝=PE(TTM)（右轴，月频）；'
+               + '，钢蓝=PE(TTM)（右轴，季度）；'
                '灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义——诚实区间非断数）；双轴各自定标，读交叉不读绝对高度')
         if pe_cap:
             src += f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注（正常段可读性优先）'

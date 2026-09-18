@@ -198,9 +198,9 @@ def _anchor_clamp(x: float, w: float, lo: float, hi: float):
 
 def _inject_chart_anchors(html: str, items: tuple, owner: str, tail: str, hint: str,
                           prepend: bool = False) -> str:
-    """图表锚点注入（第 3 / 4 / 8 章共用）：items 为 (锚点注释, 图 HTML, 字段名) 序列，
+    """图表锚点注入（第 4 / 5 / 9 章共用）：items 为 (锚点注释, 图 HTML, 字段名) 序列，
     锚点在 → 原位替换；锚点缺失但字段已填 → 图追加到章末尾 + stderr 告警（prepend=True 时
-    改为垫到片段开头，第 8 章预期差图用——图是本章主体，堆在结论框后不成章）；字段未填 →
+    改为垫到片段开头，第 9 章预期差图用——图是本章主体，堆在结论框后不成章）；字段未填 →
     锚点静默清除（图返回空串）。owner=正文变量名、tail=追加位置描述、hint=锚点摆放建议，
     只用于告警文案。"""
     for anchor, chart_html, field in items:

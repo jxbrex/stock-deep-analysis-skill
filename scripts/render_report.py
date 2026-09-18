@@ -36,6 +36,7 @@ from scoring import (
     build_score_summary, build_valuation_process_card, build_position_card,
     _quality_verdict, _valuation_verdict,
     compute_valuation, compute_valuation_score, build_dcf_cards,
+    _edge_info, build_edge_upgrade_rows,
 )
 from charts_base import _fmt_px, _prev_track_rows
 from charts_scenario import (
@@ -47,6 +48,7 @@ from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
     _inject_gap_chart, build_driver_cards, build_cycle_stages,
+    build_period_bullets, build_period_sqplot, build_period_table,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
 from validate import validate_content
@@ -54,7 +56,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v4.11.3"
+RENDERER_VERSION = "v5.0.0"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -118,25 +120,29 @@ def _load_fill(fill_path: str) -> dict:
 
 
 # 侧栏目录条目：(锚点 id, 完整章节名[title 悬停提示], 侧栏简称)
+# v5.0：新 3 章「最新报告期透视」插入 s2 之后，原 3-13 章全部顺延 +1
 _TOC_MAIN = [("s1", "1 核心结论", "结论"), ("s2", "2 关键利润驱动", "驱动"),
-             ("s3", "3 公司本质", "本质"), ("s4", "4 未来预期", "预期"),
-             ("s5", "5 风险评估", "风险"), ("s6", "6 质量分汇总", "评分"),
-             ("s7", "7 估值与安全边际", "估值"), ("s8", "8 市场预期差", "分歧"),
-             ("s9", "9 同业对比", "同业")]
-_TOC_TAIL = [("s11", "11 仓位与时机决策", "仓位")]
+             ("s4", "4 公司本质", "本质"), ("s5", "5 未来预期", "预期"),
+             ("s6", "6 风险评估", "风险"), ("s7", "7 质量分汇总", "评分"),
+             ("s8", "8 估值与安全边际", "估值"), ("s9", "9 市场预期差", "分歧"),
+             ("s10", "10 同业对比", "同业")]
+_TOC_TAIL = [("s12", "12 仓位与时机决策", "仓位")]
 
 
-def build_toc(has_cycle: bool, has_review: bool) -> str:
+def build_toc(has_period: bool, has_cycle: bool, has_review: bool) -> str:
     """右缘固定侧栏目录（纯 CSS 零 JS；宽屏显示，窄屏与打印隐藏）：章节用两字简称，
-    悬停可见全名（title）；条件章节（10 周期 / 12 回测）按存在性生成，
-    编号与模板固定章节号一致（v4.8.1：12=回测复盘、13=跟踪仪表盘，先复盘后跟踪）。"""
+    悬停可见全名（title）；条件章节（3 透视 / 11 周期 / 13 回测）按存在性生成，
+    编号与模板固定章节号一致（v5.0：3=最新报告期透视条件插入，原 3-13 顺延 +1，
+    回测仍在跟踪仪表盘之前）。"""
     secs = list(_TOC_MAIN)
+    if has_period:
+        secs.insert(2, ("s3", "3 最新报告期透视", "透视"))
     if has_cycle:
-        secs.append(("s10", "10 周期规律", "周期"))
+        secs.append(("s11", "11 周期规律", "周期"))
     secs += _TOC_TAIL
     if has_review:
-        secs.append(("s12", "12 回测复盘", "复盘"))
-    secs.append(("s13", "13 跟踪仪表盘", "跟踪"))
+        secs.append(("s13", "13 回测复盘", "复盘"))
+    secs.append(("s14", "14 跟踪仪表盘", "跟踪"))
     links = "".join(f'<a href="#{i}" title="{_esc(full)}">{_esc(short)}</a>' for i, full, short in secs)
     return f'<nav class="toc-side">{links}</nav>'
 
@@ -216,7 +222,9 @@ def _apply_valuation_score(fill: dict, calc: dict, fill_valuation):
     """估值分强制脚本化：四件套计算结果直接覆盖 fill 里的 valuation_score（填了也只作提示）。
     返回 (覆盖后估值分, valuation_calc)。"""
     # 估值分强制脚本化：四件套计算结果直接覆盖 fill 里的 valuation_score（填了也只作提示）
-    valuation_calc = compute_valuation_score(calc, fill.get("valuation_inputs"))
+    # v5.0 机制二：gap_tier 传入乐观税门禁（base 净利 ÷ 一致预期 > 1.15 且非 A 档 → 中枢封顶 6）
+    valuation_calc = compute_valuation_score(calc, fill.get("valuation_inputs"),
+                                             gap_tier=fill.get("gap_tier"))
     if valuation_calc is None:
         raise ValueError("估值分无法计算：valuation_inputs 四键或 valuation 三情景字段不完整"
                          "（pe_ttm/pe_band/div_yield/risk_free + 每情景 profit/pe 或 mcap + horizon）")
@@ -261,7 +269,7 @@ def _build_context(fill: dict, calc: dict):
                       fill.get("subtitle", "")).strip().strip("｜|").strip()
     target_range = fill.get("target_range", "—")
     if calc:
-        # 目标价区间以脚本计算为准（消灭模型手写与 05 表不一致的可能）；
+        # 目标价区间以脚本计算为准（消灭模型手写与 08 表不一致的可能）；
         # v4.10 起经 _fmt_px 展示（低价股两位小数，工行「8-8」假无区间实证）
         computed_tr = f"{_fmt_px(calc['base_lo'])}-{_fmt_px(calc['base_hi'])}"
         if target_range != "—":
@@ -287,6 +295,29 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
     timing = sc["timing"]
     red_flag = sc["red_flag"]
     yellow_total = sc["yellow_total"]
+    # v5.0：3 章「最新报告期透视」存在条件——有 period_track 且非年报期（年报无单季透视意义）；
+    # 目录条目与模板 IF:PERIOD_BULLETS_HTML 条件块共用此判断口径
+    has_period = bool(fill.get("period_track")) and not (fill.get("period_track") or {}).get("is_annual")
+    # v5.0：3 章占位族（period_track 数据族，图与表全部脚本生成）。
+    # PERIOD_BULLETS_HTML 非空是 TOC 与章节块同生共灭的硬约束——子弹图空串时以绝对额表兜底，
+    # 绝不允许 TOC 挂「透视」而死链；非 has_period → 7 键全空，整章随 IF 块消失
+    pt = fill.get("period_track") or {}
+    period_table = build_period_table(pt) if has_period else ""
+    period_bullets = build_period_bullets(pt) if has_period else ""
+    if not period_bullets:
+        # 子弹图空串 → 绝对额表兜底到子弹图槽位（F4：二选一——表格槽位清空，
+        # 防同一 <table> 在章内渲染两次；TOC 与章节块同生共灭硬约束不变）
+        period_bullets, period_table = period_table, ""
+    period_sqplot = build_period_sqplot(pt) if has_period else ""
+    period_note = str(pt.get("note_html") or "").strip() if has_period else ""
+    # v5.0 机制一：档位临界升档路径行（每条临界轨一条 pending trig）。
+    # 红灯熔断或中枢为负拦截命中时仓位根本没走矩阵，不挂临界升档触发
+    edge_crit = []
+    if not red_flag and not (calc and calc["central_raw"] < 0):
+        # F3：与仓位卡同口径传 floor_uplift（net_cash 硬地板上浮恰落 8.0 豁免临界）——
+        # 徽章与 14 章升档行同生共灭
+        edge_crit, _q_eff, _v_eff = _edge_info(quality, valuation,
+                                               valuation_calc.get("floor_uplift"))
     repl = {
         "DATE": _esc(date),
         "COMPANY": _esc(fill["company"]),
@@ -307,8 +338,19 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "P0_HTML": fill.get("p0_html", ""),
         # v4.11.3：P0 驱动卡（drivers/driver_verdict 字段，垫在敏感性龙卷风前；空串替换）
         "DRIVER_CARDS_HTML": build_driver_cards(fill),
-        # v4.8：3.1 业务构成图 / 3.2 产业链图由锚点 <!--SEGMENTS--> / <!--CHAIN--> 注入 l1_html
-        # v4.9：3.4 财务趋势图墙 <!--FIN_TREND--> 同注入；4.1 利润增长图 <!--GROWTH--> 注入 l3_html
+        # v5.0：3 章「最新报告期透视」占位族（period_track 数据族，脚本生成；口径见上方 pt 段注释）
+        "PERIOD_SUB": (f'{_esc(str(pt.get("period") or "最新报告期"))} · 累计口径 · 数据来源 em_fetch period_track'
+                       if has_period else ""),
+        "PERIOD_BULLETS_HTML": period_bullets,
+        "PERIOD_SQPLOT_HTML": period_sqplot,
+        "PERIOD_TABLE_HTML": period_table,
+        # 行业专项进度槽 / 预告快报兑现行：模型直写 HTML 直通（可空）
+        "PERIOD_INDUSTRY_HTML": str(pt.get("industry_html") or "") if has_period else "",
+        "PERIOD_FORECAST_HTML": str(pt.get("forecast_html") or "") if has_period else "",
+        # 口径提示（≤3 句）：非空时包一层模板注脚小字容器
+        "PERIOD_NOTE_HTML": f'<span class="source">{period_note}</span>' if period_note else "",
+        # v4.8：4.1 业务构成图 / 4.2 产业链图由锚点 <!--SEGMENTS--> / <!--CHAIN--> 注入 l1_html
+        # v4.9：4.4 财务趋势图墙 <!--FIN_TREND--> 同注入；5.1 利润增长图 <!--GROWTH--> 注入 l3_html
         "L1_HTML": _inject_l1_charts(fill.get("l1_html", ""), fill),
         "L3_HTML": _inject_l3_charts(fill.get("l3_html", ""), fill),
         "L4_HTML": fill.get("l4_html", ""),
@@ -316,7 +358,7 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "STOCK_TYPE": fill.get("stock_type", ""),
         "VALUATION_HTML": fill.get("valuation_html", ""),
         "GAP_TIER": fill.get("gap_tier", "—"),
-        # 8 章预期差图：<!--GAP--> 锚点注入 gap_html（图 + gap-notes 附注；缺失垫章首 + 告警）
+        # 9 章预期差图：<!--GAP--> 锚点注入 gap_html（图 + gap-notes 附注；缺失垫章首 + 告警）
         "GAP_HTML": _inject_gap_chart(fill.get("gap_html", ""), fill),
         "PEERS_META": fill.get("peers_meta", ""),
         "PEERS_HTML": peers_html,
@@ -329,19 +371,20 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": fill.get("next_review", "—"),
         # v4.9：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
-        "TRIGGERS_HTML": build_triggers_strip(fill),
+        # v5.0 机制一：档位临界升档路径行拼接在后（edge_crit 见函数头部注释）
+        "TRIGGERS_HTML": build_triggers_strip(fill) + build_edge_upgrade_rows(edge_crit),
         "DASH_HTML": fill.get("dash_html", ""),
         "POSITION_HTML": _tag_timing_table(fill.get("position_html", "")),
-        # 脚本生成区块：6 质量分汇总 / 7 估值过程卡 / 11 三轨判定与仓位结论卡
+        # 脚本生成区块：7 质量分汇总 / 8 估值过程卡 / 12 三轨判定与仓位结论卡
         "SCORE_SUMMARY_HTML": build_score_summary(sc),
         # v4.8 图表与导航增强（评分分布横条 / 敏感性龙卷风 / PE 历史带 / 回测哑铃 / 侧栏目录；
         # 龙卷风与 PE 带依赖可选字段，缺失返回空串 → 模板条件块整块删除）
-        "TOC_HTML": build_toc(bool(fill.get("cycle_html")), bool(review_html)),
+        "TOC_HTML": build_toc(has_period, bool(fill.get("cycle_html")), bool(review_html)),
         "SCORE_BARS_HTML": build_score_bars(sc),
         "SENSITIVITY_PLOT_HTML": build_sensitivity_tornado(fill),
         "PE_BAND_HTML": build_pe_band(fill),
-        # v4.8 新增：10 章股价/PE 发丝图（price_history，随第 10 章条件块同生共灭）、
-        # 11 章股东户数趋势（holders，裸占位符空串替换）
+        # v4.8 新增：11 章股价/PE 发丝图（price_history，随第 11 章条件块同生共灭）、
+        # 12 章股东户数趋势（holders，裸占位符空串替换）
         "PRICE_HIST_HTML": build_price_history(fill),
         "HOLDERS_PLOT_HTML": build_holders_plot(fill),
         "REVIEW_PLOT_HTML": build_review_dumbbell(prev, quality, valuation, timing),
@@ -349,7 +392,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "DCF_CARDS_HTML": build_dcf_cards(fill),
         "VALUATION_PROCESS_HTML": build_valuation_process_card(calc, valuation_calc,
                                                                fill.get("valuation_inputs") or {}),
-        "POSITION_CARD_HTML": build_position_card(fill, quality, valuation, timing, calc, red_flag),
+        "POSITION_CARD_HTML": build_position_card(fill, quality, valuation, timing, calc, red_flag,
+                                                  floor_uplift=valuation_calc.get("floor_uplift")),
 
         # 回测模式（prev 存在时生效，否则条件块自动删除）
         "PREV_HTML": build_prev_strip(prev, quality, valuation, timing, target_range),
@@ -484,13 +528,13 @@ def _post_render_checks(repl: dict, fill: dict, out_path: str, quality: float, p
     if not repl["SCENARIO_SPECTRUM_HTML"]:
         if fill.get("valuation"):
             missing_plots.append("valuation 已填但情景数据不足（profit/pe/shares 缺失或非法），"
-                                 "05 图未生成——请检查 valuation.scenarios 完整性")
+                                 "08 图未生成——请检查 valuation.scenarios 完整性")
         else:
-            missing_plots.append("valuation（或手写 scenarios）（05 目标价走廊+情景表+三指标卡未生成）")
+            missing_plots.append("valuation（或手写 scenarios）（08 目标价走廊+情景表+三指标卡未生成）")
     if not repl["PEERS_PLOT_HTML"]:
         # 合规省略：peers_html 已手写 matrix-table 九宫格时不误报
         if "matrix-table" not in (fill.get("peers_html") or ""):
-            missing_plots.append("peers_plot（07 散点图未生成，仅 peers_html 手写 matrix-table 兜底）")
+            missing_plots.append("peers_plot（10 散点图未生成，仅 peers_html 手写 matrix-table 兜底）")
     if missing_plots:
         print(f"⚠️ fill JSON 缺图形字段: {'；'.join(missing_plots)}。"
               f"请补充字段后重新渲染（格式见 fill-schema.md 顶层字段表）", file=sys.stderr)

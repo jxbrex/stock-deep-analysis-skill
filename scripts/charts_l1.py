@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_l1.py — 第 3 章（公司本质）图族（v4.9 从 charts.py 拆出）：3.1 业务构成（build_segments_plot）/ 3.2 产业链位置（build_chain_plot）/ 3.4 财务五年趋势图墙（build_fin_trend）+ 3 章锚点注入（_inject_l1_charts）。依赖 charts_base 与 scoring。"""
+"""charts_l1.py — 第 4 章（公司本质）图族（v4.9 从 charts.py 拆出）：4.1 业务构成（build_segments_plot）/ 4.2 产业链位置（build_chain_plot）/ 4.4 财务五年趋势图墙（build_fin_trend）+ 4 章锚点注入（_inject_l1_charts）。依赖 charts_base 与 scoring。"""
 
 from scoring import _num, _fmt, _esc
 from charts_base import *
 
 def build_segments_plot(fill: dict) -> str:
-    """03 公司本质·业务构成横条图（fill["segments"] 可选字段，锚点 <!--SEGMENTS--> 挂 3.1）：
+    """04 公司本质·业务构成横条图（fill["segments"] 可选字段，锚点 <!--SEGMENTS--> 挂 4.1）：
     v4.8.2 改版——横条=收入占比（0-100% 定域，首行钢蓝=第一大业务、其余暖灰），
     钢蓝圆点=毛利率（与占比同一 % 轴，无需副轴），右列=毛利率数值；
     左列分部名（宽度自适应、超长折两行），条下=收入/毛利额小字，条端=占比；
@@ -112,7 +112,7 @@ def build_segments_plot(fill: dict) -> str:
 
 
 def build_chain_plot(fill: dict) -> str:
-    """03 公司本质·产业链位置图（fill["industry_chain"] 可选字段，锚点 <!--CHAIN--> 挂 3.2）：
+    """04 公司本质·产业链位置图（fill["industry_chain"] 可选字段，锚点 <!--CHAIN--> 挂 4.2）：
     三栏流向——左=上游行业（供给端），中=本公司（钢蓝卡），右=下游行业（需求端），
     贝塞尔曲线=供需关系（v4.8.1 起直线改曲线）；self_note 移到公司卡正下方居中展示，
     不再塞进卡内（长注不再溢出）。只列行业不列企业（上下游玩家众多，列企业反而以偏概全）。
@@ -194,7 +194,7 @@ def build_chain_plot(fill: dict) -> str:
 
 
 def build_fin_trend(fill: dict) -> str:
-    """03 公司本质·3.4 财务健康五年组合图墙（fill["fin_trend"] 必填字段，锚点 <!--FIN_TREND-->，v4.9）：
+    """04 公司本质·4.4 财务健康五年组合图墙（fill["fin_trend"] 必填字段，锚点 <!--FIN_TREND-->，v4.9）：
     双轴组合图面板（柱=金额·左轴·亿，线=比率·右轴·%/倍），.mini-grid 两列网格，取代手写 5 年年表。
     fin_trend: {"years":["2021",...,"2025"], "panels":[
       {"title":"营收 × 毛利率",
@@ -350,15 +350,15 @@ def build_fin_trend(fill: dict) -> str:
 
 
 def _inject_l1_charts(l1_html: str, fill: dict) -> str:
-    """3.1/3.2/3.4 图锚点注入（v4.8 起，v4.9 加 FIN_TREND；v4.10.2 收编进 charts_base
-    _inject_chart_anchors，与第 4 章 _inject_l3_charts 同一注入机）：l1_html 里的
+    """4.1/4.2/4.4 图锚点注入（v4.8 起，v4.9 加 FIN_TREND；v4.10.2 收编进 charts_base
+    _inject_chart_anchors，与第 5 章 _inject_l3_charts 同一注入机）：l1_html 里的
     <!--SEGMENTS--> / <!--CHAIN--> / <!--FIN_TREND--> 注释替换为对应脚本图；锚点缺失但字段已填 →
-    图追加第 3 章末尾 + 告警；字段未填 → 锚点静默清除。（与第 10 章 {{PE_BAND_HTML}} 裸占位符
+    图追加第 4 章末尾 + 告警；字段未填 → 锚点静默清除。（与第 11 章 {{PE_BAND_HTML}} 裸占位符
     同款思路：避开模板条件块不支持嵌套的限制，又让模型保留图在维度块内的位置控制权。）"""
     return _inject_chart_anchors(
         l1_html,
         (("<!--SEGMENTS-->", build_segments_plot(fill), "segments"),
          ("<!--CHAIN-->", build_chain_plot(fill), "industry_chain"),
          ("<!--FIN_TREND-->", build_fin_trend(fill), "fin_trend")),
-        "l1_html", "第 3 章末尾",
-        "建议把锚点放到对应维度块内，3.1=业务构成 / 3.2=产业链位置 / 3.4=财务趋势图墙")
+        "l1_html", "第 4 章末尾",
+        "建议把锚点放到对应维度块内，4.1=业务构成 / 4.2=产业链位置 / 4.4=财务趋势图墙")

@@ -6,6 +6,8 @@
 - minimal_fill / _dim / _calc / expect_valueerror：合法 fill 构造与拒渲染断言
 - write_fill / render_workspace / render_fill：临时 fill 落盘 → render → 读回 HTML
 - capture_stderr / validate_stderr：stdout/stderr 捕获（告警路径断言）
+- period_fill（v5.0）：第 3 章「最新报告期透视」fill（minimal_fill + period_track +
+  quote.source_file 会话级临时落盘参照，h1/q1/q3/annual 四态）
 
 拆分自 test_render_core.py（v4.10.2），逻辑逐字沿用，仅作共享化。
 """
@@ -24,11 +26,11 @@ def _dim(text):
     return f'<div class="dim-block"><p>{text}</p></div>'
 
 
-# minimal_fill/full_fill 共用的通用维度块文本与 3.5 治理紧凑块
+# minimal_fill/full_fill 共用的通用维度块文本与 4.5 治理紧凑块
 _LONG_TEXT = "该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。"
-# v4.9.1 补充修订二：第 5 块用 3.5 治理 trig-strip 紧凑形态（单行 trig + 评分依据链）
+# v4.9.1 补充修订二：第 5 块用 4.5 治理 trig-strip 紧凑形态（单行 trig + 评分依据链）
 _L1_GOV_BLOCK = ('<div class="dim-block"><div class="dim-header">'
-                 '<span class="dim-name">3.5 治理与资本配置</span><span class="dim-weight">7%</span>'
+                 '<span class="dim-name">4.5 治理与资本配置</span><span class="dim-weight">7%</span>'
                  '<span class="score-line" style="margin-left:auto;margin-bottom:0;">'
                  '<span class="badge badge-green">7.5</span></span></div>'
                  '<p><strong>判词：</strong>股权集中、激励覆盖充分，近三年资本运作记录干净，无质押风险。</p>'
@@ -46,7 +48,7 @@ _L1_GOV_BLOCK = ('<div class="dim-block"><div class="dim-header">'
                  '<span class="trig-mt">关联交易占比 6.8%（高于同业 3% 均值）</span>'
                  '<span class="trig-status miss">关注</span></div></div>'
                  '<p><strong>评分：</strong>7.5——基准 7.0，股权/激励两项正面 +0.5；'
-                 '关联交易关注项不扣分但列入 13 章跟踪。</p></div>')
+                 '关联交易关注项不扣分但列入 14 章跟踪。</p></div>')
 
 
 def minimal_fill(**over):
@@ -65,16 +67,16 @@ def minimal_fill(**over):
         "conclusion_html": (
             '<div class="concl-grid">'
             '<div class="concl-card"><div class="concl-head">关键优势</div>' + "优势证据。" * 20 +
-            '<div class="concl-ref">详见 <a href="#s3">3 公司本质</a></div></div>'
+            '<div class="concl-ref">详见 <a href="#s4">4 公司本质</a></div></div>'
             '<div class="concl-card"><div class="concl-head">关键弱点</div>' + "弱点证据。" * 20 +
-            '<div class="concl-ref">详见 <a href="#s5">5 风险评估</a></div></div>'
+            '<div class="concl-ref">详见 <a href="#s6">6 风险评估</a></div></div>'
             '<div class="concl-card"><div class="concl-head">当前市场认知</div>' + "卖方假设。" * 15 +
-            '<div class="concl-ref">详见 <a href="#s8">8 市场预期差</a></div></div>'
+            '<div class="concl-ref">详见 <a href="#s9">9 市场预期差</a></div></div>'
             '<div class="concl-card"><div class="concl-head">核心投资逻辑</div>' + "论点证伪。" * 15 +
-            '<div class="concl-ref">详见 <a href="#s7">7 估值与安全边际</a></div></div>'
+            '<div class="concl-ref">详见 <a href="#s8">8 估值与安全边际</a></div></div>'
             '</div>'),
         "p0_html": "<p>关键驱动分析。</p>",
-        # v4.9.1 补充修订二：第 5 块用 3.5 治理 trig-strip 紧凑形态（单行 trig + 评分依据链）
+        # v4.9.1 补充修订二：第 5 块用 4.5 治理 trig-strip 紧凑形态（单行 trig + 评分依据链）
         "l1_html": "".join(_dim(long_text) for _ in range(5)) + _L1_GOV_BLOCK,
         "l3_html": "".join(_dim(long_text) for _ in range(3)),
         # v4.9.1 补充修订二：l4 章首红灯 hero 三卡（pass=通过）；
@@ -131,12 +133,12 @@ def minimal_fill(**over):
                    "3A": 7, "3B": 7, "3C": 7},
         "timing_scores": {"筹码面": 5, "技术面": 5},
         "yellow_deductions": [],
-        # v4.8 可选图字段：11 章股东户数趋势（v4.9.1 起移至章首）；golden 覆盖模板新顺序
+        # v4.8 可选图字段：12 章股东户数趋势（v4.9.1 起移至章首）；golden 覆盖模板新顺序
         "holders": [{"date": "2025-03-31", "num": 188153, "chg": None},
                     {"date": "2025-06-30", "num": 175200, "chg": -6.9},
                     {"date": "2025-09-30", "num": 160800, "chg": -8.2},
                     {"date": "2025-12-31", "num": 152300, "chg": -5.3}],
-        # v4.9 必填图字段：3.4 财务趋势图墙（组合面板）+ 4.1 利润增长图
+        # v4.9 必填图字段：4.4 财务趋势图墙（组合面板）+ 5.1 利润增长图
         # v4.9.1 形态：归母净利面板带扣非第二柱；第 4 面板为纯线周转天数面板
         "fin_trend": {"years": ["2021", "2022", "2023", "2024", "2025"], "panels": [
             {"title": "营收 × 毛利率",
@@ -169,19 +171,23 @@ def minimal_fill(**over):
 
 def full_fill(**over):
     """全功能 fill（golden 快照专用，v4.10.2）：cycle/review/peers_plot/sensitivity/segments/
-    chain/triggers/consensus/price_history/pe_history/prev 全开——罩住第 10/12 章与
+    chain/triggers/consensus/price_history/pe_history/prev 全开——罩住第 11/13 章与
     可选 builder（segments/chain/peers_plot/tornado/triggers/pe_band/price_history/哑铃），
     minimal_fill 只罩主干。图形字段锚点全在位（无「缺锚点」告警）；内容类存量告警
     （thesis 薄/dim 薄/peers_meta 占位/quote 缺失）继承自 minimal_fill，与本 fixture 无关）。"""
     dims = [_dim(_LONG_TEXT) for _ in range(5)]
-    dims[0] += "<!--SEGMENTS-->"   # 3.1 后原位挂业务构成图
-    dims[1] += "<!--CHAIN-->"      # 3.2 后原位挂产业链图
-    dims[3] += "<!--FIN_TREND-->"  # 3.4 块内原位挂财务趋势图墙
+    dims[0] += "<!--SEGMENTS-->"   # 4.1 后原位挂业务构成图
+    dims[1] += "<!--CHAIN-->"      # 4.2 后原位挂产业链图
+    dims[3] += "<!--FIN_TREND-->"  # 4.4 块内原位挂财务趋势图墙
     l3 = _dim(_LONG_TEXT) + "<!--GROWTH-->" + "".join(_dim(_LONG_TEXT) for _ in range(2))
     months = []
     for y in (2023, 2024, 2025):
         for m in range(1, 13):
-            months.append({"m": f"{y}-{m:02d}", "close": 10 + (y - 2023) * 2 + m * 0.1,
+            # v5.0：补 OHLC 走季K 主形态分支——罩住 pettm 季频聚合路径（F 项验收：
+            # golden diff 中该图 PE 点数由月数 36 变为季度数 12，图例改「（右轴，季度）」）
+            c = 10 + (y - 2023) * 2 + m * 0.1
+            months.append({"m": f"{y}-{m:02d}", "open": c - 0.2, "high": c + 0.3,
+                           "low": c - 0.4, "close": c,
                            "pe": 12 + m * 0.3})
     fill = minimal_fill(
         l1_html="".join(dims) + _L1_GOV_BLOCK,
@@ -269,10 +275,16 @@ def mcap_fill(**over):
     return fill
 
 
-def _calc(dispersion=0.55, odds=1.2):
-    """手造估值 calc（只含 build_position_card 用到的键）。"""
-    return {"central_raw": 0.15, "central": 0.15,
-            "dispersion": dispersion, "odds": odds}
+def _calc(dispersion=0.55, odds=1.2, floor_type=None):
+    """手造估值 calc（只含 build_position_card 用到的键）。
+    v5.0 机制三：floor_type 透传悲观地板（"net_cash"/"dividend"），
+    赔率 ∞ 时调节链是否上浮取决于它（缺省 None = 无地板，不上浮）。"""
+    c = {"central_raw": 0.15, "central": 0.15,
+         "dispersion": dispersion, "odds": odds}
+    if floor_type:
+        c["pess_floor"] = {"type": floor_type, "value": 12.5,
+                           "evidence": "测试地板证据：净现金125亿÷总股本10亿"}
+    return c
 
 
 def expect_valueerror(fill, msg):
@@ -330,3 +342,87 @@ def validate_stderr(fill):
     with contextlib.redirect_stderr(buf):
         R.validate_content(fill, R.compute_valuation(fill))
     return buf.getvalue()
+
+
+# ---------------- v5.0 第 3 章「最新报告期透视」fixture（golden/门禁共用） ----------------
+# 四态变体的 fill 侧 period_track（契约示例数；goal_*/verdict_*/industry/forecast/note 为
+# fill 侧手填键——经营目标手工查证、判词模型写，不进落盘参照）
+_PERIOD_VARIANTS = {
+    "h1": {"period": "2026中报", "is_annual": False,
+           "rev": 301.98, "np": 97.28, "np_dedt": 92.10, "ocf": 119.64,
+           "rev_yoy": 32.3, "np_yoy": 70.1, "np_dedt_yoy": 65.1, "ocf_yoy": 49.7,
+           "sq_label": "2026Q2", "sq_rev": 169.61, "sq_np": 60.67,
+           "sq_prev_label": "2025Q2", "sq_prev_rev": 120.49, "sq_prev_np": 32.81,
+           "sq_rev_yoy": 40.8, "sq_np_yoy": 84.9,
+           "band_np": [39.9, 52.1], "band_rev": [44.9, 51.2], "band_years": [2023, 2024, 2025],
+           "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
+           "verdict_rev": "正常", "verdict_np": "超前", "verdict_dedt": "正常",
+           "industry_html": "", "forecast_html": "", "note_html": ""},
+    # Q1：累计即单季（sq 值=累计口径），0331 占比带
+    "q1": {"period": "2026一季", "is_annual": False,
+           "rev": 132.37, "np": 36.61, "np_dedt": 33.40, "ocf": 51.02,
+           "rev_yoy": 28.4, "np_yoy": 55.2, "np_dedt_yoy": 50.8, "ocf_yoy": 40.1,
+           "sq_label": "2026Q1", "sq_rev": 132.37, "sq_np": 36.61,
+           "sq_prev_label": "2025Q1", "sq_prev_rev": 103.09, "sq_prev_np": 23.59,
+           "sq_rev_yoy": 28.4, "sq_np_yoy": 55.2,
+           "band_np": [21.8, 26.4], "band_rev": [22.5, 25.9], "band_years": [2023, 2024, 2025],
+           "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
+           "verdict_rev": "正常", "verdict_np": "滞后", "verdict_dedt": "正常",
+           "industry_html": "", "forecast_html": "", "note_html": ""},
+    "q3": {"period": "2026三季", "is_annual": False,
+           "rev": 470.50, "np": 150.20, "np_dedt": 141.00, "ocf": 178.30,
+           "rev_yoy": 30.1, "np_yoy": 66.0, "np_dedt_yoy": 62.2, "ocf_yoy": 44.5,
+           "sq_label": "2026Q3", "sq_rev": 168.52, "sq_np": 52.92,
+           "sq_prev_label": "2025Q3", "sq_prev_rev": 128.66, "sq_prev_np": 30.36,
+           "sq_rev_yoy": 31.0, "sq_np_yoy": 74.3,
+           "band_np": [71.2, 79.8], "band_rev": [72.4, 78.9], "band_years": [2023, 2024, 2025],
+           "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
+           "verdict_rev": "正常", "verdict_np": "超前", "verdict_dedt": "无法判定",
+           "industry_html": "", "forecast_html": "", "note_html": ""},
+    # 年报期：整章消失；band 无（年报无节奏带），goal/consensus/verdict 均不填
+    "annual": {"period": "2025年报", "is_annual": True,
+               "rev": 612.40, "np": 158.90, "np_dedt": 150.20, "ocf": 210.50,
+               "rev_yoy": 5.2, "np_yoy": 6.1, "np_dedt_yoy": 5.5, "ocf_yoy": 8.8,
+               "sq_label": "2025Q4", "sq_rev": 141.90, "sq_np": 31.10,
+               "sq_prev_label": "2024Q4", "sq_prev_rev": 136.00, "sq_prev_np": 29.70,
+               "sq_rev_yoy": 4.3, "sq_np_yoy": 4.7,
+               "band_np": None, "band_rev": None, "band_years": [],
+               "goal_rev": None, "goal_np": None, "consensus_np": None,
+               "industry_html": "", "forecast_html": "", "note_html": ""},
+}
+# 落盘参照保留的键（em_fetch period_track 原生输出；fill 侧手填键不入参照）
+_PERIOD_REF_KEYS = ("period", "is_annual", "rev", "np", "np_dedt", "ocf",
+                    "rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy",
+                    "sq_label", "sq_rev", "sq_np", "sq_prev_label", "sq_prev_rev", "sq_prev_np",
+                    "sq_rev_yoy", "sq_np_yoy", "band_np", "band_rev", "band_years")
+_PERIOD_TMPDIR = None
+
+
+def _period_ref_file(variant: str, pt: dict) -> str:
+    """把 em_fetch --out 形态的落盘 JSON（price/pe_ttm + period_track + consensus_np）写入
+    测试会话级临时目录并返回路径。文件名故意不带 _em_ 前缀——render 成功后的归档会把
+    _em_* 源文件移入 _archive，会话级共享参照被移走会让后续用例断链。"""
+    global _PERIOD_TMPDIR
+    if _PERIOD_TMPDIR is None:
+        _PERIOD_TMPDIR = tempfile.mkdtemp(prefix="sda_period_ref_")
+    payload = {"price": 10.0, "pe_ttm": 11.0,
+               "period_track": {k: pt[k] for k in _PERIOD_REF_KEYS if k in pt}}
+    if pt.get("consensus_np") is not None:
+        payload["consensus_np"] = {"year": 2026, "np_avg": pt["consensus_np"], "orgs": 12}
+    p = os.path.join(_PERIOD_TMPDIR, f"period_ref_{variant}.json")
+    with open(p, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False)
+    return p
+
+
+def period_fill(variant="h1", **over):
+    """第 3 章 fill（v5.0）：minimal_fill + 合法 period_track + quote.source_file 指向会话级
+    临时落盘 JSON（em_fetch --out 形态，与 fill 侧数据一致——渲染器交叉校验可通过）。
+    variant 四态：h1（中报，fill 契约示例数）/ q1（一季，单季图退化单柱）/ q3（三季）/
+    annual（is_annual=true，整章消失）。over 透传 minimal_fill 顶层覆盖；
+    period_track 单字段微调请直接改返回值的 fill["period_track"]。"""
+    pt = dict(_PERIOD_VARIANTS[variant])
+    fill = minimal_fill(period_track=pt,
+                        quote={"source_file": _period_ref_file(variant, pt), "date": "2026-08-27"})
+    fill.update(over)
+    return fill

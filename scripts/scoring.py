@@ -3,7 +3,7 @@
 """scoring.py — 评分与卡片公共基座（render_report 拆分模块，v4.8.2 重构）
 
 内容：维度元数据/权重常量、判词与徽章函数、通用文本工具（_num/_fmt/_esc）、
-compute_scores（三轨评分）、6/7/11 章卡片族（质量分汇总、估值过程卡、仓位判定卡）。
+compute_scores（三轨评分）、7/8/12 章卡片族（质量分汇总、估值过程卡、仓位判定卡）。
 依赖方向：最底层共享层，被 charts/validate/render_report 导入；自身仅依赖标准库。
 """
 import re
@@ -14,15 +14,15 @@ import sys
 # v4.0 质量层：L1 本质六维（1A-1F 层内权重和=100）+ L3 预期三维（3A-3C 层内权重和=100）。
 # 估值（原 2A）独立成估值分（valuation_score），不进质量分。
 DIMS = [
-    ("1A", "L1", "3.1 赛道与宏观", 12),
-    ("1B", "L1", "3.2 产业链位置", 12),
-    ("1C", "L1", "3.3 商业模式与护城河", 20),
-    ("1D", "L1", "3.4 财务健康", 16),
-    ("1E", "L1", "3.5 治理与资本配置", 20),
-    ("1F", "L1", "3.6 资本回报质量", 20),
-    ("3A", "L3", "4.1 利润增长", 40),
-    ("3B", "L3", "4.2 项目确定性", 35),
-    ("3C", "L3", "4.3 催化剂", 25),
+    ("1A", "L1", "4.1 赛道与宏观", 12),
+    ("1B", "L1", "4.2 产业链位置", 12),
+    ("1C", "L1", "4.3 商业模式与护城河", 20),
+    ("1D", "L1", "4.4 财务健康", 16),
+    ("1E", "L1", "4.5 治理与资本配置", 20),
+    ("1F", "L1", "4.6 资本回报质量", 20),
+    ("3A", "L3", "5.1 利润增长", 40),
+    ("3B", "L3", "5.2 项目确定性", 35),
+    ("3C", "L3", "5.3 催化剂", 25),
 ]
 # 层占比（质量分内 L1:L3，分型可通过 layer_share 覆盖）
 DEFAULT_LAYER_SHARE = {"L1": 70, "L3": 30}
@@ -34,7 +34,7 @@ TIMING_DIMS = [
 
 
 def _dim_verdict(s: float) -> str:
-    """单维得分判词（第 6 章汇总表用）：≥8 优秀 / ≥7 良好 / ≥6 中上 / ≥5 中等 / ≥4 偏弱 / <4 警示。"""
+    """单维得分判词（第 7 章汇总表用）：≥8 优秀 / ≥7 良好 / ≥6 中上 / ≥5 中等 / ≥4 偏弱 / <4 警示。"""
     if s >= 8.0:
         return "优秀"
     if s >= 7.0:
@@ -211,9 +211,18 @@ def compute_valuation(fill: dict):
     if rows[0]["mid"] > rows[-1]["mid"]:
         print("⚠️ valuation 三情景目标价顺序异常（悲观中枢 > 乐观中枢），请检查 profit/pe 假设"
               "——跨情景倒挂将被 validate 拒渲染（v4.11.1 起）", file=sys.stderr)
+    # v5.0 机制三：悲观情景可选 floor 地板证据对象（{"type":"net_cash"/"dividend",
+    # "value":元/股,"evidence":"推导"}）透传给估值分上浮分级与调节链；合法性由
+    # validate._check_odds_floor 门禁（悲观下限 ≥ 现价时必须有地板且托得住）
+    pess_src = next((s for s in v.get("scenarios") or []
+                     if str((s or {}).get("key") or "").lower() == "pess"), None)
+    pess_floor = (pess_src or {}).get("floor")
+    # F14：floor.type 归一（strip+小写）——validate/scoring 过程卡/_position_steps 三处口径同源一致
+    if isinstance(pess_floor, dict):
+        pess_floor = {**pess_floor, "type": str(pess_floor.get("type") or "").strip().lower()}
     return {"rows": rows, "central": central, "central_raw": central_raw, "months": months,
             "odds": odds, "dispersion": dispersion, "base_lo": base["low"], "base_hi": base["high"],
-            "horizon": horizon, "price": price,
+            "horizon": horizon, "price": price, "pess_floor": pess_floor,
             "mode": "mcap" if rows[0]["mcap_lo"] is not None else "pe"}
 
 
@@ -260,11 +269,18 @@ def _map_div(div_yield: float, risk_free: float) -> float:
     return _lookup(div_yield - risk_free, _DIV_TABLE, 4.0)
 
 
-def compute_valuation_score(calc: dict, inputs: dict):
+def compute_valuation_score(calc: dict, inputs: dict, gap_tier=None):
     """估值分四件套量化 = 中枢×0.4 + 赔率×0.25 + 合理倍数×0.25 + 股息×0.1。
-    inputs: {"pe_ttm": 13.5, "pe_band": [14.5, 15.5], "div_yield": 1.6, "risk_free": 1.7}
+    inputs: {"pe_ttm": 13.5, "pe_band": [14.5, 15.5], "div_yield": 1.6, "risk_free": 1.7,
+             "consensus_np": 100（v5.0 机制二：当年卖方一致预期归母净利均值，亿元，可选）}
     可选 metric_label：行业口径（P/NAV、P/rNPV、P/EV、经调整PE 等）替换过程卡默认 PE(TTM) 标签。
-    返回 dict（score + 四件套各分 + formula 文字）或 None（缺 calc/inputs/字段）。"""
+    v5.0 机制二（乐观税门禁）：base 情景净利 ÷ consensus_np > 1.15 且 gap_tier
+    （去空格大写）≠ "A" → 中枢分封顶 6 后重算总分；A 档解封不封顶；缺 consensus_np
+    或 mcap 口径（base 无 profit）→ 无法校验，tax=None。
+    v5.0 机制三（赔率 ∞ 地板分级上浮）：calc["odds"] is None 时读 calc["pess_floor"]——
+    net_cash 硬地板 score=max(score,8.0)；dividend 软地板 score=max(score, min(round(score+1,1), 7.5))
+    （保送不减分：已 ≥7.5 时不动）；floor 缺失不上浮（防御兜底，validate._check_odds_floor 已硬拒）。
+    返回 dict（score + 四件套各分 + formula 文字 + tax + floor_uplift）或 None（缺 calc/inputs/字段）。"""
     if not calc or not inputs:
         return None
     pe_ttm = _num(inputs.get("pe_ttm"))
@@ -275,16 +291,42 @@ def compute_valuation_score(calc: dict, inputs: dict):
     if band[0] is None or band[1] is None or band[1] <= band[0]:
         return None
     central_s = _map_central(calc["central"])
+    # 乐观税门禁：base 净利 vs 卖方一致预期（mcap 口径无净利可比，跳过）
+    tax = None
+    base_row = next((r for r in calc.get("rows") or [] if r.get("key") == "base"), None)
+    base_profit = (base_row or {}).get("profit")
+    consensus_np = _num(inputs.get("consensus_np"))
+    if base_profit is not None and consensus_np is not None and consensus_np > 0:
+        ratio = base_profit / consensus_np
+        exempt = str(gap_tier or "").strip().upper() == "A"
+        capped = ratio > 1.15 and not exempt
+        if capped:
+            central_s = min(central_s, 6)
+        tax = {"ratio": ratio, "capped": capped, "exempt": exempt}
     odds_s = _map_odds(calc["odds"])
     warranted_s = _map_warranted(pe_ttm, band)
     div_yield = _num(inputs.get("div_yield"))
     risk_free = _num(inputs.get("risk_free"))
     div_s = _map_div(div_yield, risk_free) if (div_yield is not None and risk_free is not None) else 5.0
     total = round(central_s * 0.4 + odds_s * 0.25 + warranted_s * 0.25 + div_s * 0.1, 1)
+    # 赔率 ∞ 地板分级上浮（总分层面；调节链一侧在 _position_steps）
+    floor_uplift = None
+    if calc.get("odds") is None:
+        floor_type = ((calc.get("pess_floor") or {}).get("type") or "").strip()
+        if floor_type == "net_cash":
+            uplifted = max(total, 8.0)
+        elif floor_type == "dividend":
+            uplifted = max(total, min(round(total + 1, 1), 7.5))  # 保送不减分：已 ≥7.5 时不动
+        else:
+            uplifted = total
+        if uplifted != total:
+            floor_uplift = {"type": floor_type, "before": total, "after": uplifted}
+        total = uplifted
     return {
         "score": total,
         "central_s": central_s, "odds_s": odds_s,
         "warranted_s": warranted_s, "div_s": div_s,
+        "tax": tax, "floor_uplift": floor_uplift,
         "formula": (f"中枢 {central_s:g}×0.4 + 赔率 {odds_s:g}×0.25 + "
                     f"合理倍数 {warranted_s:g}×0.25 + 股息 {div_s:g}×0.1"),
     }
@@ -424,19 +466,39 @@ def compute_scores(fill: dict):
 # ---------- 脚本生成区块（6 质量分汇总 / 7 估值过程卡 / 11 三轨判定与仓位结论卡） ----------
 
 def _valuation_four_rows(calc: dict, vc: dict, inputs: dict):
-    """估值四件套明细行（项目/输入值/映射得分/权重），7 估值过程卡用。"""
+    """估值四件套明细行（项目/输入值/映射得分/权重），7 估值过程卡用。
+    v5.0：中枢分行按 vc["tax"] 追加乐观税标注；赔率分行在 ∞ 且有地板时按
+    calc["pess_floor"] 追加地板证据。"""
     pe_ttm = _num(inputs.get("pe_ttm"))
     band = inputs.get("pe_band") or [None, None]
     band_lo, band_hi = _num(band[0]), _num(band[1])
     div_yield = _num(inputs.get("div_yield"))
     risk_free = _num(inputs.get("risk_free"))
     odds_txt = "∞（悲观下限高于现价）" if calc["odds"] is None else f"{calc['odds']:.2f}"
+    if calc["odds"] is None:
+        fl = calc.get("pess_floor") or {}
+        ftype, fvalue = str(fl.get("type") or "").strip(), _num(fl.get("value"))
+        fevidence = str(fl.get("evidence") or "").strip()
+        pess_low = next((r["low"] for r in calc.get("rows") or [] if r.get("key") == "pess"), None)
+        if ftype in ("net_cash", "dividend") and fvalue is not None and pess_low is not None:
+            ftag = "硬地板=净现金/股" if ftype == "net_cash" else "软地板=保底分红折现/股"
+            odds_txt = (f"∞（悲观下限 {pess_low:g} ≥ 现价；{ftag} {fvalue:g}"
+                        + (f"：{_esc(fevidence)}" if fevidence else "") + "）")
     div_txt = (f"股息率 {div_yield:g}% − 无风险 {risk_free:g}% = {div_yield - risk_free:+.1f}pct"
                if div_yield is not None and risk_free is not None else "缺股息输入（按中性 5 分）")
     # 行业口径标签（P/NAV、P/rNPV、P/EV、经调整PE 等），缺省 PE(TTM)
-    mlabel = str(inputs.get("metric_label") or "PE(TTM)")
+    # F15：用户可控文本（metric_label/horizon/floor.evidence）在拼接入行处逐段 _esc
+    # （对齐 scenario label/trigger 惯例），卡内不再整串转义（防双重转义）
+    mlabel = _esc(str(inputs.get("metric_label") or "PE(TTM)"))
+    central_inp = f"年化中枢 {calc['central'] * 100:+.1f}%（{_esc(calc['horizon'])}）"
+    tax = vc.get("tax")
+    if tax and tax.get("capped"):
+        central_inp += (f"（乐观税封顶 6：base 净利 ÷ 一致预期 = {tax['ratio']:.2f} > 1.15；"
+                        f"解封需 9 章预期差 A 档）")
+    elif tax and tax.get("exempt") and tax.get("ratio", 0) > 1.15:
+        central_inp += f"（乐观税已检：比值 {tax['ratio']:.2f} > 1.15，9 章预期差 A 档解封）"
     return [
-        ("中枢分", f"年化中枢 {calc['central'] * 100:+.1f}%（{calc['horizon']}）", vc["central_s"], 40),
+        ("中枢分", central_inp, vc["central_s"], 40),
         ("赔率分", f"赔率 {odds_txt}", vc["odds_s"], 25),
         ("合理倍数分", f"{mlabel} {pe_ttm:g}x vs 合理带 {band_lo:g}-{band_hi:g}x", vc["warranted_s"], 25),
         ("股息分", div_txt, vc["div_s"], 10),
@@ -444,7 +506,7 @@ def _valuation_four_rows(calc: dict, vc: dict, inputs: dict):
 
 
 def build_score_summary(sc: dict) -> str:
-    """6 质量分汇总章尾公式条（脚本生成）：层分×占比 ± 黄灯 → 最终质量分。
+    """7 质量分汇总章尾公式条（脚本生成）：层分×占比 ± 黄灯 → 最终质量分。
     9 行维度明细表已并入上方的评分分布横条图（得分/判词/权重/加权全部由图承载，见
     build_score_bars），本章不再重复表格——footer 只保留算式与最终分。"""
     layer_scores, ls = sc["layer_scores"], sc["layer_share"]
@@ -458,11 +520,11 @@ def build_score_summary(sc: dict) -> str:
     if yellow_total:
         parts.append(f"− 黄灯 {yellow_total:.1f}")
     formula = " ".join(parts)
-    # 红旗扣分已在 1D 维度分内先行扣减（图上 3.4 条为扣后分），算式不重复列入
+    # 红旗扣分已在 1D 维度分内先行扣减（图上 4.4 条为扣后分），算式不重复列入
     red_note = ""
     if red_total:
         red_items = "；".join(str(r.get("item", "")) for r in sc["red_deductions"])
-        red_note = (f' <span class="muted">（3.4 财务健康得分已含红旗扣分 {red_total:.1f}'
+        red_note = (f' <span class="muted">（4.4 财务健康得分已含红旗扣分 {red_total:.1f}'
                     + (f'：{_esc(red_items)}' if red_items else "") + '）</span>')
     return (f'<div class="layer-summary">质量分 = {formula} = '
             f'<span class="badge {badge_class(quality)} badge-lg">{quality:.2f}</span>'
@@ -470,13 +532,13 @@ def build_score_summary(sc: dict) -> str:
 
 
 def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
-    """7 估值与安全边际章末尾汇总卡（脚本生成，作为本节结论列在最后）：四件套 输入值→映射得分→权重→加权，
+    """8 估值与安全边际章末尾汇总卡（脚本生成，作为本节结论列在最后）：四件套 输入值→映射得分→权重→加权，
     总分行并入表格末行（加权和明细 + 最终估值分徽章 + 判词），档位图例留在表下小字。"""
     four = _valuation_four_rows(calc, vc, inputs)
     rows = []
     for name, inp, s, w in four:
         rows.append(
-            f'<tr><td>{name}</td><td>{_esc(inp)}</td>'
+            f'<tr><td>{name}</td><td>{inp}</td>'   # inp 用户文本段已在 _valuation_four_rows 逐段 _esc
             f'<td class="center score-cell"><span class="badge {badge_class(s)}">{s:.1f}</span></td>'
             f'<td class="num">×{w}%</td><td class="num">{s * w / 100:.2f}</td></tr>')
     score = vc["score"]
@@ -490,13 +552,32 @@ def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
     table = ('<div class="table-scroll"><table><thead><tr><th>套件</th><th>输入值</th>'
              '<th class="center">映射得分</th><th class="num">权重</th><th class="num">加权</th></tr></thead>'
              '<tbody>' + "".join(rows) + '</tbody></table></div>')
-    legend = ('<span class="source">估值分档位：≥8 深度安全边际 / 6-7.9 合理偏便宜 / '
-              '4-5.9 合理无安全边际 / &lt;4 贵</span>')
+    legend_txt = ('估值分档位：≥8 深度安全边际 / 6-7.9 合理偏便宜 / '
+                  '4-5.9 合理无安全边际 / &lt;4 贵')
+    # v5.0 机制二：乐观税未检说明（tax=None：缺一致预期 / 一致预期 ≤0 / mcap 口径无净利可比）
+    if not vc.get("tax"):
+        cons_np = _num(inputs.get("consensus_np"))
+        if calc.get("mode") == "mcap":
+            legend_txt += '；乐观税未检：市值口径无净利可比'
+        elif cons_np is not None and cons_np <= 0:
+            # F16：键存在但 ≤0（亏损预期）与「无卖方覆盖」区分列示
+            legend_txt += '；乐观税未检：一致预期为负/零，乐观税不适用'
+        else:
+            legend_txt += '；乐观税未检：无卖方覆盖'
+    # v5.0 机制三：赔率 ∞ 地板分级上浮说明（软地板注明调节链不上浮）
+    fu = vc.get("floor_uplift")
+    if fu:
+        if fu["type"] == "net_cash":
+            legend_txt += f'；赔率 ∞ 硬地板（净现金/股）：估值分 {fu["before"]:g} → 上浮至 {fu["after"]:g}'
+        else:
+            legend_txt += (f'；赔率 ∞ 软地板（保底分红折现）：估值分 {fu["before"]:g} +1 '
+                           f'封顶 7.5 → {fu["after"]:g}（调节链不上浮）')
+    legend = f'<span class="source">{legend_txt}</span>'
     return ('<span class="section-tag">估值分计算</span>' + table + legend)
 
 
 def build_dcf_cards(fill: dict) -> str:
-    """7 估值章·DCF 双卡（fill["dcf"]，v4.11.3）：DCF 强制三行从 valuation_html 手写表格
+    """8 估值章·DCF 双卡（fill["dcf"]，v4.11.3）：DCF 强制三行从 valuation_html 手写表格
     改为字段承载——卡 1=保守参数 DCF 每股值（参数口径进 sub），卡 2=现价隐含永续增速
     （反推口径进 sub），判词 info-card 收尾；「较现价高/低 X%」脚本算
     （value ÷ _num(fill.price) − 1，防伪链同源的现价比价，模型不手算）。
@@ -540,6 +621,8 @@ def build_dcf_cards(fill: dict) -> str:
 
 # 仓位档位序列（上浮 20% 硬顶、下调 0 兜底；规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步）
 _POS_LADDER = [0, 5, 10, 20]
+# 仓位结论保守度排序（孰低比较用）：不建议参与 < 观察池 < 轻仓 < 标准仓 < 重仓
+_POS_RANK = {0: 0, "观察池": 1, 5: 2, 10: 3, 20: 4}
 # 兜底档位文案常量：validate 红灯校验按此字面消费，改文案只许改这里（否则校验静默失效）
 _LABEL_REFUSE = "不建议参与"
 _POS_LABEL = {0: _LABEL_REFUSE, 5: "轻仓 ≤5%", 10: "标准仓 ≤10%", 20: "重仓 ≤20%"}
@@ -568,16 +651,86 @@ def _matrix_slot(q: float, v: float):
     return ("质量<4", 0, 8)
 
 
-def _position_steps(quality: float, valuation: float, timing, calc: dict, red_flag: str):
-    """仓位决策链纯函数（11 卡逻辑体，v4.9 从 build_position_card 抽出便于直接单测；
+# v5.0 机制一（临界档透明化）：边界常量与 _matrix_slot 字面阈值同源绑定——
+# 质量 7.0/5.5/4.0、估值 8.0/6.0/4.0 即矩阵分档线；改 _matrix_slot 阈值必须同步这里。
+_Q_BOUNDS = (7.0, 5.5, 4.0)
+_V_BOUNDS = (8.0, 6.0, 4.0)
+# 临界带半宽：距最近边界 ≤0.3 判定临界（初始值，按 archive 漂移实测校准）
+_CRIT_TOL = 0.3
+
+
+def _edge_info(quality: float, valuation: float, floor_uplift: dict = None):
+    """临界档判定（v5.0 机制一）：每轨找距离最近的档位边界，距离 ≤_CRIT_TOL 即临界。
+    返回 (crit_list, q_eff, v_eff)：crit_list 记 {"track","score","bound","dist"}；
+    临界轨有效分 = bound − 1e-6（压到边界下侧，作为 _position_steps 孰低比较的
+    降档候选——矩阵个别行非单调，孰低须两侧实算，不能只看本侧），非临界轨原值。
+    边界间距 ≥1.5 > 2×0.3，临界带内最近边界唯一，不存在两边界等距歧义。
+    v5.0.0 热核修复（F3）：floor_uplift 非空且 type=="net_cash" 且估值分恰落 8.0
+    （容差 1e-9）时，估值轨剔除 8.0 边界项——净现金硬地板 max(total,8.0) 的落点是
+    机制产物（必恰落 8.0）而非测量噪声，不判临界（否则上浮冻结、仓位被没收降档，
+    机制三承诺全落空）。乐观税封顶方向向下，不豁免。"""
+    crit = []
+    q_eff, v_eff = quality, valuation
+    for track, score, bounds in (("质量", quality, _Q_BOUNDS), ("估值", valuation, _V_BOUNDS)):
+        if (track == "估值" and floor_uplift
+                and str(floor_uplift.get("type") or "") == "net_cash"
+                and abs(score - 8.0) <= 1e-9):
+            bounds = tuple(b for b in bounds if b != 8.0)   # 净现金硬地板上浮落点豁免临界
+        bound = min(bounds, key=lambda b: abs(score - b))
+        dist = abs(score - bound)
+        if dist <= _CRIT_TOL:
+            crit.append({"track": track, "score": score, "bound": bound, "dist": dist})
+            if track == "质量":
+                q_eff = bound - 1e-6
+            else:
+                v_eff = bound - 1e-6
+    return crit, q_eff, v_eff
+
+
+def build_edge_upgrade_rows(crit: list) -> str:
+    """14 章档位临界升档路径行（v5.0 机制一，脚本生成）：每条临界轨一行 pending 灰态
+    trig，写明升档路径（复核期该轨分越过边界 +0.3 带外）与复核证据——「错过」变
+    「推迟+验证路径」。crit 为空返回空串。结构沿用模板 .trig-strip/.trig 类族。"""
+    if not crit:
+        return ""
+    rows = []
+    for c in crit:
+        rows.append(
+            '<div class="trig"><span class="trig-dot pending"></span>'
+            f'<span class="trig-cond">档位临界升档复核：{c["track"]}分 {c["score"]:.2f}'
+            f'（距 {c["bound"]} 边界 {c["dist"]:.2f}）</span>'
+            f'<span class="trig-mt">升档路径：复核期{c["track"]}分 ≥{c["bound"] + _CRIT_TOL + 0.01:.2f}'
+            f'（距边界 >0.3）且其余轨不恶化，恢复相邻高档位评估；'
+            f'复核证据：下期财报关键指标与跟踪信号核对</span>'
+            '<span class="trig-status pending">待验证</span></div>')
+    return ('<span class="section-tag">档位临界升档路径（脚本生成）</span>'
+            '<div class="trig-strip">' + "".join(rows) + '</div>')
+
+
+def _position_steps(quality: float, valuation: float, timing, calc: dict, red_flag: str,
+                    floor_uplift: dict = None):
+    """仓位决策链纯函数（12 卡逻辑体，v4.9 从 build_position_card 抽出便于直接单测；
     HTML 渲染留在卡片函数）。输入 质量/估值/时机分、估值 calc、红灯 → 返回
-    (final_label, steps, slot_txt)：steps 为轨迹文案列表（只列实际触发条目），
-    slot_txt 为矩阵落位说明（非矩阵路径为 None）。
+    (final_label, steps, slot_txt, crit)：steps 为轨迹文案列表（只列实际触发条目），
+    slot_txt 为矩阵落位说明（非矩阵路径为 None），crit 为档位临界列表
+    （v5.0 机制一；非矩阵路径——红灯熔断/中枢为负拦截——为空列表，仓位未走矩阵不挂临界）。
+    floor_uplift（v5.0.0 F3）：传估值过程卡的 vc["floor_uplift"]——net_cash 硬地板上浮
+    恰落 8.0 时估值轨豁免临界判定（落点是机制产物非测量噪声），票面 8.0 不挂临界徽章、
+    矩阵按 8.0 落 ≥8 列、上浮不冻结；与 render 层 14 章升档行同口径（同传一份）。
     决策优先级固定：红灯熔断 > 中枢为负拦截器 > 矩阵落位 > 时机分调节 > 离散度调节
     > 赔率 ∞ 上浮。上浮类合计净效应 ≤ +1 档且不进 20 档（重仓唯一入口是矩阵直落）。
+    v5.0 机制一：矩阵落位对原分与 _edge_info 有效分两侧各落一次、取保守度孰低
+    （_POS_RANK；临界轨压到边界下侧只是候选之一——质量 5.5 行非单调，v<6 时下侧
+    反而更高，只算一侧会抬档），
+    crit 非空时上浮类调节（时机≥6/离散度<40%/赔率∞）一律冻结，下调照常——
+    防「降一档再浮一档」自我抵消。
+    v5.0 机制三：赔率 ∞ 上浮一档仅当 calc["pess_floor"]["type"]=="net_cash"（硬地板）；
+    dividend 软地板只保送估值分（+1 封顶 7.5），调节链不上浮；floor 缺失不上浮
+    （防御兜底——validate._check_odds_floor 已硬拒无地板的赔率 ∞）。
     规则正文唯一权威在 references/scoring.md 决策主轴节，改动须同步。"""
     steps = []
     slot_txt = None
+    crit = []
     if red_flag:
         final_label = _LABEL_REFUSE
         steps.append(f"红灯熔断：命中「{_esc(red_flag)}」→ 不建议参与（后续调节不再适用）")
@@ -586,9 +739,18 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
         steps.append(f"中枢为负拦截器：年化中枢 {calc['central'] * 100:+.1f}% < 0 → 直接回避"
                      f"（后续调节不再适用）")
     else:
-        slot_desc, pos, _hit = _matrix_slot(quality, valuation)
+        crit, q_eff, v_eff = _edge_info(quality, valuation, floor_uplift)
+        # 孰低要真比较两侧落位而非只算压边界一侧：矩阵在质量 5.5 行非单调
+        # （v<6 时上侧=观察池、下侧=质地一般 5）——单侧压边界会把观察池抬成轻仓 5
+        # （热核审计实证：5.6×5.0 被抬档，违反「降档不抬档」）
+        slot_desc, pos, _hit = min((_matrix_slot(quality, valuation),
+                                    _matrix_slot(q_eff, v_eff)),
+                                   key=lambda s: _POS_RANK[s[1]])
         pos_txt = _POS_LABEL.get(pos, pos) if isinstance(pos, int) else pos
         slot_txt = f"矩阵落位：质量 {quality:.2f} × 估值 {valuation:.1f} → {slot_desc} → {pos_txt}"
+        for c in crit:
+            slot_txt += (f"；档位临界：{c['track']}分 {c['score']:.2f} 距 {c['bound']} 边界 "
+                         f"{c['dist']:.2f}，按相邻两档孰低降档执行")
         if isinstance(pos, int) and pos > 0:
             idx = _POS_LADDER.index(pos)
             # 上浮封顶（规则见 references/scoring.md 决策主轴节）：上浮类调节合计净效应
@@ -600,8 +762,12 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
 
             def try_up(name: str, detail: str, cap_tag: str = None) -> None:
                 """上浮一档（受封顶约束）：合计净效应 ≤+1 档且不进 20 档；
-                被拦项记 blocked_by_cap（cap_tag 缺省取 detail），在轨迹中说明未生效原因。"""
+                被拦项记 blocked_by_cap（cap_tag 缺省取 detail），在轨迹中说明未生效原因。
+                v5.0 机制一：档位临界（crit 非空）时上浮类调节一律冻结，记轨迹不生效。"""
                 nonlocal idx, up_used
+                if crit:
+                    steps.append(f"上浮冻结：{detail}（档位临界，上浮类调节冻结，下调照常）")
+                    return
                 if up_used == 0 and idx + 1 < len(_POS_LADDER) and _POS_LADDER[idx + 1] < 20:
                     steps.append(f"{name}调节：{detail} → 上浮一档"
                                  f"（{_POS_LABEL[_POS_LADDER[idx]]}→{_POS_LABEL[_POS_LADDER[idx + 1]]}）")
@@ -629,9 +795,14 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
                 idx = new_idx
             elif calc and 0 <= calc["dispersion"] < 0.40:
                 try_up("离散度", f"离散度 {calc['dispersion'] * 100:.1f}% < 40%")
-            # 赔率 ∞ 上浮一档（受封顶约束）
+            # 赔率 ∞ 上浮一档（受封顶约束；v5.0 机制三收紧：仅硬地板=净现金享受，
+            # 软地板=保底分红折现只保送估值分、调节链不上浮；floor 缺失为校验漏网防御）
             if calc and calc["odds"] is None:
-                try_up("赔率", "赔率 ∞（悲观仍正收益）", "赔率 ∞")
+                floor_type = (calc.get("pess_floor") or {}).get("type")
+                if floor_type == "net_cash":
+                    try_up("赔率", "赔率 ∞（悲观仍正收益）", "赔率 ∞")
+                elif floor_type == "dividend":
+                    steps.append("赔率 ∞（软地板=保底分红折现）：估值分 +1 封顶 7.5，调节链不上浮")
             if blocked_by_cap:
                 steps.append("上浮封顶：" + "、".join(blocked_by_cap)
                              + " 同样满足上浮条件，受「上浮合计 ≤1 档且不进 20 档」限制未生效")
@@ -652,35 +823,50 @@ def _position_steps(quality: float, valuation: float, timing, calc: dict, red_fl
                 final_label = "观察池"
         if not steps:
             steps.append("矩阵落位直接生效，无调节项触发")
-    return final_label, steps, slot_txt
+    return final_label, steps, slot_txt, crit
 
 
 def build_position_card(fill: dict, quality: float, valuation: float, timing,
-                        calc: dict, red_flag: str) -> str:
-    """11 仓位与时机决策章末尾三轨判定卡（脚本生成，置于 position_html 之后）：
+                        calc: dict, red_flag: str, floor_uplift: dict = None) -> str:
+    """12 仓位与时机决策章末尾三轨判定卡（脚本生成，置于 position_html 之后）：
     ① 三轨判定行（质量/估值/时机各带落档判词）→ ② 调节轨迹（只列实际触发条目）
     → ③ 最终仓位结论徽章行。决策链逻辑在 _position_steps（纯函数），本函数只做
-    HTML 渲染。完整决策矩阵规则见 references/scoring.md，报告不展开。"""
+    HTML 渲染。完整决策矩阵规则见 references/scoring.md，报告不展开。
+    v5.0 机制一：临界轨的质量/估值卡 sub 追加「档位临界」橙徽章 + 距离说明。
+    v5.0.0（F3）：floor_uplift 透传决策链——net_cash 硬地板上浮恰落 8.0 豁免临界
+    （调用方 render 层与 14 章升档行同传 vc["floor_uplift"]，徽章与升档行同生共灭）。"""
     parts = ['<span class="section-tag">三轨判定与仓位结论</span>']
 
+    # 决策链先行（① 的临界徽章依赖 crit）：逻辑在 _position_steps（纯函数，规则注释见其 docstring）
+    final_label, steps, slot_txt, crit = _position_steps(quality, valuation, timing, calc, red_flag,
+                                                         floor_uplift)
+
     # ① 三轨判定行
+    q_sub = (f'{_quality_verdict(quality)}'
+             f'（≥7 好公司 / 5.5-6.9 中上 / 4-5.4 一般 / &lt;4 回避）')
+    v_sub = (f'{_valuation_verdict(valuation)}'
+             f'（≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理 / &lt;4 贵）')
+    for c in crit:
+        note = (f' <span class="badge badge-orange">档位临界</span>'
+                f' 距 {c["bound"]} 边界 {c["dist"]:.2f}，按降档执行')
+        if c["track"] == "质量":
+            q_sub += note
+        else:
+            v_sub += note
     t_txt = f"{timing:.2f}" if timing is not None else "—"
     t_verdict = _timing_verdict(timing) if timing is not None else "—"
     parts.append(
         '<div class="metric-row">'
         f'<div class="metric-card"><div class="label">质量分</div>'
-        f'<div class="value">{quality:.2f}</div><div class="sub">{_quality_verdict(quality)}'
-        f'（≥7 好公司 / 5.5-6.9 中上 / 4-5.4 一般 / &lt;4 回避）</div></div>'
+        f'<div class="value">{quality:.2f}</div><div class="sub">{q_sub}</div></div>'
         f'<div class="metric-card"><div class="label">估值分</div>'
-        f'<div class="value">{valuation:.1f}</div><div class="sub">{_valuation_verdict(valuation)}'
-        f'（≥8 深度安全边际 / 6-7.9 合理偏便宜 / 4-5.9 合理 / &lt;4 贵）</div></div>'
+        f'<div class="value">{valuation:.1f}</div><div class="sub">{v_sub}</div></div>'
         f'<div class="metric-card"><div class="label">时机分</div>'
         f'<div class="value">{t_txt}</div><div class="sub">{t_verdict}'
         f'（≥6 好时机 / 4-5.9 中性 / &lt;4 差时机）</div></div>'
         '</div>')
 
-    # ② 调节轨迹与最终落位：决策链在 _position_steps（纯函数，规则注释见其 docstring）
-    final_label, steps, slot_txt = _position_steps(quality, valuation, timing, calc, red_flag)
+    # ② 调节轨迹
     parts.append('<div class="track-summary">' + "".join(
         f'<div class="ts-row"><span class="ts-formula">{s}</span></div>' for s in steps) + '</div>')
 

@@ -75,7 +75,7 @@ from em_market import (  # noqa: E402,F401
 )
 from em_finance import (  # noqa: E402,F401
     _em_f10, _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows,
-    fetch_annual_rows, fetch_latest_quarter,
+    fetch_annual_rows, fetch_latest_quarter, fetch_period_track, fetch_hk_period_track,
     fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt,
 )
 from em_owner import (  # noqa: E402,F401
@@ -275,6 +275,29 @@ def _sec_e3_hk(pure: str) -> list:
                    "毛利率用上表对照同业；审计意见走必查项手工查证]\n")
         out.append("有息负债: [港股分支跳过（tushare balancesheet 不覆盖港股），"
                    "请降级：东财F10资产负债表]\n")
+        # 报告期进度（v5.0 第 3 章，港股降级口径）：hk_income 中报可查则给累计营收/净利+同比+
+        # 占比带；扣非/经营现金流/单季拆分港股无口径，不编造
+        hk_track = fetch_hk_period_track(pure)
+        if hk_track:
+            _E1_CAPTURE["period_track"] = hk_track
+
+            def _amt(v):
+                # F10：去千分符——带逗号的金额（如 3,448.15）照抄进 fill 会被 _strict_num 拒
+                return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
+
+            out.append(f"报告期进度（period_track 照抄行——第 3 章数据源，禁手估；港股口径）: "
+                       f"{hk_track['period']}累计 营收{_amt(hk_track['rev'])}亿"
+                       f"(同比{yoy_text(hk_track['rev_yoy'])}) ｜ 归母净利{_amt(hk_track['np'])}亿"
+                       f"(同比{yoy_text(hk_track['np_yoy'])}) ｜ 扣非/经营现金流/单季拆分："
+                       f"港股季报口径未获取\n")
+            if hk_track.get("band_np") or hk_track.get("band_rev"):
+                yrs = "/".join(str(y) for y in hk_track["band_years"])
+                bnp = (f"{hk_track['band_np'][0]}%~{hk_track['band_np'][1]}%"
+                       if hk_track.get("band_np") else "—")
+                out.append(f"季节性占比带（近三年同期累计÷全年，{yrs}）: 净利 {bnp}\n")
+        else:
+            out.append("报告期进度: [港股季报口径未获取（tushare hk_income 无数据），"
+                       "请降级：妙想 MCP mx_hk_finance_data 直查并标注路径；第 3 章不得编造]\n")
     except Exception as e:
         out.append(f"## E3 财务年表\n[未获取到港股财务年表（tushare 无 hk_income 权限: {e}），"
                    f"请降级：**优先妙想 MCP mx_hk_finance_data 直查**（模型直调，实测可用）；"
@@ -305,6 +328,41 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
     out.append(f"\n最新报告期: {q1.get('REPORT_DATE_NAME')} 净利{yi(q1.get('PARENTNETPROFIT'))}亿 "
                f"同比{yoy_text(q1.get('PARENTNETPROFITTZ'))} | 总股本{yi(q1.get('TOTAL_SHARE'), 2)}亿 | "
                f"ROIC {pct(q1.get('ROIC'))}（{q1.get('REPORT_DATE_NAME')}累计，未年化，季报口径远小于全年，勿直接与 ROE 比）\n")
+    # 报告期进度照抄行（v5.0 第 3 章数据源）：四累计值+同比/单季拆分/占比带一律照抄，
+    # 禁手估；随 --out 落盘 period_track 键供渲染器交叉校验（quote 防伪同款纪律）
+    track = fetch_period_track(pure, secucode)
+    if track:
+        _E1_CAPTURE["period_track"] = track
+
+        def _amt(v):
+            # F10：去千分符——带逗号的金额（如 3,448.15）照抄进 fill 会被 _strict_num 拒
+            return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
+
+        out.append(f"报告期进度（period_track 照抄行——第 3 章数据源，禁手估）: "
+                   f"{track['period']}累计 营收{_amt(track['rev'])}亿(同比{yoy_text(track['rev_yoy'])}) ｜ "
+                   f"归母净利{_amt(track['np'])}亿(同比{yoy_text(track['np_yoy'])}) ｜ "
+                   f"扣非{_amt(track['np_dedt'])}亿(同比{yoy_text(track['np_dedt_yoy'])}) ｜ "
+                   f"经营现金流{_amt(track['ocf'])}亿(同比{yoy_text(track['ocf_yoy'])}) ｜ "
+                   f"毛利率{pct(track['gm'])}（毛利率供 4.4 归因照抄，不进第 3 章）\n")
+        if track.get("sq_label"):
+            out.append(f"单季拆分: {track['sq_label']} 营收{_amt(track['sq_rev'])}亿 / "
+                       f"净利{_amt(track['sq_np'])}亿 vs {track['sq_prev_label']} "
+                       f"营收{_amt(track['sq_prev_rev'])}亿 / 净利{_amt(track['sq_prev_np'])}亿"
+                       f"（单季同比 营收{yoy_text(track['sq_rev_yoy'])} / "
+                       f"净利{yoy_text(track['sq_np_yoy'])}）\n")
+        if track.get("band_np") or track.get("band_rev"):
+            yrs = "/".join(str(y) for y in track["band_years"])
+            bnp = f"{track['band_np'][0]}%~{track['band_np'][1]}%" if track.get("band_np") else "—"
+            brev = f"{track['band_rev'][0]}%~{track['band_rev'][1]}%" if track.get("band_rev") else "—"
+            out.append(f"季节性占比带（近三年同期累计÷全年，{yrs}）: 净利 {bnp} ｜ 营收 {brev}\n")
+        else:
+            out.append("季节性占比带: 样本不足（近三年同期/全年序列缺），第 3 章判词走「无法判定」口径\n")
+        out.append("完成度分母：公司经营目标（年报「经营计划」段，手工查证填 period_track.goal_*，"
+                   "未披露标 null）＋卖方一致预期（E5 有覆盖时已落盘 consensus_np，"
+                   "无覆盖标未披露）——两者并列，缺一标「未披露」\n")
+    else:
+        out.append("报告期进度: [未获取到（tushare 与东财 F10 均空），请降级：妙想 MCP "
+                   "mx_ashare_finance_data 直查最新报告期四值并标注路径；第 3 章不得编造]\n")
     capex_bits = [f"{r['REPORT_DATE_NAME']} {yi(r.get('CAPEX'))}亿" for r in annual[:3]
                   if r.get("CAPEX") is not None]
     if capex_bits:
@@ -418,7 +476,7 @@ def _sec_e4(pure: str, is_hk: bool) -> list:
             # 筹码面是时机分 67% 权重的核心输入，缺席必须显式标注）
             out.append("## E4 股东户数\n[未获取到股东户数数据，请降级：妙想 MCP "
                        "mx_ashare_finance_data 直查股东户数，或东财 F10 手工查；"
-                       "筹码面评分缺核心输入，11 章时机判定须注明数据缺席]\n")
+                       "筹码面评分缺核心输入，12 章时机判定须注明数据缺席]\n")
         if not is_hk:
             q = fetch_holders_quarterly(pure)
             if len(q) >= 3:
@@ -430,7 +488,7 @@ def _sec_e4(pure: str, is_hk: bool) -> list:
             elif h:
                 # 季度序列不足 3 期（户数主序列有数据时才有提示意义，全空已在上行提示）
                 out.append(f"[季度序列不足 3 期（仅 {len(q)} 期），holders 图不会生成；"
-                           f"请降级：妙想 MCP 直查历史季末户数补齐，或 11 章注明户数图缺席]\n")
+                           f"请降级：妙想 MCP 直查历史季末户数补齐，或 12 章注明户数图缺席]\n")
     except Exception as e:
         out.append(f"## E4 股东户数\n[失败: {e}]\n")
     return out
@@ -507,7 +565,11 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                 slot = c["years"][yr]
                 if slot["np"]:
                     np_avg = sum(slot["np"]) / len(slot["np"])
-                    line = (f"{yr}E: 归母净利均值{np_avg:,.1f}亿"
+                    if yr == str(date.today().year):
+                        # 当年一致预期净利均值落盘：第 3 章完成度卖方分母的防伪源头
+                        _E1_CAPTURE["consensus_np"] = {"year": int(yr), "np_avg": round(np_avg, 2),
+                                                       "orgs": len(slot["np"])}
+                    line = (f"{yr}E: 归母净利均值{np_avg:,.2f}亿"
                             f"(区间{min(slot['np']):,.1f}-{max(slot['np']):,.1f})")
                     if slot["eps"]:
                         line += f" EPS均值{sum(slot['eps'])/len(slot['eps']):.2f}"
@@ -690,7 +752,8 @@ def main():
         searches = [s.strip() for s in opts["search"].split(",") if s.strip()]
     print(summarize(args[0], years, searches))
     if opts.get("out"):
-        # E1 落盘：现价/PE/分位带等源头数字写 JSON，fill 的 quote.source_file 引用它，
+        # E1 落盘：现价/PE/分位带/报告期进度(period_track)/当年一致预期净利(consensus_np)等
+        # 源头数字写 JSON，fill 的 quote.source_file 引用它，
         # render 时比对 price/pe_ttm 防手填造假（神华 601088 事故修复，偏差>1% 拒渲染）
         if not _E1_CAPTURE:
             print("警告：--out 已指定但 E1 捕获为空（E1 取数失败？），未落盘", file=sys.stderr)

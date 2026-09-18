@@ -599,6 +599,133 @@ def test_16_consensus_detail():
     print("16. E5 逐机构明细 通过")
 
 
+def test_17_period_track():
+    """17. 报告期进度（v5.0 第 3 章数据源，无网络 mock ts_call）：
+    A股中报——累计四值+同比、单季拆分 Q2=H1−Q1、近三年同期占比带；
+    A股年报期——is_annual 且无占比带、Q4=年报−前三季；港股中报——hk_income 降级口径。"""
+    inc = [
+        {"end_date": "20260630", "report_type": "1", "total_revenue": 200e8, "n_income_attr_p": 30e8},
+        {"end_date": "20260331", "report_type": "1", "total_revenue": 90e8, "n_income_attr_p": 12e8},
+        {"end_date": "20250630", "report_type": "1", "total_revenue": 180e8, "n_income_attr_p": 25e8},
+        {"end_date": "20250331", "report_type": "1", "total_revenue": 80e8, "n_income_attr_p": 10e8},
+        {"end_date": "20251231", "report_type": "1", "total_revenue": 400e8, "n_income_attr_p": 50e8},
+        {"end_date": "20240630", "report_type": "1", "total_revenue": 150e8, "n_income_attr_p": 20e8},
+        {"end_date": "20241231", "report_type": "1", "total_revenue": 380e8, "n_income_attr_p": 45e8},
+        {"end_date": "20230630", "report_type": "1", "total_revenue": 140e8, "n_income_attr_p": 18e8},
+        {"end_date": "20231231", "report_type": "1", "total_revenue": 350e8, "n_income_attr_p": 40e8},
+    ]
+    cf = [{"end_date": "20260630", "n_cashflow_act": 35e8},
+          {"end_date": "20250630", "n_cashflow_act": 28e8}]
+    ind = [{"end_date": "20260630", "profit_dedt": 28e8, "grossprofit_margin": 40.0},
+           {"end_date": "20250630", "profit_dedt": 23e8}]
+    _orig = em_core.ts_call
+    try:
+        em_core.ts_call = lambda api, params=None, fields="": {
+            "income": inc, "cashflow": cf, "fina_indicator": ind}.get(api, [])
+        t = em.fetch_period_track("600989", "600989.SH")
+        assert t["period"] == "2026中报" and t["is_annual"] is False
+        assert (t["rev"], t["np"], t["np_dedt"], t["ocf"], t["gm"]) == (200.0, 30.0, 28.0, 35.0, 40.0)
+        assert abs(t["rev_yoy"] - (200 / 180 - 1) * 100) < 0.01 and abs(t["np_yoy"] - 20.0) < 0.01
+        assert t["np_dedt_yoy"] is not None and t["ocf_yoy"] is not None
+        # 单季拆分：2026Q2 = H1−Q1 = (200−90, 30−12)；2025Q2 = (180−80, 25−10)
+        assert (t["sq_label"], t["sq_rev"], t["sq_np"]) == ("2026Q2", 110.0, 18.0)
+        assert (t["sq_prev_label"], t["sq_prev_rev"], t["sq_prev_np"]) == ("2025Q2", 100.0, 15.0)
+        assert abs(t["sq_rev_yoy"] - 10.0) < 0.01 and abs(t["sq_np_yoy"] - 20.0) < 0.01
+        # 占比带：净利 18/40=45.0、20/45≈44.4、25/50=50.0；营收 140/350=40.0、150/380≈39.5、180/400=45.0
+        assert t["band_np"] == [44.4, 50.0] and t["band_rev"] == [39.5, 45.0], \
+            f"实际 {t['band_np']}/{t['band_rev']}"
+        assert t["band_years"] == [2023, 2024, 2025]
+
+        # 年报期：最新 20251231 → is_annual、band None、Q4=年报−前三季
+        inc2 = [r for r in inc if r["end_date"] <= "20251231"] + \
+               [{"end_date": "20250930", "report_type": "1", "total_revenue": 300e8,
+                 "n_income_attr_p": 40e8}]
+        em_core.ts_call = lambda api, params=None, fields="": {
+            "income": inc2, "cashflow": [], "fina_indicator": []}.get(api, [])
+        # F7：secucode=None——夹具自足（fina_indicator 空 → np_dedt/gm 为 None 会触发
+        # F10 字段级补齐触网，离线必红）；F10 补齐与兜底路径由 test_18 专项 mock 覆盖
+        t2 = em.fetch_period_track("600989")
+        assert t2["is_annual"] is True and t2["band_np"] is None and t2["band_rev"] is None
+        assert (t2["sq_label"], t2["sq_rev"], t2["sq_np"]) == ("2025Q4", 100.0, 10.0)
+
+        # 港股中报：hk_income 降级口径（无扣非/现金流），占比带用 0630÷1231
+        hk = [
+            {"end_date": "20260630", "total_revenue": 50e8, "n_income_attr_p": 8e8},
+            {"end_date": "20250630", "total_revenue": 45e8, "n_income_attr_p": 7e8},
+            {"end_date": "20251231", "total_revenue": 100e8, "n_income_attr_p": 15e8},
+            {"end_date": "20240630", "total_revenue": 40e8, "n_income_attr_p": 6e8},
+            {"end_date": "20241231", "total_revenue": 90e8, "n_income_attr_p": 13e8},
+            {"end_date": "20230630", "total_revenue": 38e8, "n_income_attr_p": 5.5e8},
+            {"end_date": "20231231", "total_revenue": 85e8, "n_income_attr_p": 12e8},
+        ]
+        em_core.ts_call = lambda api, params=None, fields="": hk if api == "hk_income" else []
+        t3 = em.fetch_hk_period_track("06082")
+        assert t3["period"] == "2026中报" and t3["rev"] == 50.0 and t3["np"] == 8.0
+        assert t3["np_dedt"] is None and t3["ocf"] is None
+        assert t3["band_np"] == [45.8, 46.7], f"实际 {t3['band_np']}"
+    finally:
+        em_core.ts_call = _orig
+    print("17. 报告期进度（中报/年报期/港股）通过")
+
+
+def test_18_period_track_f10_fallback():
+    """18. F10 兜底与字段级补齐（无网络 mock _em_f10/ts_call）：
+    tushare 全空 → 东财 F10 混合期行兜底产出正确 period/sq/band；
+    F8 期次校验——F10 最新行期次 ≠ tushare 最新期（披露当晚 F10 更快）→ 不借新期数据；
+    F12——某年 np/rev 皆无有效样本 → band_years 不收录该年。"""
+    import em_finance
+    f10_rows = [
+        {"REPORT_DATE": "2026-06-30", "TOTALOPERATEREVE": 200e8, "PARENTNETPROFIT": 30e8,
+         "KCFJCXSYJLR": 28e8, "NETCASH_OPERATE_PK": 35e8, "XSMLL": 40.0},
+        {"REPORT_DATE": "2026-03-31", "TOTALOPERATEREVE": 90e8, "PARENTNETPROFIT": 12e8},
+        {"REPORT_DATE": "2025-06-30", "TOTALOPERATEREVE": 180e8, "PARENTNETPROFIT": 25e8},
+        {"REPORT_DATE": "2025-03-31", "TOTALOPERATEREVE": 80e8, "PARENTNETPROFIT": 10e8},
+        {"REPORT_DATE": "2025-12-31", "TOTALOPERATEREVE": 400e8, "PARENTNETPROFIT": 50e8},
+        {"REPORT_DATE": "2024-06-30", "TOTALOPERATEREVE": 150e8, "PARENTNETPROFIT": 20e8},
+        {"REPORT_DATE": "2024-12-31", "TOTALOPERATEREVE": 380e8, "PARENTNETPROFIT": 45e8},
+        {"REPORT_DATE": "2023-06-30", "TOTALOPERATEREVE": 140e8, "PARENTNETPROFIT": 18e8},
+        {"REPORT_DATE": "2023-12-31", "TOTALOPERATEREVE": 350e8, "PARENTNETPROFIT": 40e8},
+    ]
+    _o1, _o2 = em_core.ts_call, em_finance._em_f10
+    try:
+        # tushare 全空 → F10 混合期行兜底
+        em_core.ts_call = lambda api, params=None, fields="": []
+        em_finance._em_f10 = lambda secucode, size=12, annual_only=False: f10_rows[:size]
+        t = em_finance.fetch_period_track("600989", "600989.SH")
+        assert t["period"] == "2026中报" and (t["rev"], t["np"]) == (200.0, 30.0)
+        assert t["np_dedt"] == 28.0 and t["gm"] == 40.0
+        assert (t["sq_label"], t["sq_rev"], t["sq_np"]) == ("2026Q2", 110.0, 18.0)
+        assert t["band_np"] == [44.4, 50.0] and t["band_years"] == [2023, 2024, 2025]
+
+        # F8：tushare 最新 2026一季，F10 最新行 2026中报（新期更快）→ 期次不一致不借
+        inc = [{"end_date": "20260331", "report_type": "1", "total_revenue": 90e8,
+                "n_income_attr_p": 12e8}]
+        em_core.ts_call = lambda api, params=None, fields="": {"income": inc}.get(api, [])
+        t2 = em_finance.fetch_period_track("600989", "600989.SH")
+        assert t2["period"] == "2026一季" and t2["np_dedt"] is None and t2["gm"] is None, \
+            f"F10 期次领先 tushare 时不得借新期数据，实际 {t2['np_dedt']}/{t2['gm']}"
+        # 期次一致 → 正常借（F10 最新行同为 2026一季 → 补齐 np_dedt/gm）
+        em_finance._em_f10 = lambda secucode, size=12, annual_only=False: [
+            {"REPORT_DATE": "2026-03-31", "KCFJCXSYJLR": 11e8, "XSMLL": 41.0}]
+        t3 = em_finance.fetch_period_track("600989", "600989.SH")
+        assert t3["np_dedt"] == 11.0 and t3["gm"] == 41.0
+
+        # F12：2024 全年 np/rev 皆缺 → 两条带都不收录 2024，band_years 不再虚挂
+        rows2 = [dict(r) for r in f10_rows]
+        for r in rows2:
+            if r["REPORT_DATE"] == "2024-12-31":
+                r["PARENTNETPROFIT"] = None
+                r["TOTALOPERATEREVE"] = None
+        em_core.ts_call = lambda api, params=None, fields="": []
+        em_finance._em_f10 = lambda secucode, size=12, annual_only=False: rows2[:size]
+        t4 = em_finance.fetch_period_track("600989", "600989.SH")
+        assert t4["band_years"] == [2023, 2025], f"实际 {t4['band_years']}"
+        assert t4["band_np"] == [45.0, 50.0], f"实际 {t4['band_np']}"
+    finally:
+        em_core.ts_call, em_finance._em_f10 = _o1, _o2
+    print("18. F10 兜底/字段级补齐期次校验/band_years 收录口径 通过")
+
+
 if __name__ == "__main__":
     import traceback
     test_01_market_map()
@@ -617,4 +744,6 @@ if __name__ == "__main__":
     test_14_monthly_ohlc()
     test_15_e4_empty_hints()
     test_16_consensus_detail()
+    test_17_period_track()
+    test_18_period_track_f10_fallback()
     print("全部断言通过")

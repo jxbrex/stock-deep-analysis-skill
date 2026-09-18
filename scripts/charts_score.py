@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_score.py — 评分类图族（v4.9 从 charts.py 拆出）：06 九维评分分布横条（build_score_bars）/ 02 敏感性龙卷风（build_sensitivity_tornado）。依赖 charts_base 与 scoring。"""
+"""charts_score.py — 评分类图族（v4.9 从 charts.py 拆出）：07 九维评分分布横条（build_score_bars）/ 02 敏感性龙卷风（build_sensitivity_tornado）。依赖 charts_base 与 scoring。"""
 
 from scoring import DIMS, LAYER_NAMES, badge_class, _dim_verdict, _num, _fmt, _esc
 from charts_base import *

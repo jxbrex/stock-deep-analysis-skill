@@ -74,8 +74,8 @@ def test_golden_mcap_fill():
 
 
 def test_golden_period_h1():
-    """端到端快照（v5.0 第 3 章中报态）：进度子弹图（双分母刻度+节奏带）/ 单季双柱 /
-    绝对额同比表全开，TOC 含「透视」。"""
+    """端到端快照（v5.1 第 3 章中报态）：进度小结条（含手填句）/ 累计一览卡 / 进度子弹图
+    （双分母刻度带完成度+节奏带）/ 单季双联四组全开，TOC 含「透视」。"""
     _assert_snapshot("period_h1", period_fill("h1"))
 
 

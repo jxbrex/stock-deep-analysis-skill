@@ -324,7 +324,8 @@ def _period_row_norm(r: dict, ind: dict, cf: dict, ed: str) -> dict:
 def _period_track_calc(rows: list) -> dict:
     """由归一化累计行（含 ED=YYYYMMDD，同报告期首条优先）算 period_track dict。
     金额输出亿元（两位小数）；同比走 _yoy（分母≤0 文字化）；单季拆分 Q2=H1−Q1、
-    Q3=前三季−H1、Q4=年报−前三季（Q1 期本身即单季）；占比带=近三年同期累计÷全年
+    Q3=前三季−H1、Q4=年报−前三季（Q1 期本身即单季；v5.0.1 起营收/净利之外同口径
+    拆扣非与经营现金流）；占比带=近三年同期累计÷全年
     （全年分母≤0 或缺值的年度该带不收录；band_years 按任一带实际收录的年份登记，
     <2 年样本返回 None——判词走「无法判定」口径）。"""
     by_ed = {}
@@ -359,6 +360,11 @@ def _period_track_calc(rows: list) -> dict:
                                else _sub(c2.get("TOTALOPERATEREVE"), b2.get("TOTALOPERATEREVE")))
             sq[f"{tag}np"] = (c2.get("PARENTNETPROFIT") if base_mmdd is None
                               else _sub(c2.get("PARENTNETPROFIT"), b2.get("PARENTNETPROFIT")))
+            # v5.0.1：扣非/经营现金流单季拆分（同款累计差分，第 3 章单季双联图数据源）
+            sq[f"{tag}dedt"] = (c2.get("KCFJCXSYJLR") if base_mmdd is None
+                                else _sub(c2.get("KCFJCXSYJLR"), b2.get("KCFJCXSYJLR")))
+            sq[f"{tag}ocf"] = (c2.get("NETCASH_OPERATE_PK") if base_mmdd is None
+                               else _sub(c2.get("NETCASH_OPERATE_PK"), b2.get("NETCASH_OPERATE_PK")))
     # 近三年同期占比带（年报期无带——整章消失，数据照常输出供其他消费方）
     band_np, band_rev, years = [], [], []
     if mmdd != "1231":
@@ -397,6 +403,10 @@ def _period_track_calc(rows: list) -> dict:
             "sq_prev_rev": _yi2(sq.get("prev_rev")), "sq_prev_np": _yi2(sq.get("prev_np")),
             "sq_rev_yoy": _yoy(sq.get("rev"), sq.get("prev_rev")),
             "sq_np_yoy": _yoy(sq.get("np"), sq.get("prev_np")),
+            "sq_dedt": _yi2(sq.get("dedt")), "sq_ocf": _yi2(sq.get("ocf")),
+            "sq_prev_dedt": _yi2(sq.get("prev_dedt")), "sq_prev_ocf": _yi2(sq.get("prev_ocf")),
+            "sq_dedt_yoy": _yoy(sq.get("dedt"), sq.get("prev_dedt")),
+            "sq_ocf_yoy": _yoy(sq.get("ocf"), sq.get("prev_ocf")),
             "band_np": _band(band_np), "band_rev": _band(band_rev), "band_years": years}
 
 

@@ -345,8 +345,8 @@ def validate_stderr(fill):
 
 
 # ---------------- v5.0 第 3 章「最新报告期透视」fixture（golden/门禁共用） ----------------
-# 四态变体的 fill 侧 period_track（契约示例数；goal_*/verdict_*/industry/forecast/note 为
-# fill 侧手填键——经营目标手工查证、判词模型写，不进落盘参照）
+# 四态变体的 fill 侧 period_track（契约示例数；goal_*/verdict_*/summary/industry/forecast/note 为
+# fill 侧手填键——经营目标手工查证、判词与小结句模型写，不进落盘参照）
 _PERIOD_VARIANTS = {
     "h1": {"period": "2026中报", "is_annual": False,
            "rev": 301.98, "np": 97.28, "np_dedt": 92.10, "ocf": 119.64,
@@ -354,9 +354,13 @@ _PERIOD_VARIANTS = {
            "sq_label": "2026Q2", "sq_rev": 169.61, "sq_np": 60.67,
            "sq_prev_label": "2025Q2", "sq_prev_rev": 120.49, "sq_prev_np": 32.81,
            "sq_rev_yoy": 40.8, "sq_np_yoy": 84.9,
+           "sq_dedt": 48.55, "sq_ocf": 66.20,
+           "sq_prev_dedt": 29.30, "sq_prev_ocf": 44.10,
+           "sq_dedt_yoy": 65.7, "sq_ocf_yoy": 50.1,
            "band_np": [39.9, 52.1], "band_rev": [44.9, 51.2], "band_years": [2023, 2024, 2025],
            "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
            "verdict_rev": "正常", "verdict_np": "超前", "verdict_dedt": "正常",
+           "summary_html": "上半年归母净利 97.28 亿、同比 +70.1%，完成卖方一致预期 58.9%，进度超前。",
            "industry_html": "", "forecast_html": "", "note_html": ""},
     # Q1：累计即单季（sq 值=累计口径），0331 占比带
     "q1": {"period": "2026一季", "is_annual": False,
@@ -365,9 +369,13 @@ _PERIOD_VARIANTS = {
            "sq_label": "2026Q1", "sq_rev": 132.37, "sq_np": 36.61,
            "sq_prev_label": "2025Q1", "sq_prev_rev": 103.09, "sq_prev_np": 23.59,
            "sq_rev_yoy": 28.4, "sq_np_yoy": 55.2,
+           "sq_dedt": 33.40, "sq_ocf": 51.02,
+           "sq_prev_dedt": 22.18, "sq_prev_ocf": 36.40,
+           "sq_dedt_yoy": 50.6, "sq_ocf_yoy": 40.2,
            "band_np": [21.8, 26.4], "band_rev": [22.5, 25.9], "band_years": [2023, 2024, 2025],
            "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
            "verdict_rev": "正常", "verdict_np": "滞后", "verdict_dedt": "正常",
+           "summary_html": "",
            "industry_html": "", "forecast_html": "", "note_html": ""},
     "q3": {"period": "2026三季", "is_annual": False,
            "rev": 470.50, "np": 150.20, "np_dedt": 141.00, "ocf": 178.30,
@@ -375,9 +383,13 @@ _PERIOD_VARIANTS = {
            "sq_label": "2026Q3", "sq_rev": 168.52, "sq_np": 52.92,
            "sq_prev_label": "2025Q3", "sq_prev_rev": 128.66, "sq_prev_np": 30.36,
            "sq_rev_yoy": 31.0, "sq_np_yoy": 74.3,
+           "sq_dedt": 48.90, "sq_ocf": 58.66,
+           "sq_prev_dedt": 30.10, "sq_prev_ocf": 40.20,
+           "sq_dedt_yoy": 62.5, "sq_ocf_yoy": 45.9,
            "band_np": [71.2, 79.8], "band_rev": [72.4, 78.9], "band_years": [2023, 2024, 2025],
            "goal_rev": None, "goal_np": 200.0, "consensus_np": 165.22,
            "verdict_rev": "正常", "verdict_np": "超前", "verdict_dedt": "无法判定",
+           "summary_html": "",
            "industry_html": "", "forecast_html": "", "note_html": ""},
     # 年报期：整章消失；band 无（年报无节奏带），goal/consensus/verdict 均不填
     "annual": {"period": "2025年报", "is_annual": True,
@@ -386,6 +398,9 @@ _PERIOD_VARIANTS = {
                "sq_label": "2025Q4", "sq_rev": 141.90, "sq_np": 31.10,
                "sq_prev_label": "2024Q4", "sq_prev_rev": 136.00, "sq_prev_np": 29.70,
                "sq_rev_yoy": 4.3, "sq_np_yoy": 4.7,
+               "sq_dedt": 40.10, "sq_ocf": 55.00,
+               "sq_prev_dedt": 38.00, "sq_prev_ocf": 50.00,
+               "sq_dedt_yoy": 5.5, "sq_ocf_yoy": 10.0,
                "band_np": None, "band_rev": None, "band_years": [],
                "goal_rev": None, "goal_np": None, "consensus_np": None,
                "industry_html": "", "forecast_html": "", "note_html": ""},
@@ -394,7 +409,8 @@ _PERIOD_VARIANTS = {
 _PERIOD_REF_KEYS = ("period", "is_annual", "rev", "np", "np_dedt", "ocf",
                     "rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy",
                     "sq_label", "sq_rev", "sq_np", "sq_prev_label", "sq_prev_rev", "sq_prev_np",
-                    "sq_rev_yoy", "sq_np_yoy", "band_np", "band_rev", "band_years")
+                    "sq_rev_yoy", "sq_np_yoy", "sq_dedt", "sq_ocf", "sq_prev_dedt", "sq_prev_ocf",
+                    "sq_dedt_yoy", "sq_ocf_yoy", "band_np", "band_rev", "band_years")
 _PERIOD_TMPDIR = None
 
 

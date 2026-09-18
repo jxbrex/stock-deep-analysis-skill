@@ -723,6 +723,9 @@ def test_period_track_cross_check():
     f["period_track"]["np"] = 120.0
     expect_valueerror(f, "period_track.np 与落盘不一致应拒")
     f = period_fill()
+    f["period_track"]["sq_ocf"] = 999.0
+    expect_valueerror(f, "period_track.sq_ocf（v5.0.1 新增照抄键）与落盘不一致应拒")
+    f = period_fill()
     f["period_track"]["rev"] = "301.98（H股口径）"
     expect_valueerror(f, "照抄字段夹带文字应拒")
     f = period_fill()
@@ -796,62 +799,98 @@ def test_period_track_verdict_goal_gate():
     f["period_track"]["note_html"] = "口径提示超长" * 25
     out = validate_stderr(f)
     assert "note_html" in out and "> 120" in out, "note_html 超长应软告警"
-    print("OK period_track 判词/目标门禁（非法拒/缺失告警/负数拒/年报期内容告警/note 超长告警）")
+    f = period_fill()
+    f["period_track"]["summary_html"] = "小结超长" * 30
+    out = validate_stderr(f)
+    assert "summary_html" in out and "> 100" in out, "summary_html 超长应软告警"
+    print("OK period_track 判词/目标门禁（非法拒/缺失告警/负数拒/年报期内容告警/note 与 summary 超长告警）")
 
 
 def test_period_chapter_render():
-    """v5.0 第 3 章渲染：TOC 与章节同生共灭（死链硬约束）；子弹图/单季双柱/绝对额表落位；
-    双分母缺失 → 刻度与节奏带缺席、图注标未披露；子弹图空串 → 表格兜底章节不死。"""
+    """v5.0.1 第 3 章渲染：TOC 与章节同生共灭（锚件=累计一览卡）；小结条/一览卡/子弹图/
+    单季双联图落位；双分母缺失 → 子弹图无参照行整图缺席、章节靠一览卡存活；
+    四项金额全缺 → 整章消失（TOC 同灭）。"""
     html = render_fill(period_fill())
     assert 'href="#s3"' in html and 'id="s3"' in html, "has_period 时 TOC 与章节同生"
+    assert "进度小结" in html and "本期累计一览" in html, "小结条与一览卡落位"
     assert 'aria-label="报告期进度子弹图"' in html and 'aria-label="单季同比对比图"' in html
-    assert "经营目标 200 亿" in html and "一致预期 165 亿" in html, "双分母刻度标注"
-    assert "节奏带（按" in html and "48.6%" in html and "58.9%" in html, "节奏带注与表格完成度"
+    assert "经营目标 200 亿 · 已完成 48.6%" in html and "一致预期 165 亿 · 已完成 58.9%" in html, \
+        "双分母刻度带完成度"
+    assert "节奏带（按" in html, "节奏带注"
+    for frag in ("营业收入（亿元）", "经营现金流（亿元）", "归母净利（亿元）", "扣非净利（亿元）"):
+        assert frag in html, f"单季双联四组缺 {frag}"
+    s3_blk = html.split('id="s3"', 1)[1].split('id="s4"', 1)[0]
+    assert "<table" not in s3_blk, "v5.0.1 绝对额表已删除（信息并入一览卡与子弹图刻度）"
     assert html.find('id="s3"') < html.find('id="s4"'), "第 3 章应插在原 s3（现 s4）之前"
     # 年报期：TOC 与章节同灭
     html_a = render_fill(period_fill("annual"))
     assert 'href="#s3"' not in html_a and 'id="s3"' not in html_a, "年报期整章消失"
-    # 双分母缺失：刻度/节奏带缺席，图注与表格标未披露
+    # 双分母缺失：子弹图无参照行整图缺席（不画空轨道），章节靠一览卡存活（TOC 不死链）
     f = period_fill()
     f["period_track"]["goal_np"] = None
     f["period_track"]["consensus_np"] = None
     html2 = render_fill(f)
-    assert "一致预期 165 亿" not in html2 and "经营目标 200 亿" not in html2, "分母缺失不画刻度"
-    assert "未披露" in html2 and "节奏带（按" not in html2, "节奏带随分母双缺缺席"
-    # 子弹图四值全缺 → 表格兜底（TOC 死链硬约束）
+    assert 'id="s3"' in html2 and 'href="#s3"' in html2 and "本期累计一览" in html2
+    assert 'aria-label="报告期进度子弹图"' not in html2, "无全年参照不画子弹图"
+    assert "一致预期 165 亿" not in html2 and "经营目标 200 亿" not in html2
+    # 四项金额全缺 → 一览卡空串 → 整章消失（TOC 同灭，无死链）
     f = period_fill()
     f["period_track"] = {"period": "2026中报", "is_annual": False}
     html3 = render_fill(f)
-    assert 'id="s3"' in html3 and 'href="#s3"' in html3, "子弹图空串时章节不得死（表格兜底）"
-    assert 'aria-label="报告期进度子弹图"' not in html3 and "<table" in html3
-    # F4：兜底路径表格二选一——s3 章内 <table 恰出现 1 次（旧版子弹图槽+表格槽双渲染）
-    s3_blk = html3.split('id="s3"', 1)[1].split('id="s4"', 1)[0]
-    assert s3_blk.count("<table") == 1, "兜底路径表格不得渲染两次"
-    print("OK 第 3 章渲染（TOC 同生共灭/双分母刻度/未披露标/表格兜底）")
+    assert 'id="s3"' not in html3 and 'href="#s3"' not in html3, "四值全缺整章消失"
+    print("OK 第 3 章渲染（TOC 同生共灭/小结条/一览卡/完成度刻度/无参照不画子弹图/全缺整章消失）")
 
 
 def test_period_charts_shapes():
-    """v5.0 图函数形态：双柱图 Q1 退化单柱 / 缺 sq_label 或值全 None 返回空串；
-    子弹图扣非无双分母刻度与节奏带 / 缺判词渲染兜底无法判定 / 四值全 None 返回空串。"""
-    from charts_misc import build_period_bullets, build_period_sqplot, build_period_table
+    """v5.0.1 图函数形态：小结条徽章合成与 summary_html 直通 / 一览卡四卡与全缺空串 /
+    子弹图仅画有参照行（无分母行跳过并图注点名、扣非永不入图）/ 刻度带完成度 /
+    缺判词兜底无法判定 / 单季双联四组与 Q1 退化单柱 / 缺 sq_label 或四组全 None 返回空串。"""
+    from charts_misc import (build_period_summary, build_period_kpi,
+                             build_period_bullets, build_period_sqplot)
     h1 = period_fill("h1")["period_track"]
+    # 小结条：徽章合成 + 无参照点名 + summary_html 手填句直通
+    s = build_period_summary(h1)
+    assert "进度小结" in s and ">超前</span>" in s and ">正常</span>" in s
+    assert "完成卖方一致预期 58.9%" in s, "summary_html 手填句直通"
+    assert "营业收入、扣非净利无金额化全年参照" in s and "经营现金流不设判词" in s
+    assert build_period_summary({"ocf": 10.0}) == "", "无判词指标且无手填句 → 空串"
+    # 一览卡：四卡齐全、缺值标—、全缺空串
+    k = build_period_kpi(h1)
+    assert k.count("metric-card") == 4 and "92.10" in k and "+49.7%" in k
+    k2 = build_period_kpi({"rev": 10.0})
+    assert k2.count("metric-card") == 4 and ">—<" in k2, "缺值卡标—"
+    assert build_period_kpi({"rev": None, "np": None, "np_dedt": None, "ocf": None}) == ""
+    # 子弹图：仅归母行（goal/cons 在），营业收入不画行、扣非永不入图
+    b = build_period_bullets(h1)
+    assert ">归母净利</text>" in b and ">营业收入</text>" not in b and ">扣非净利</text>" not in b
+    assert "经营目标 200 亿 · 已完成 48.6%" in b and "一致预期 165 亿 · 已完成 58.9%" in b
+    assert "营业收入无金额化全年参照" in b, "跳过行图注点名"
+    assert ">超前</text>" in b
+    assert build_period_bullets({"np_dedt": 21.47}) == "", "扣非无分母口径不画"
+    assert build_period_bullets({"rev": 100.0}) == "", "营收无 goal_rev 不画"
+    assert build_period_bullets({"rev": None, "np": None, "np_dedt": None}) == ""
+    # 缺判词 → 无法判定兜底
+    b2 = build_period_bullets({"np": 5.0, "consensus_np": 100.0})
+    assert ">无法判定</text>" in b2
+    # 单季双联：四组齐（收入/现金流左联，归母/扣非右联）
     svg = build_period_sqplot(h1)
-    assert "2025Q2" in svg and "2026Q2" in svg and "+40.8%" in svg and "+84.9%" in svg
+    for frag in ("营业收入（亿元）", "经营现金流（亿元）", "归母净利（亿元）", "扣非净利（亿元）",
+                 "收入与经营现金流", "归母与扣非", "+40.8%", "+84.9%", "+65.7%", "+50.1%",
+                 "2025Q2", "2026Q2"):
+        assert frag in svg, f"双联图缺 {frag}"
+    # Q1 退化单柱
     q1 = build_period_sqplot(period_fill("q1")["period_track"])
     assert "2025Q1" not in q1 and "累计即单季" in q1, "Q1 期应退化单柱"
+    # 空串门禁
     assert build_period_sqplot({"sq_rev": 1}) == "", "缺 sq_label 返回空串"
-    assert build_period_sqplot({"sq_label": "2026Q2", "sq_rev": None, "sq_np": None}) == ""
-    b = build_period_bullets(h1)
-    assert b.count("经营目标 200 亿") == 1, "经营目标刻度仅归母净利行（营收行 goal_rev=None）"
-    assert ">超前</text>" in b and ">滞后</text>" not in b and ">无法判定</text>" not in b
-    assert "营业收入经营目标：未披露" in b, "营收行分母缺失图注"
-    b3 = build_period_bullets(period_fill("q3")["period_track"])
-    assert ">无法判定</text>" in b3, "缺判词渲染兜底无法判定"
-    assert build_period_bullets({"rev": None, "np": None, "np_dedt": None}) == ""
-    t = build_period_table(period_fill("annual")["period_track"])
-    assert "<table" in t, "年报期表格照常可构建（整章消失由 render 层决定）"
-    assert build_period_table({}) == ""
-    print("OK 第 3 章图函数形态（Q1 单柱退化/空串门禁/扣非无分母/判词兜底）")
+    assert build_period_sqplot({"sq_label": "2026Q2", "sq_rev": None, "sq_np": None,
+                                "sq_dedt": None, "sq_ocf": None}) == ""
+    # 整联缺席：只剩收入/现金流 → 右联标题缺席（联标题以 </text> 收尾，与图注措辞区分）
+    svg2 = build_period_sqplot({"sq_label": "2026Q2", "sq_rev": 10.0, "sq_ocf": 5.0,
+                                "sq_prev_label": "2025Q2", "sq_prev_rev": 8.0,
+                                "sq_prev_ocf": 4.0})
+    assert ">收入与经营现金流</text>" in svg2 and ">归母与扣非</text>" not in svg2
+    print("OK 第 3 章图函数形态（小结条/一览卡/子弹图有参照才画/单季双联/Q1 退化/空串门禁）")
 
 
 # ---------------- v5.0 决策层三机制（临界档透明化 / 乐观税门禁 / 赔率∞地板分级） ----------------
@@ -1122,31 +1161,33 @@ def test_edge_upgrade_mounted_in_ch14():
 
 
 def test_period_charts_negative_domain():
-    """F1/F2 负值域修复：子弹图——扣非亏损（其余正）/全行负值/零值/负一致预期渲染不炸且
-    语义正确（负值条自零轴左伸、负分母不画节奏带且图注标不适用、域退化兜底不除零）；
-    单季双柱——双负（减亏/增亏季）/单负（最新季负）不炸、柱体在 viewBox 内。"""
+    """F1/F2 负值域修复（v5.0.1 适配）：子弹图——归母亏损（有参照）/全负/零值/负一致预期渲染
+    不炸且语义正确（负值条自零轴左伸、负分母不画节奏带且图注标不适用、域退化兜底不除零、
+    累计或分母 ≤0 不标完成度）；单季双联——双负（减亏/增亏季）/单负（最新季负）不炸、
+    柱体在 viewBox 内。"""
     import re as _re
     from charts_misc import build_period_bullets, build_period_sqplot
-    # ① 扣非亏损（np_dedt<0 其余正）：不炸；负值条标签存在；其余行刻度/节奏带照常
-    pt = {"rev": 100.0, "np": 5.0, "np_dedt": -2.0, "np_dedt_yoy": "增亏",
-          "goal_np": 200.0, "consensus_np": 165.0, "band_np": [39.9, 52.1],
-          "verdict_rev": "正常", "verdict_np": "正常", "verdict_dedt": "无法判定"}
+    # ① 归母亏损（np<0，有经营目标参照）：不炸；负值条标签存在；正值分母刻度与节奏带照常
+    pt = {"np": -2.0, "np_yoy": "转亏", "goal_np": 100.0, "consensus_np": 165.0,
+          "band_np": [39.9, 52.1], "verdict_np": "滞后"}
     b = build_period_bullets(pt)
     assert b and 'aria-label="报告期进度子弹图"' in b
-    assert "-2 亿" in b and "增亏" in b, "扣非负值条与文字同比应渲染"
-    assert "一致预期 165 亿" in b and "节奏带（按" in b, "正值行分母刻度与节奏带不受影响"
-    # ② 全行负值：域含 0、条自零轴左伸（不再夹成 2px 细条钉零位）、不除零
-    b2 = build_period_bullets({"rev": -50.0, "np": -20.0, "np_dedt": -25.0})
-    assert b2, "全负值应渲染"
+    assert "-2 亿" in b and "转亏" in b, "负值条与文字同比应渲染"
+    assert "一致预期 165 亿" in b and "节奏带（按" in b, "分母刻度与节奏带不受影响"
+    # ② 全行负值（有参照才画）：域含 0、条自零轴左伸（不夹成 2px 细条钉零位）、不除零
+    b2 = build_period_bullets({"np": -50.0, "goal_np": 100.0})
+    assert b2, "负值应渲染"
     assert "-50 亿" in b2 and 'width="2.0"' not in b2, "负值条不得被夹成 2px 细条"
-    # ③ 零值：全 0 → 域退化兜底 lo+1.0，不炸
-    b3 = build_period_bullets({"rev": 0.0, "np": 0.0, "np_dedt": 0.0})
+    # ③ 零值：域退化兜底 lo+1.0，不炸
+    b3 = build_period_bullets({"np": 0.0, "goal_np": 100.0})
     assert b3 and 'aria-label="报告期进度子弹图"' in b3
     # ④ 负一致预期：节奏带不画、图注标「分母为负…节奏带不适用」；负刻度在画布内
     b4 = build_period_bullets({"np": -5.0, "consensus_np": -50.0, "band_np": [40.0, 55.0]})
     assert "分母为负" in b4 and "节奏带不适用" in b4, "负分母应出图注"
     assert "节奏带（按" not in b4, "负分母不得换算节奏带"
     assert "一致预期 -50 亿" in b4, "负一致预期刻度应在负域内画出"
+    # 累计或分母 ≤0 → 完成度无意义不标
+    assert "已完成" not in b and "已完成" not in b4, "累计/分母 ≤0 不标完成度"
     # F2：双负（增亏/减亏季）与单负（最新季负）不炸、所有 rect 在 viewBox 内
     sq1 = build_period_sqplot({"sq_label": "2026Q2", "sq_rev": -10.0, "sq_np": -3.0,
                                "sq_prev_label": "2025Q2", "sq_prev_rev": -8.0,
@@ -1156,13 +1197,13 @@ def test_period_charts_negative_domain():
                                "sq_prev_label": "2025Q2", "sq_prev_rev": 90.0,
                                "sq_prev_np": 5.0, "sq_np_yoy": "转亏"})
     assert sq2 and "转亏" in sq2
-    for svg, W, H in ((sq1, 1000, 236), (sq2, 1000, 236)):
+    for svg, W, H in ((sq1, 1000, 268), (sq2, 1000, 268)):
         for m in _re.finditer(r'<rect x="([\d.-]+)" y="([\d.-]+)" width="([\d.-]+)" '
                               r'height="([\d.-]+)"', svg):
             x, y, w, h = (float(m.group(i)) for i in (1, 2, 3, 4))
             assert -1 <= x and x + w <= W + 1, f"rect 横向越界: {m.group(0)}"
             assert -1 <= y and y + h <= H + 1, f"rect 纵向越界: {m.group(0)}"
-    print("OK 负值域（子弹图扣非亏损/全负/零值/负一致预期 + 单季双柱双负/单负）")
+    print("OK 负值域（子弹图归母亏损/全负/零值/负一致预期/负值不标完成度 + 单季双联双负/单负）")
 
 
 def test_net_cash_floor_edge_exemption():

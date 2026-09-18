@@ -48,7 +48,7 @@ from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
     _inject_gap_chart, build_driver_cards, build_cycle_stages,
-    build_period_bullets, build_period_sqplot, build_period_table,
+    build_period_summary, build_period_kpi, build_period_bullets, build_period_sqplot,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
 from validate import validate_content
@@ -295,19 +295,17 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
     timing = sc["timing"]
     red_flag = sc["red_flag"]
     yellow_total = sc["yellow_total"]
-    # v5.0：3 章「最新报告期透视」存在条件——有 period_track 且非年报期（年报无单季透视意义）；
-    # 目录条目与模板 IF:PERIOD_BULLETS_HTML 条件块共用此判断口径
-    has_period = bool(fill.get("period_track")) and not (fill.get("period_track") or {}).get("is_annual")
-    # v5.0：3 章占位族（period_track 数据族，图与表全部脚本生成）。
-    # PERIOD_BULLETS_HTML 非空是 TOC 与章节块同生共灭的硬约束——子弹图空串时以绝对额表兜底，
-    # 绝不允许 TOC 挂「透视」而死链；非 has_period → 7 键全空，整章随 IF 块消失
+    # v5.0/v5.0.1：3 章「最新报告期透视」存在条件——有 period_track、非年报期（年报无单季透视
+    # 意义）、累计一览卡可渲染（四项金额全 None 则整章无内容）；目录条目与模板
+    # IF:PERIOD_KPI_HTML 条件块共用此判断口径
     pt = fill.get("period_track") or {}
-    period_table = build_period_table(pt) if has_period else ""
+    period_kpi = build_period_kpi(pt) if pt and not pt.get("is_annual") else ""
+    has_period = bool(pt) and not pt.get("is_annual") and bool(period_kpi)
+    # v5.0.1：3 章占位族（period_track 数据族，图表全部脚本生成；小结条含手填 summary_html）。
+    # PERIOD_KPI_HTML 非空是 TOC 与章节块同生共灭的硬约束（v5.0.1 锚件自子弹图迁至一览卡——
+    # 无全年参照时子弹图合法缺席，不再以表兜底）；非 has_period → 各键全空，整章随 IF 块消失
+    period_summary = build_period_summary(pt) if has_period else ""
     period_bullets = build_period_bullets(pt) if has_period else ""
-    if not period_bullets:
-        # 子弹图空串 → 绝对额表兜底到子弹图槽位（F4：二选一——表格槽位清空，
-        # 防同一 <table> 在章内渲染两次；TOC 与章节块同生共灭硬约束不变）
-        period_bullets, period_table = period_table, ""
     period_sqplot = build_period_sqplot(pt) if has_period else ""
     period_note = str(pt.get("note_html") or "").strip() if has_period else ""
     # v5.0 机制一：档位临界升档路径行（每条临界轨一条 pending trig）。
@@ -341,9 +339,10 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         # v5.0：3 章「最新报告期透视」占位族（period_track 数据族，脚本生成；口径见上方 pt 段注释）
         "PERIOD_SUB": (f'{_esc(str(pt.get("period") or "最新报告期"))} · 累计口径 · 数据来源 em_fetch period_track'
                        if has_period else ""),
+        "PERIOD_SUMMARY_HTML": period_summary,
+        "PERIOD_KPI_HTML": period_kpi,
         "PERIOD_BULLETS_HTML": period_bullets,
         "PERIOD_SQPLOT_HTML": period_sqplot,
-        "PERIOD_TABLE_HTML": period_table,
         # 行业专项进度槽 / 预告快报兑现行：模型直写 HTML 直通（可空）
         "PERIOD_INDUSTRY_HTML": str(pt.get("industry_html") or "") if has_period else "",
         "PERIOD_FORECAST_HTML": str(pt.get("forecast_html") or "") if has_period else "",

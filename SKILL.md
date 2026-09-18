@@ -121,7 +121,7 @@ P0 正文不再手写「为什么 X 是第一变量」info-card（判词横条�
 端点/字段/港股矩阵/429 规则在 `references/data-sources.md`（需要手工 curl 时再读）。
 
 取数优先级：**em_fetch.py（首选，一条命令）→ 妙想 MCP 直调（缺席时经 mx-data/mx-search skill 替补）→ 手工 curl → 定性搜索**。
-**v5.0 新增输出**：em_fetch 摘要新增「报告期进度」照抄行（最新报告期四累计值+同比/单季拆分/近三年同期占比带/完成度分母说明），落盘 JSON 新增 `period_track`/`consensus_np` 键——fill 的 `period_track` 照抄键与 `valuation_inputs.consensus_np` 一律照抄该行/落盘回填，禁手估（v4.11.0 holders/price_history 同款照抄纪律；契约见 fill-schema.md）。
+**v5.0 新增输出**：em_fetch 摘要新增「报告期进度」照抄行（最新报告期四累计值+同比/单季拆分/近三年同期占比带/完成度分母说明），落盘 JSON 新增 `period_track`/`consensus_np` 键——fill 的 `period_track` 照抄键与 `valuation_inputs.consensus_np` 一律照抄该行/落盘回填，禁手估（v4.11.0 holders/price_history 同款照抄纪律；契约见 fill-schema.md）。**v5.0.1 扩充**：单季拆分照抄键新增扣非与经营现金流（`sq_dedt`/`sq_ocf` 及 prev/yoy 四键，累计差分口径）。
 **委派边界（一条自洽规则，模板与工具限制逐字见 data-collection.md Step 1.3）**：
 - **强制委派（MANDATORY）**：同业 peer **≥3 只**的 `--peers` 批量取数、公告 PDF 下载提表
   **必须委派子代理**（回传须含各 peer 的 E1 原文行 + 清洗成表，主会话只核对来源）。
@@ -153,7 +153,7 @@ peers 批量取数互不依赖——委派发出后主会话立即并行推进�
 - **1D 先过红旗清单再评分**（利润是不是真钱，比利润多不多更重要）；财报可信度评级引用
   `references/forensic-accounting.md` 口径；金融股红旗清单替换见 `industry-financials.md`
 - **分型决定权重与估值方法**（见 Phase 0.5），报告里必须声明分型与层占比
-- **第 3 章「最新报告期透视」（v5.0 条件章，`period_track` 字段承载，契约见 fill-schema.md）**：图为主、文字置底；判词四选一（超前/正常/滞后/无法判定——双尺=近三年同期占比带+公司经营计划，双尺皆缺=无法判定）；最新期=年报时整章消失（字段勿填）；回测模式一致（只写最新一期）；本章纯描述、零评分联动（严禁「进度滞后→扣分」机械联动）
+- **第 3 章「最新报告期透视」（v5.0 条件章、`period_track` 字段承载，v5.0.1 结构重构，契约见 fill-schema.md）**：图为主、文字置底；章首进度小结条（判词徽章脚本合成+`summary_html` 手填一句）；子弹图仅画有金额化全年参照的指标（无分母不画，累计值由一览卡承接）；判词四选一（超前/正常/滞后/无法判定——双尺=近三年同期占比带+公司经营计划，双尺皆缺=无法判定）；预告兑现行只写本期；最新期=年报时整章消失（字段勿填）；回测模式一致（只写最新一期）；本章纯描述、零评分联动（严禁「进度滞后→扣分」机械联动）
 
 ### Phase 3: 构建估值模型
 
@@ -256,7 +256,8 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
    E5 一致预期，`growth_plot` 未盈利/管线分型豁免）；敏感性龙卷风 `sensitivity`、回测哑铃 `prev`、
    业务构成 `segments`、产业链 `industry_chain`、股价季K/PE 历史图 `price_history`、股东户数趋势 `holders`、
    走廊卖方目标价带 `consensus`、触发条件状态条 `triggers`（14 章仪表盘前）按可选字段存在性生成，缺失静默跳过；
-   第 3 章报告期透视图组 `period_track`（进度子弹图/单季双柱/绝对额同比表）最新期非年报必填、
+   第 3 章报告期透视图组 `period_track`（进度小结条/累计一览卡/进度子弹图[仅有全年参照的指标]/
+   单季双联图，v5.0.1 结构——绝对额表已删）最新期非年报必填、
    年报期（is_annual）整章消失勿填；
    PE 历史带 `pe_history` 与股价季K图挂在第 11 章——`cycle_html` 缺失时整章连同两图一起消失，渲染器告警；占位符替换、
    内容地板硬校验（不达标拒渲染）、自动命名输出。
@@ -299,7 +300,7 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 - [ ] `peers_html` 含 `<table>`；**每张数据表下方都有 `.source` 标注**（表格数 ≤ source 数）
 - [ ] `valuation_inputs` 四键齐全（pe_ttm / pe_band / div_yield / risk_free），均有取数来源或标估算
 - [ ] `valuation` 三情景完整（pess/base/opt，每情景 profit + pe 区间 + horizon，horizon 含"年/月"单位；行业附录市值口径用 mcap 区间替代 profit+pe，三情景须同口径）
-- [ ] `period_track`（v5.0）：最新报告期非年报时已填、最新期=年报时勿填；照抄键与 em_fetch「报告期进度」照抄行/落盘 JSON 一致（渲染器交叉校验会拦）；判词三键（verdict_rev/verdict_np/verdict_dedt）取值合法（超前/正常/滞后/无法判定）；完成度双分母缺一标「未披露」
+- [ ] `period_track`（v5.0）：最新报告期非年报时已填、最新期=年报时勿填；照抄键与 em_fetch「报告期进度」照抄行/落盘 JSON 一致（渲染器交叉校验会拦；v5.0.1 起含单季扣非 sq_dedt 与经营现金流 sq_ocf 拆分键）；判词三键（verdict_rev/verdict_np/verdict_dedt）取值合法（超前/正常/滞后/无法判定）；完成度双分母缺一标「未披露」；summary_html 只写进度事实 ≤2 句；forecast_html 仅写本期预告兑现
 - [ ] 悲观情景下限 ≥现价（赔率 ∞）时 `floor` 子键三键齐全（type/value/evidence）；无地板证据则下修悲观情景或补证据
 - [ ] `valuation_inputs.consensus_np` 已照抄落盘 `consensus_np.np_avg` 回填（有卖方覆盖时；无覆盖不填，过程卡自动标注「乐观税未检」）
 - [ ] `thesis_html` 三情景价与 `valuation` 一致（与脚本计算中枢价偏差 >2% 且 >0.1 即拒渲染）；纯文本 <60 字或剥掉三情景价后 <20 字 → 告警（信息量地板）

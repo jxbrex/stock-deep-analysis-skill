@@ -1168,8 +1168,10 @@ def _check_dcf(fill: dict, warns: list) -> None:
 
 # ---------------- v5.0 第 3 章「最新报告期透视」period_track 校验 ----------------
 _PERIOD_LABEL_KEYS = ("period", "sq_label", "sq_prev_label")
-_PERIOD_NUM_KEYS = ("rev", "np", "np_dedt", "ocf", "sq_rev", "sq_np", "sq_prev_rev", "sq_prev_np")
-_PERIOD_YOY_KEYS = ("rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy", "sq_rev_yoy", "sq_np_yoy")
+_PERIOD_NUM_KEYS = ("rev", "np", "np_dedt", "ocf", "sq_rev", "sq_np", "sq_prev_rev", "sq_prev_np",
+                    "sq_dedt", "sq_prev_dedt", "sq_ocf", "sq_prev_ocf")
+_PERIOD_YOY_KEYS = ("rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy", "sq_rev_yoy", "sq_np_yoy",
+                    "sq_dedt_yoy", "sq_ocf_yoy")
 _PERIOD_BAND_KEYS = ("band_np", "band_rev")
 _PERIOD_VERDICT_ENUM = ("超前", "正常", "滞后", "无法判定")
 
@@ -1337,7 +1339,7 @@ def _check_period_track(fill: dict, warns: list) -> None:
                 raise ValueError(f"period_track.{gk} 必须为正数（亿元；年报「经营计划」段披露口径，"
                                  f"未披露请填 null），实际: {raw!r}")
         if is_annual:
-            extra = [k for k in ("industry_html", "forecast_html", "note_html")
+            extra = [k for k in ("industry_html", "forecast_html", "note_html", "summary_html")
                      if str(pt.get(k) or "").strip()]
             if extra:
                 warns.append(f"period_track.is_annual=true（年报期第 3 章整章消失）：{'/'.join(extra)} "
@@ -1346,3 +1348,7 @@ def _check_period_track(fill: dict, warns: list) -> None:
         if note_len > 120:
             warns.append(f"period_track.note_html 纯文本 {note_len} 字 > 120：口径提示定位 ≤3 句，"
                          f"展开论证归各章")
+        summary_len = len(_plain_text(str(pt.get("summary_html") or "")))
+        if summary_len > 100:
+            warns.append(f"period_track.summary_html 纯文本 {summary_len} 字 > 100：进度小结定位 ≤2 句，"
+                         f"展开论证归 4.4/5.1/9 章")

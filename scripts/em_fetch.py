@@ -346,10 +346,15 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
                    f"毛利率{pct(track['gm'])}（毛利率供 4.4 归因照抄，不进第 3 章）\n")
         if track.get("sq_label"):
             out.append(f"单季拆分: {track['sq_label']} 营收{_amt(track['sq_rev'])}亿 / "
-                       f"净利{_amt(track['sq_np'])}亿 vs {track['sq_prev_label']} "
-                       f"营收{_amt(track['sq_prev_rev'])}亿 / 净利{_amt(track['sq_prev_np'])}亿"
+                       f"净利{_amt(track['sq_np'])}亿 / 扣非{_amt(track.get('sq_dedt'))}亿 / "
+                       f"经营现金流{_amt(track.get('sq_ocf'))}亿 vs {track['sq_prev_label']} "
+                       f"营收{_amt(track['sq_prev_rev'])}亿 / 净利{_amt(track['sq_prev_np'])}亿 / "
+                       f"扣非{_amt(track.get('sq_prev_dedt'))}亿 / "
+                       f"经营现金流{_amt(track.get('sq_prev_ocf'))}亿"
                        f"（单季同比 营收{yoy_text(track['sq_rev_yoy'])} / "
-                       f"净利{yoy_text(track['sq_np_yoy'])}）\n")
+                       f"净利{yoy_text(track['sq_np_yoy'])} / "
+                       f"扣非{yoy_text(track.get('sq_dedt_yoy'))} / "
+                       f"经营现金流{yoy_text(track.get('sq_ocf_yoy'))}）\n")
         if track.get("band_np") or track.get("band_rev"):
             yrs = "/".join(str(y) for y in track["band_years"])
             bnp = f"{track['band_np'][0]}%~{track['band_np'][1]}%" if track.get("band_np") else "—"

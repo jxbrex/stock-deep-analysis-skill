@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""charts_misc.py — 其余图族（v4.9 从 charts.py 拆出）：5.1 利润增长图（build_growth_plot，含 5 章锚点注入 _inject_l3_charts）/ 9 市场预期差逐机构分布图与 B 档哑铃（build_gap_plot + _inject_gap_chart）/ 12 股东户数趋势（build_holders_plot）/ 13 回测哑铃（build_review_dumbbell）/ 3 最新报告期透视三件套（build_period_bullets/build_period_sqplot/build_period_table，v5.0）。依赖 charts_base 与 scoring。"""
+"""charts_misc.py — 其余图族（v4.9 从 charts.py 拆出）：5.1 利润增长图（build_growth_plot，含 5 章锚点注入 _inject_l3_charts）/ 9 市场预期差逐机构分布图与 B 档哑铃（build_gap_plot + _inject_gap_chart）/ 12 股东户数趋势（build_holders_plot）/ 13 回测哑铃（build_review_dumbbell）/ 3 最新报告期透视四件套（build_period_summary/build_period_kpi/build_period_bullets/build_period_sqplot，v5.0 起、v5.0.1 重构——绝对额表删除，信息并入一览卡与子弹图刻度）。依赖 charts_base 与 scoring。"""
 
 
 import math
@@ -707,7 +707,8 @@ def build_cycle_stages(fill: dict) -> str:
     return '<div class="stage-strip">' + "".join(cards) + '</div>'
 
 
-# ════════════════════ 3 最新报告期透视（v5.0）：进度子弹图 / 单季双柱图 / 绝对额同比表 ════════════════════
+
+# ════════════════════ 3 最新报告期透视（v5.0.1）：进度小结条 / 累计一览卡 / 进度子弹图 / 单季双联图 ════════════════════
 
 _PERIOD_VERDICTS = ("超前", "正常", "滞后", "无法判定")
 # 判词徽章色（SVG 内联 fill，与模板 badge 色系同源）：超前=绿 / 滞后=红（复用 _C_BADGE_DEEP），
@@ -716,17 +717,25 @@ _PERIOD_VERDICT_FILL = {"超前": _C_BADGE_DEEP["badge-green"], "正常": _C_LAB
                         "滞后": _C_BADGE_DEEP["badge-red"], "无法判定": _C_SAND_LT}
 _PERIOD_VERDICT_BADGE = {"超前": "badge-green", "正常": "badge-gray",
                          "滞后": "badge-red", "无法判定": "badge-gray"}
-# 子弹图行配置（标签, 累计键, 同比键, 判词键, 经营目标键, 一致预期键, 节奏带键）：
-# 扣非天然无分母口径（经营目标/一致预期均为营收或归母净利口径），只画累计条+同比+判词
+# 子弹图行配置（标签, 累计键, 同比键, 判词键, 经营目标键, 一致预期键, 节奏带键）。
+# v5.0.1 起仅「有金额化全年参照」（经营目标/一致预期任一非 None）的行才画——无分母时轨道右端
+# 退化为累计值×1.08，空段是零信息绘图留白（旧版被误读为「全年任务未完成」）；扣非天然无
+# 分母口径（经营目标/一致预期均为营收或归母净利口径），不再入图。无参照行的累计值由一览卡承接
 _PERIOD_ROWS = (("营业收入", "rev", "rev_yoy", "verdict_rev", "goal_rev", None, "band_rev"),
-                ("归母净利", "np", "np_yoy", "verdict_np", "goal_np", "consensus_np", "band_np"),
-                ("扣非净利", "np_dedt", "np_dedt_yoy", "verdict_dedt", None, None, None))
-# 绝对额同比表行配置（标签, 累计键, 同比键, 经营目标键, 一致预期键, 判词键；多经营现金流一行：
-# 无分母口径、无判词）
-_PERIOD_TABLE_ROWS = (("营业收入", "rev", "rev_yoy", "goal_rev", None, "verdict_rev"),
-                      ("归母净利", "np", "np_yoy", "goal_np", "consensus_np", "verdict_np"),
-                      ("扣非净利", "np_dedt", "np_dedt_yoy", None, None, "verdict_dedt"),
-                      ("经营现金流", "ocf", "ocf_yoy", None, None, None))
+                ("归母净利", "np", "np_yoy", "verdict_np", "goal_np", "consensus_np", "band_np"))
+# 累计一览卡行配置（标签, 累计键, 同比键）：四行全出，无分母口径要求
+_PERIOD_KPI_ROWS = (("营业收入", "rev", "rev_yoy"), ("归母净利", "np", "np_yoy"),
+                    ("扣非净利", "np_dedt", "np_dedt_yoy"), ("经营现金流", "ocf", "ocf_yoy"))
+# 小结条徽章行配置（标签, 累计键, 判词键；经营现金流不设判词——波动受回款节奏支配，判词易误导）
+_PERIOD_SUMMARY_ROWS = (("营业收入", "rev", "verdict_rev"), ("归母净利", "np", "verdict_np"),
+                        ("扣非净利", "np_dedt", "verdict_dedt"))
+# 单季双联图组配置（联标题, ((标签, 上年同季键, 最新单季键, 单季同比键), ...)）：
+# 左联=收入与经营现金流（规模与收现含金量），右联=归母与扣非（利润口径，两柱差额≈非经常项）
+_PERIOD_SQ_PANELS = (
+    ("收入与经营现金流", (("营业收入", "sq_prev_rev", "sq_rev", "sq_rev_yoy"),
+                        ("经营现金流", "sq_prev_ocf", "sq_ocf", "sq_ocf_yoy"))),
+    ("归母与扣非", (("归母净利", "sq_prev_np", "sq_np", "sq_np_yoy"),
+                    ("扣非净利", "sq_prev_dedt", "sq_dedt", "sq_dedt_yoy"))))
 
 
 def _pamt(v) -> str:
@@ -752,26 +761,98 @@ def _period_verdict(pt: dict, key: str) -> str:
     return v if v in _PERIOD_VERDICTS else "无法判定"
 
 
+def build_period_summary(pt: dict) -> str:
+    """3 章·进度小结条（period_track，v5.0.1）：章首总览——判词徽章行（脚本按 verdict_* 合成，
+    缺判词按「无法判定」渲染，与子弹图徽章同口径）+ 无全年参照指标点名 + 模型手填一句
+    （summary_html ≤2 句，只许陈述进度事实与完成度，论证归 4.4/5.1/9 章；可空）。
+    三个判词指标金额全 None 且 summary_html 空 → 返回空串。"""
+    if not isinstance(pt, dict):
+        return ""
+    badges = []
+    no_ref = []
+    for label, amt_k, verdict_k in _PERIOD_SUMMARY_ROWS:
+        if _num(pt.get(amt_k)) is None:
+            continue
+        word = _period_verdict(pt, verdict_k)
+        badges.append(f'{label} <span class="badge {_PERIOD_VERDICT_BADGE[word]}">{word}</span>')
+        # 金额化全年参照口径：营收=goal_rev；归母=goal_np/consensus_np；扣非天然无该口径
+        has_ref = ((pt.get("goal_rev") is not None) if amt_k == "rev"
+                   else (pt.get("goal_np") is not None or pt.get("consensus_np") is not None)
+                   if amt_k == "np" else False)
+        if not has_ref:
+            no_ref.append(label)
+    summary = str(pt.get("summary_html") or "").strip()
+    if not badges and not summary:
+        return ""
+    notes = []
+    if no_ref:
+        notes.append(f'{"、".join(no_ref)}无金额化全年参照，不画进度条')
+    if _num(pt.get("ocf")) is not None:
+        notes.append("经营现金流不设判词")
+    parts = ['<div class="period-summary"><div class="ps-line"><b>进度小结：</b>',
+             " · ".join(badges)]
+    if notes:
+        parts.append(f'<span class="ps-note">（{"；".join(notes)}）</span>')
+    parts.append('</div>')
+    if summary:
+        parts.append(f'<div class="ps-text">{summary}</div>')
+    parts.append('</div>')
+    return "".join(parts)
+
+
+def build_period_kpi(pt: dict) -> str:
+    """3 章·本期累计一览卡（period_track，v5.0.1）：收入/归母/扣非/经营现金流四卡——
+    本期累计（亿元，两位小数）+ 同比（数值红涨绿跌，扭亏/转亏等文字原样；缺值标—）。
+    本章锚件：四项金额全 None → 返回空串（render 层以此判定整章存亡——TOC 与章节块
+    同生共灭硬约束的承载者；v5.0.1 起子弹图/单季图任一缺席不再影响章节存在）。"""
+    if not isinstance(pt, dict):
+        return ""
+    cards = []
+    for label, amt_k, yoy_k in _PERIOD_KPI_ROWS:
+        v = _num(pt.get(amt_k))
+        yoy = pt.get(yoy_k)
+        if isinstance(yoy, (int, float)):
+            yoy_html = f'<span class="{"up" if yoy >= 0 else "down"}">{yoy:+.1f}%</span>'
+        else:
+            yoy_s = _pyoy_txt(yoy)
+            yoy_html = _esc(yoy_s) if yoy_s else "—"
+        cards.append(f'<div class="metric-card"><div class="label">{label}</div>'
+                     f'<div class="value">{f"{v:,.2f}" if v is not None else "—"}'
+                     + ('<span class="unit"> 亿</span>' if v is not None else "")
+                     + f'</div><div class="sub">同比 {yoy_html}</div></div>')
+    if all(_num(pt.get(k)) is None for _, k, _ in _PERIOD_KPI_ROWS):
+        return ""
+    return ('<span class="section-tag">本期累计一览（亿元）</span>'
+            '<div class="metric-row">' + "".join(cards) + '</div>')
+
+
 def build_period_bullets(pt: dict) -> str:
-    """3 最新报告期透视·进度子弹图（period_track 字段，v5.0）：收入/归母净利/扣非三张横向子弹图，
-    竖排共用一个 figure 与一行图例——钢蓝条=本期累计（条端标累计值与同比，同比为文字时原样），
-    琥珀粗刻=经营目标、深墨粗刻=卖方一致预期（分母缺则不画，图注标「未披露/未获取」），
-    浅沙底带=近三年同期节奏带（同期累计占全年比例带 × 分母换算金额区间；分母=一致预期优先、
-    缺则经营目标，双缺不画带），右侧判词徽章（绿=超前/灰=正常/红=滞后/浅灰=无法判定，
-    缺判词按无法判定渲染）。各行金额域独立：[min(0, 累计, 分母, 带下限), max(0, 累计, 目标, 预期,
-    带上限)×1.08]，域退化兜底 lo+1.0（负值/零值不崩）——负值条自零轴向左伸、标签放条左端外侧；
-    分母 ≤0 不换算节奏带（图注标不适用），带换算后负占比截零。
-    四累计值全 None → 返回空串（render 层以绝对额表兜底——TOC 与章节块同生共灭是硬约束）。"""
+    """3 最新报告期透视·进度子弹图（period_track 字段，v5.0.1）：仅画「有金额化全年参照」的行
+    （经营目标/一致预期任一非 None——节奏带换算本就依赖该分母），横向子弹图竖排共用一个
+    figure 与一行图例——钢蓝条=本期累计（条端标累计值与同比，同比为文字时原样），琥珀粗刻=
+    经营目标、深墨粗刻=卖方一致预期（分母缺则不画，图注标「未披露/未获取」；刻度标签附完成度
+    =累计÷分母，脚本算，累计或分母 ≤0 时完成度无意义不标），浅沙底带=近三年同期节奏带
+    （同期累计占全年比例带 × 分母换算金额区间；分母=一致预期优先、缺则经营目标，双缺不画带），
+    右侧判词徽章（绿=超前/灰=正常/红=滞后/浅灰=无法判定，缺判词按无法判定渲染）。
+    轨道右端=全年参照锚（累计/目标/预期/带上限取大）外扩 8% 留白，空段=距全年参照的差额；
+    各行金额域独立：[min(0, 累计, 分母, 带下限), max(0, 累计, 目标, 预期, 带上限)×1.08]，
+    域退化兜底 lo+1.0（负值/零值不崩）——负值条自零轴向左伸、标签放条左端外侧；
+    分母 ≤0 不换算节奏带（图注标不适用），带换算后负占比截零。无参照行在图注点名
+    （累计值见上方一览卡）。有参照行数=0 → 返回空串（章存亡由一览卡判定，与本图解耦）。"""
     if not isinstance(pt, dict):
         return ""
     rows = []
     miss_notes = []
+    skipped = []
     for label, amt_k, yoy_k, verdict_k, goal_k, cons_k, band_k in _PERIOD_ROWS:
         v = _num(pt.get(amt_k))
         if v is None:
             continue
         goal = _num(pt.get(goal_k)) if goal_k else None
         cons = _num(pt.get(cons_k)) if cons_k else None
+        if goal is None and cons is None:
+            skipped.append(label)   # 无金额化全年参照：不画（空轨道零信息，见模块配置注释）
+            continue
         band = None
         if band_k:
             bl = pt.get(band_k) or []
@@ -798,7 +879,7 @@ def build_period_bullets(pt: dict) -> str:
 
     W, L, R, BH, TOP, ROW_H = 1000, 96, 168, 26, 64, 88
     H = TOP + ROW_H * (len(rows) - 1) + 50
-    parts = ['<span class="section-tag">报告期累计进度：经营目标 / 一致预期 / 历史节奏带</span>',
+    parts = ['<span class="section-tag">报告期累计进度：仅列有全年参照的指标</span>',
              _svg_open(W, H, "报告期进度子弹图")]
     # 共用图例行（缺席形态不出图例项——与「无线不出图例」同纪律）
     lx = L
@@ -872,13 +953,16 @@ def build_period_bullets(pt: dict) -> str:
         else:
             parts.append(f'<text x="{xv - 8:.1f}" y="{cy + 4:.1f}" text-anchor="end" font-size="11.5" '
                          f'font-weight="700" fill="{_C_PAPER}">{bl_txt}</text>')
-        # 双分母刻度（标签防叠：两条过近时经营目标标签抬一层）
+        # 双分母刻度（标签附完成度=累计÷分母；累计/分母 ≤0 时完成度无意义不标；
+        # 标签防叠：两条过近时经营目标标签抬一层）
         drawn = []
         for tv, tc, tn in ((r["goal"], _C_ORANGE, "经营目标"), (r["cons"], _C_BLACK, "一致预期")):
             if tv is None:
                 continue
             tx = X(tv)
             tl = f"{tn} {_pamt(tv)} 亿"
+            if tv > 0 and r["v"] > 0:
+                tl += f" · 已完成 {r['v'] / tv * 100:.1f}%"
             ta, tx2 = _anchor_fit(tx, _text_w(tl, 10.5), L + 2, W - R - 2, 4)
             drawn.append([tx, tc, tl, ta, tx2, cy - 27])
         if len(drawn) == 2:
@@ -904,9 +988,12 @@ def build_period_bullets(pt: dict) -> str:
     parts.append(_svg_close())
     src = ('报告期进度子弹图（脚本按 period_track 字段生成，数据照抄 em_fetch period_track 照抄行）：'
            '钢蓝条=本期累计（条端标累计值与同比，同比为扭亏/转亏等文字时原样），琥珀刻=经营目标'
-           '（年报经营计划披露），深墨刻=卖方一致预期（E5 当年净利均值），浅沙带=近三年同期累计占全年'
-           '比例带×分母换算的节奏带；各行金额域独立定标（看行内比例，不跨行比长度）；'
-           '扣非无经营目标/一致预期口径，只画累计条与同比；判词徽章 绿=超前/灰=正常/红=滞后/浅灰=无法判定')
+           '（年报经营计划披露），深墨刻=卖方一致预期（E5 当年净利均值），刻度附完成度=累计÷分母'
+           '（脚本计算）；浅沙带=近三年同期累计占全年比例带×分母换算的节奏带；轨道右端=全年参照锚'
+           '（累计/经营目标/一致预期/带上限取大）外扩 8% 留白，空段=距全年参照的差额；'
+           '各行金额域独立定标（看行内比例，不跨行比长度）；判词徽章 绿=超前/灰=正常/红=滞后/浅灰=无法判定')
+    if skipped:
+        src += f'；{"、".join(skipped)}无金额化全年参照，不画进度条（累计值见上方一览卡）'
     if miss_notes:
         src += '；' + '；'.join(miss_notes)
     parts.append(f'<span class="source">{src}</span>')
@@ -914,11 +1001,14 @@ def build_period_bullets(pt: dict) -> str:
 
 
 def build_period_sqplot(pt: dict) -> str:
-    """3 章·单季并肩双柱图（period_track 的 sq_* 字段，v5.0）：两组（营业收入/归母净利）各两根
-    （沙柱=上年同季、钢蓝柱=最新单季），柱顶标数值，最新柱上方标同比%（文字同比原样）；
-    组下标季度名（sq_prev_label / sq_label）与指标名。Q1 期（sq_label 以 Q1 结尾，或 sq 值与
-    累计口径相等）退化为单柱；某组上年同季缺数同样单柱。无 sq_label 或 sq_rev/sq_np 全 None
-    → 返回空串。"""
+    """3 章·单季并肩双柱双联图（period_track 的 sq_* 字段，v5.0.1）：一张 figure 左右两联——
+    左联 营业收入/经营现金流（规模与收现含金量）、右联 归母净利/扣非净利（利润口径，
+    两柱差额≈非经常损益影响）；两联独立定标（旧版四指标共轴，收入 90 亿级把利润 10 亿级
+    压成矮桩），联内共享零轴与网格，柱高只在联内可比。每组两根（沙柱=上年同季、钢蓝柱=
+    最新单季），柱顶标数值，最新柱上方标同比%（文字同比原样）；组下标季度名与指标名，
+    联标题置底居中。Q1 期（sq_label 以 Q1 结尾，或 sq 值与累计口径相等）各组退化单柱；
+    某组上年同季缺数同样单柱；某组最新值缺 → 整组缺席，整联缺 → 整联缺席（另一联占满幅宽）。
+    无 sq_label 或四组最新值全 None → 返回空串。"""
     if not isinstance(pt, dict):
         return ""
     sq_label = str(pt.get("sq_label") or "").strip()
@@ -931,105 +1021,74 @@ def build_period_sqplot(pt: dict) -> str:
             same_as_cum.append(a == b)
     q1 = sq_label.endswith("Q1") or (bool(same_as_cum) and all(same_as_cum))
     prev_label = str(pt.get("sq_prev_label") or "").strip()
-    groups = []
-    for name, pk, ck, yk in (("营业收入", "sq_prev_rev", "sq_rev", "sq_rev_yoy"),
-                             ("归母净利", "sq_prev_np", "sq_np", "sq_np_yoy")):
-        cur = _num(pt.get(ck))
-        if cur is None:
-            continue
-        prev = _num(pt.get(pk))
-        groups.append({"name": name, "prev": (prev if not q1 else None), "cur": cur, "yoy": pt.get(yk)})
-    if not groups:
+    panels = []
+    for ptitle, groups_cfg in _PERIOD_SQ_PANELS:
+        groups = []
+        for name, pk, ck, yk in groups_cfg:
+            cur = _num(pt.get(ck))
+            if cur is None:
+                continue
+            prev = _num(pt.get(pk))
+            groups.append({"name": name, "prev": (prev if not q1 else None), "cur": cur,
+                           "yoy": pt.get(yk)})
+        if groups:
+            panels.append((ptitle, groups))
+    if not panels:
         return ""
-    W, H, L, R, T, B = 1000, 236, 56, 20, 44, 54
-    vals = [g["cur"] for g in groups] + [g["prev"] for g in groups if g["prev"] is not None]
-    lo_d = min(0.0, min(vals))
-    lo_d = lo_d * 1.15 if lo_d < 0 else 0.0   # 负值（亏损季）向下扩域
-    hi_d = max(0.0, max(vals)) * 1.18 or 1.0   # 域顶含 0（全负域崩坏修复：负 max×1.18 是负 truthy，
-                                               # 「or 1.0」不兜底 → 域不含 0）；不断轴，顶部留标注位
-    Y = _lin_map(lo_d, hi_d, H - B, T)
-    y0 = Y(0)
-    n = len(groups)
-    slot = (W - L - R) / n
-    bw = min(slot * 0.2, 84)
-    paired = any(g["prev"] is not None for g in groups)
+    W, H, T, B = 1000, 268, 44, 86
+    paired = any(g["prev"] is not None for _, gs in panels for g in gs)
     tag = (f"单季对比：{_esc(prev_label)} → {_esc(sq_label)}" if paired
            else f"单季：{_esc(sq_label)}" + ("（累计即单季）" if q1 else ""))
     parts = [f'<span class="section-tag">{tag}</span>', _svg_open(W, H, "单季同比对比图")]
-    lx = L
+    lx = 56
     if paired:
         lx = _legend_row(parts, [("上年同季", _C_SAND)], lx)
     _legend_row(parts, [("最新单季", _C_BLUE)], lx)
-    _hgrid_ticks(parts, Y, _ticks(lo_d, hi_d, 5), L, W - R, L - 8)
-    parts.append(f'<line x1="{L}" y1="{y0:.1f}" x2="{W - R}" y2="{y0:.1f}" stroke="{_C_AXIS}" stroke-width="1.2"/>')
-    for i, g in enumerate(groups):
-        gx = L + slot * (i + 0.5)
-        seq = ([(g["prev"], _C_SAND, gx - bw - 8, prev_label)] if g["prev"] is not None else []) \
-            + [(g["cur"], _C_BLUE, gx + 8 if g["prev"] is not None else gx - bw / 2, sq_label)]
-        for bi, (v, col, x, qlbl) in enumerate(seq):
-            cur_bar = bi == len(seq) - 1
-            top, h = min(Y(v), y0), max(abs(y0 - Y(v)), 1)
-            parts.append(f'<rect x="{x:.1f}" y="{top:.1f}" width="{bw:.1f}" height="{h:.1f}" rx="3" fill="{col}"/>')
-            vy = top - 6 if v >= 0 else top + h + 14
-            parts.append(f'<text x="{x + bw / 2:.1f}" y="{vy:.1f}" text-anchor="middle" font-size="11" '
-                         f'font-weight="{700 if cur_bar else 400}" '
-                         f'fill="{_C_BLUE if cur_bar else _C_STONE}">{_pamt(v)}</text>')
-            parts.append(f'<text x="{x + bw / 2:.1f}" y="{H - B + 16}" text-anchor="middle" font-size="10.5" '
-                         f'fill="{_C_INK if cur_bar else _C_LABEL}">{_esc(qlbl)}</text>')
-        yoy_s = _pyoy_txt(g["yoy"])
-        if yoy_s:
-            cx = seq[-1][2] + bw / 2
-            # 负值柱（最新季亏损）：同比标签上移到零轴上方（柱顶外侧）避让底部标签堆
-            # （值标签/季度标签/指标名已挤在底部 27px 内）
-            yy = (min(Y(g["cur"]), y0) - 20) if g["cur"] >= 0 else (y0 - 8)
-            parts.append(f'<text x="{cx:.1f}" y="{max(yy, 12):.1f}" text-anchor="middle" font-size="11" '
-                         f'font-weight="700" fill="{_C_BLUE}">{_esc(yoy_s)}</text>')
-        parts.append(f'<text x="{gx:.1f}" y="{H - B + 36}" text-anchor="middle" font-size="11.5" '
-                     f'font-weight="600" fill="{_C_INK}">{g["name"]}（亿元）</text>')
+    spans = [(56, 480), (560, 980)] if len(panels) == 2 else [(56, 980)]
+    for (ptitle, groups), (PL, PR) in zip(panels, spans):
+        vals = [g["cur"] for g in groups] + [g["prev"] for g in groups if g["prev"] is not None]
+        lo_d = min(0.0, min(vals))
+        lo_d = lo_d * 1.15 if lo_d < 0 else 0.0   # 负值（亏损季）向下扩域
+        hi_d = max(0.0, max(vals)) * 1.18 or 1.0   # 域顶含 0（全负域崩坏修复：负 max×1.18 是负
+                                                   # truthy，「or 1.0」不兜底 → 域不含 0）；不断轴
+        Y = _lin_map(lo_d, hi_d, H - B, T)
+        y0 = Y(0)
+        _hgrid_ticks(parts, Y, _ticks(lo_d, hi_d, 5), PL, PR, PL - 8)
+        parts.append(f'<line x1="{PL}" y1="{y0:.1f}" x2="{PR}" y2="{y0:.1f}" '
+                     f'stroke="{_C_AXIS}" stroke-width="1.2"/>')
+        n = len(groups)
+        slot = (PR - PL) / n
+        bw = min(slot * 0.3, 84)
+        for i, g in enumerate(groups):
+            gx = PL + slot * (i + 0.5)
+            seq = ([(g["prev"], _C_SAND, gx - bw - 8, prev_label)] if g["prev"] is not None else []) \
+                + [(g["cur"], _C_BLUE, gx + 8 if g["prev"] is not None else gx - bw / 2, sq_label)]
+            for bi, (v, col, x, qlbl) in enumerate(seq):
+                cur_bar = bi == len(seq) - 1
+                top, h = min(Y(v), y0), max(abs(y0 - Y(v)), 1)
+                parts.append(f'<rect x="{x:.1f}" y="{top:.1f}" width="{bw:.1f}" height="{h:.1f}" rx="3" fill="{col}"/>')
+                vy = top - 6 if v >= 0 else top + h + 14
+                parts.append(f'<text x="{x + bw / 2:.1f}" y="{vy:.1f}" text-anchor="middle" font-size="11" '
+                             f'font-weight="{700 if cur_bar else 400}" '
+                             f'fill="{_C_BLUE if cur_bar else _C_STONE}">{_pamt(v)}</text>')
+                parts.append(f'<text x="{x + bw / 2:.1f}" y="{H - B + 16}" text-anchor="middle" '
+                             f'font-size="10.5" fill="{_C_INK if cur_bar else _C_LABEL}">{_esc(qlbl)}</text>')
+            yoy_s = _pyoy_txt(g["yoy"])
+            if yoy_s:
+                cx = seq[-1][2] + bw / 2
+                # 负值柱（最新季亏损）：同比标签上移到零轴上方（柱顶外侧）避让底部标签堆
+                yy = (min(Y(g["cur"]), y0) - 20) if g["cur"] >= 0 else (y0 - 8)
+                parts.append(f'<text x="{cx:.1f}" y="{max(yy, 12):.1f}" text-anchor="middle" '
+                             f'font-size="11" font-weight="700" fill="{_C_BLUE}">{_esc(yoy_s)}</text>')
+            parts.append(f'<text x="{gx:.1f}" y="{H - B + 34}" text-anchor="middle" font-size="11.5" '
+                         f'font-weight="600" fill="{_C_INK}">{g["name"]}（亿元）</text>')
+        parts.append(f'<text x="{(PL + PR) / 2:.1f}" y="{H - B + 56}" text-anchor="middle" '
+                     f'font-size="12" font-weight="700" fill="{_C_LABEL}">{ptitle}</text>')
     parts.append(_svg_close())
-    parts.append('<span class="source">单季并肩双柱图（脚本按 period_track 单季拆分字段生成，数据照抄 '
-                 'em_fetch 照抄行）：沙柱=上年同季、钢蓝柱=最新单季，柱顶=单季金额（亿元），'
-                 '最新柱上方=单季同比（扭亏/转亏等文字原样）；Q1 期累计即单季，退化为单柱</span>')
+    parts.append('<span class="source">单季并肩双柱双联图（脚本按 period_track 单季拆分字段生成，数据照抄 '
+                 'em_fetch 照抄行）：左联=收入与经营现金流（规模与收现含金量）、右联=归母与扣非'
+                 '（柱差≈非经常损益影响）；两联独立定标、联内共享零轴，柱高只在联内可比；'
+                 '沙柱=上年同季、钢蓝柱=最新单季，柱顶=单季金额（亿元），最新柱上方=单季同比'
+                 '（扭亏/转亏等文字原样）；扣非与经营现金流单季=累计差分（Q2=中报−Q1，Q3=前三季−中报）；'
+                 'Q1 期累计即单季，退化为单柱；经营现金流单季受回款节奏影响波动大，仅作方向参考</span>')
     return "".join(parts)
-
-
-def build_period_table(pt: dict) -> str:
-    """3 章·绝对额同比表（period_track，v5.0）：营业收入/归母净利/扣非净利/经营现金流四行——
-    本期累计（亿，两位小数）/ 同比 / 完成度（经营目标）/ 完成度（一致预期）/ 判词（badge）。
-    完成度=本期累计÷分母×100%（脚本算）；分母缺=「未披露」；无该分母口径的格与经营现金流行
-    完成度列=「—」；经营现金流行判词=「—」。pt 非空即出表（全缺行显示「—」）——兼作子弹图
-    空串时的章节兜底（TOC 与章节块同生共灭硬约束）。"""
-    if not isinstance(pt, dict) or not pt:
-        return ""
-    rows = []
-    for label, amt_k, yoy_k, goal_k, cons_k, verdict_k in _PERIOD_TABLE_ROWS:
-        v = _num(pt.get(amt_k))
-        yoy_s = _pyoy_txt(pt.get(yoy_k)) or "—"
-        cells = [f'<td class="num">{f"{v:,.2f}" if v is not None else "—"}</td>',
-                 f'<td class="num">{_esc(yoy_s)}</td>']
-        for dk in (goal_k, cons_k):
-            if dk is None:
-                cells.append('<td class="num">—</td>')   # 无该分母口径
-                continue
-            d = _num(pt.get(dk))
-            if d is None:
-                cells.append('<td class="num">未披露</td>')
-            elif v is None or d <= 0:
-                cells.append('<td class="num">—</td>')
-            else:
-                cells.append(f'<td class="num">{v / d * 100:.1f}%</td>')
-        if verdict_k is None:
-            cells.append('<td>—</td>')
-        else:
-            word = _period_verdict(pt, verdict_k)
-            cells.append(f'<td><span class="badge {_PERIOD_VERDICT_BADGE[word]}">{word}</span></td>')
-        rows.append(f'<tr><th>{label}</th>' + "".join(cells) + '</tr>')
-    return ('<div class="table-scroll"><table>'
-            '<thead><tr><th>指标</th><th class="num">本期累计（亿）</th><th class="num">同比</th>'
-            '<th class="num">完成度（经营目标）</th><th class="num">完成度（一致预期）</th>'
-            '<th>判词</th></tr></thead>'
-            '<tbody>' + "".join(rows) + '</tbody></table></div>'
-            '<span class="source">绝对额与同比照抄 em_fetch period_track 照抄行（禁手估，渲染器与落盘交叉校验）；'
-            '完成度=本期累计÷分母（脚本计算）：经营目标=年报「经营计划」段披露（未披露标「未披露」）、'
-            '一致预期=E5 当年归母净利均值（仅归母净利行有该口径）；扣非与经营现金流无分母口径；'
-            '判词四选一（超前/正常/滞后/无法判定）由模型按节奏带与完成度判定</span>')

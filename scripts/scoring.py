@@ -531,6 +531,72 @@ def build_score_summary(sc: dict) -> str:
             f' <strong>{_quality_verdict(quality)}</strong>{red_note}</div>')
 
 
+def _parse_prev_scenarios(prev_scen) -> dict:
+    """prev.scenarios（extract_review 对上版报告 scenario-table 的照抄数组）解析为
+    {pess/base/opt: {"profit": 亿, "pe": (lo,hi), "mid": 目标价区间显示中点}}——
+    锚移动台账（charts_misc.build_anchor_ledger）与锚纪律校验（validate）同源解析器。
+    逐项宽容解析，解析不出的键为 None（旧版报告格式差异时降级，不炸链）。"""
+    out = {}
+    if not isinstance(prev_scen, list):
+        return out
+    for s in prev_scen:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("scenario") or "")
+        key = ("pess" if "悲观" in name else "base" if "基础" in name else
+               "opt" if "乐观" in name else None)
+        if not key:
+            continue
+        ent = {"profit": None, "pe": None, "mid": None}
+        m = re.match(r"^\s*([\d.]+)\s*亿", str(s.get("归母净利") or ""))
+        if m:
+            ent["profit"] = float(m.group(1))
+        m = re.match(r"^\s*([\d.]+)\s*[-–~]\s*([\d.]+)\s*x", str(s.get("PE") or ""))
+        if m:
+            ent["pe"] = (float(m.group(1)), float(m.group(2)))
+        m = re.match(r"^\s*([\d.]+)\s*[-–~]\s*([\d.]+)", str(s.get("目标价") or ""))
+        if m:
+            ent["mid"] = (float(m.group(1)) + float(m.group(2))) / 2
+        out[key] = ent
+    return out
+
+
+def pe_band_regime_dev(fill: dict):
+    """估值重构偏离度：valuation_inputs.pe_band 中枢 ÷ pe_history 近三年 P25–P75 中枢 −1。
+    返回 None=输入缺失或市值口径（metric_label 存在时 pe_band 非 PE，与历史 PE 带不可比）。
+    validate（rollback_html 门禁）与 build_regime_note（尺子声明）同源阈值 >15%。"""
+    vi = fill.get("valuation_inputs") or {}
+    if vi.get("metric_label"):
+        return None
+    band = vi.get("pe_band") or []
+    blo = _num(band[0]) if len(band) >= 1 else None
+    bhi = _num(band[1]) if len(band) >= 2 else None
+    ph = fill.get("pe_history") or {}
+    p25, p75 = _num(ph.get("p25")), _num(ph.get("p75"))
+    if None in (blo, bhi, p25, p75) or (p25 + p75) <= 0:
+        return None
+    return ((blo + bhi) / 2) / ((p25 + p75) / 2) - 1
+
+
+def build_regime_note(fill: dict) -> str:
+    """8 章估值分卡后·尺子一致性声明（v5.1.0 锚纪律四）：pe_band 中枢偏离历史 P25–P75
+    中枢 >15%（估值重构判断）时自动声明「估值分的分位与合理倍数读数基于历史带，参考性
+    降级」并渲染 valuation.rollback_html（回滚条款前置）。偏离 ≤15% 或输入缺失 → 空串。"""
+    dev = pe_band_regime_dev(fill)
+    if dev is None or abs(dev) <= 0.15:
+        return ""
+    vi = fill.get("valuation_inputs") or {}
+    ph = fill.get("pe_history") or {}
+    direction = "下移" if dev < 0 else "上移"
+    note = (f'合理带中枢较历史 P25–P75 中枢（{_fmt(_num(ph.get("p25")))}–'
+            f'{_fmt(_num(ph.get("p75")))}x）系统性{direction} {abs(dev) * 100:.0f}%'
+            f'（估值重构判断）——估值分的分位与合理倍数读数基于历史带，参考性降级')
+    rb = str((fill.get("valuation") or {}).get("rollback_html") or "").strip()
+    if rb:
+        note += f'；<strong>回滚条款</strong>：{rb}'   # rollback_html 为手填 HTML 键，不转义
+    return f'<div class="info-card">{note}</div>'
+
+
 def build_valuation_process_card(calc: dict, vc: dict, inputs: dict) -> str:
     """8 估值与安全边际章末尾汇总卡（脚本生成，作为本节结论列在最后）：四件套 输入值→映射得分→权重→加权，
     总分行并入表格末行（加权和明细 + 最终估值分徽章 + 判词），档位图例留在表下小字。"""

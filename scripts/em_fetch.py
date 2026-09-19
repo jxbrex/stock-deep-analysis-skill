@@ -603,6 +603,21 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                                                       sorted(c["ratings"].items(), key=lambda x: -x[1])))
             out.append("\n".join(lines) + "\n")
         elif c:
+            # v5.1.0：东财降级源无净利字段但有当年 EPS 均值——捕获存根，main 落盘前按
+            # EPS×总股本（总市值/现价）换算为 consensus_np（恒瑞 2026-09 实证：tushare 空、
+            # 东财有 28 家覆盖，缺落盘导致第 3 章进度条与预期差拆解口径分裂）。
+            # A 股限定（港股 EPS/市值币种混杂不换算）；当年槽已落地（MARK=A）时取实际值亦合法。
+            if not is_hk:
+                for _yi in range(1, 5):
+                    try:
+                        _yr = int(c.get(f"YEAR{_yi}") or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if _yr == date.today().year and c.get(f"EPS{_yi}"):
+                        _E1_CAPTURE["consensus_eps"] = {
+                            "year": _yr, "eps": float(c[f"EPS{_yi}"]),
+                            "orgs": c.get("RATING_ORG_NUM")}
+                        break
             out.append(f"## E5 一致预期\n"
                        f"覆盖{c.get('RATING_ORG_NUM')}家: 买入{c.get('RATING_BUY_NUM')} "
                        f"增持{c.get('RATING_ADD_NUM')} 中性{c.get('RATING_NEUTRAL_NUM') or 0} | "
@@ -610,7 +625,9 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                        f"EPS: {c.get('YEAR1')}{c.get('YEAR_MARK1')}={c.get('EPS1') and round(c['EPS1'], 2)} "
                        f"{c.get('YEAR2')}{c.get('YEAR_MARK2')}={c.get('EPS2') and round(c['EPS2'], 2)} "
                        f"{c.get('YEAR3')}{c.get('YEAR_MARK3')}={c.get('EPS3') and round(c['EPS3'], 2)}\n"
-                       f"行业: {c.get('INDUSTRY_BOARD')} | 概念: {(c.get('CONCEPTINDEX_BOARD') or '')[:80]}\n")
+                       + ("（当年 EPS 均值已按 ×总股本 换算落盘 consensus_np——第 3 章完成度分母照抄源）\n"
+                          if "consensus_eps" in _E1_CAPTURE else "")
+                       + f"行业: {c.get('INDUSTRY_BOARD')} | 概念: {(c.get('CONCEPTINDEX_BOARD') or '')[:80]}\n")
         elif is_hk:
             out.append("## E5 一致预期\n[港股无覆盖（tushare report_rc/东财均空），预期差按档位C处理]\n")
     except Exception as e:
@@ -763,6 +780,21 @@ def main():
         if not _E1_CAPTURE:
             print("警告：--out 已指定但 E1 捕获为空（E1 取数失败？），未落盘", file=sys.stderr)
         else:
+            # v5.1.0：东财降级源的 consensus_eps 存根换算为 consensus_np
+            # （EPS×总股本≈总市值/现价；与 tushare 源的 np_avg 同构，validate 照抄门禁同源消费；
+            # 此处已是线程池 join 之后，quote 的 mcap_yi/price 可读）
+            _ce = _E1_CAPTURE.pop("consensus_eps", None)
+            if _ce and _ce.get("eps"):
+                try:
+                    _mc = float(str(_E1_CAPTURE.get("mcap_yi") or "").replace(",", ""))
+                    _pr = float(_E1_CAPTURE.get("price") or 0)
+                    if _mc > 0 and _pr > 0:
+                        _E1_CAPTURE["consensus_np"] = {
+                            "year": _ce["year"],
+                            "np_avg": round(_ce["eps"] * _mc / _pr, 2),
+                            "orgs": _ce.get("orgs"), "src": "东财E5 EPS×股本"}
+                except (TypeError, ValueError):
+                    pass
             _E1_CAPTURE["fetched_at"] = date.today().isoformat()
             _E1_CAPTURE["source"] = "em_fetch.py"
             with open(opts["out"], "w", encoding="utf-8") as f:

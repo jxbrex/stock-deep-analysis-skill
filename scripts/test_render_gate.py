@@ -14,7 +14,7 @@ import render_report as R
 from scoring import (_position_steps, _quality_verdict, _valuation_verdict,
                      _edge_info, build_edge_upgrade_rows)
 from conftest import (
-    minimal_fill, _dim, _calc, expect_valueerror,
+    minimal_fill, full_fill, _dim, _calc, expect_valueerror,
     capture_stderr, validate_stderr, render_workspace, write_fill, render_fill, period_fill,
 )
 
@@ -312,7 +312,10 @@ def test_conclusion_structure_warns():
 def test_review_miss_diagnostics_warns():
     """v4.9 复盘「未命中」缺诊断方向：含未命中而无规律/反例字样 → 告警。"""
     prev = {"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
-            "timing": 5.0, "target_range": "10-12"}
+            "timing": 5.0, "target_range": "10-12",
+            # v5.1.0：回测模式 prev.scenarios 必填；base PE 与本版一致（10-12x）不触发移动校验
+            "scenarios": [{"scenario": "基础情景", "归母净利": "95 亿", "PE": "10-12x",
+                           "目标价": "9.5-11.4 元"}]}
     tbl = '<table><tr><td>假设</td></tr></table><span class="source">数据来源：测试</span>'
     miss_key = "未提「规律/反例」"  # 告警文案关键字（与用户正文的「规律/反例」区分）
     out = validate_stderr(minimal_fill(prev=prev, review_html=tbl + "判定：未命中"))
@@ -1279,3 +1282,57 @@ def test_position_edge_true_min():
     label5, _s5, _sl5, crit5 = _position_steps(5.9, 5.0, 5.0, None, "")
     assert label5 == "观察池" and crit5 == []
     print("OK 临界孰低两侧实算（5.5 行非单调不抬档 / 4.0 陡降钉住 / 下侧临界不变）")
+
+
+def test_anchor_discipline():
+    """v5.1.0 估值锚纪律门禁（增量证据锁死 + 回滚条款前置）。
+    full_fill 合规形态：上版 base PE 11-13x ≠ 本版 10-12x，附基本面证据 → 通过。"""
+    # 合规基线：full_fill 本身应通过（台账+证据清单渲染路径的 golden 覆盖）
+    R.validate_content(full_fill(), R.compute_valuation(full_fill()))
+    # ① 回测模式 prev.scenarios 缺失 → 拒
+    f = full_fill()
+    f["prev"] = {"date": "2026-08-08", "quality": 6.4, "valuation": 5.0, "timing": 4.8,
+                 "target_range": "9-11"}
+    expect_valueerror(f, "回测模式 prev.scenarios 缺失应拒")
+    # ② PE 带移动但无 pe_band_evidence → 拒
+    f = full_fill()
+    del f["valuation"]["pe_band_evidence"]
+    expect_valueerror(f, "PE 带移动但无增量证据应拒")
+    # ③ 证据仅有价格类 → 拒（纯价格证据不构成移动理由）
+    f = full_fill()
+    f["valuation"]["pe_band_evidence"] = [{"type": "价格", "note": "股价一个月下跌 16.6%"}]
+    expect_valueerror(f, "纯价格证据应拒")
+    f["valuation"]["pe_band_evidence"] = [{"type": "卖方观点", "note": "券商集体下修目标价"}]
+    expect_valueerror(f, "纯卖方观点应拒")
+    # ④ type 非法 / note 空 → 拒
+    f = full_fill()
+    f["valuation"]["pe_band_evidence"] = [{"type": "直觉", "note": "感觉要跌"}]
+    expect_valueerror(f, "非法 type 应拒")
+    f["valuation"]["pe_band_evidence"] = [{"type": "基本面", "note": "  "}]
+    expect_valueerror(f, "空 note 应拒")
+    # ⑤ PE 带与上版一致：填了证据 → 拒（画蛇添足）；不填 → 过
+    same_prev = [{"scenario": "悲观情景", "归母净利": "75 亿", "PE": "8-10x",
+                  "目标价": "6-7.5 元"},
+                 {"scenario": "基础情景", "归母净利": "95 亿", "PE": "10-12x",
+                  "目标价": "9.5-11.4 元"},
+                 {"scenario": "乐观情景", "归母净利": "110 亿", "PE": "12-14x",
+                  "目标价": "13.2-15.4 元"}]
+    f = full_fill(prev={"date": "2026-08-08", "quality": 6.4, "valuation": 5.0,
+                        "timing": 4.8, "target_range": "9-11", "scenarios": same_prev})
+    expect_valueerror(f, "PE 带与上版一致但填了证据应拒")
+    f = full_fill(prev={"date": "2026-08-08", "quality": 6.4, "valuation": 5.0,
+                        "timing": 4.8, "target_range": "9-11", "scenarios": same_prev})
+    del f["valuation"]["pe_band_evidence"]
+    R.validate_content(f, R.compute_valuation(f))   # 不抛即过
+    # ⑥ 重构偏离 >15%：无 rollback_html → 拒；有 → 过
+    f = full_fill()
+    f["pe_history"]["p25"], f["pe_history"]["p75"] = 20.0, 30.0  # 中枢25 vs pe_band中枢11 → -56%
+    expect_valueerror(f, "重构偏离 >15% 无 rollback_html 应拒")
+    f = full_fill()
+    f["pe_history"]["p25"], f["pe_history"]["p75"] = 20.0, 30.0
+    f["valuation"]["rollback_html"] = "回滚条件：煤价中枢回升至 900 元/吨上方 → PE 带回滚至历史带"
+    R.validate_content(f, R.compute_valuation(f))   # 不抛即过
+    # ⑦ 首版（无 prev）与市值口径不受门禁约束
+    R.validate_content(minimal_fill(), R.compute_valuation(minimal_fill()))
+    print("OK 估值锚纪律门禁（prev.scenarios 必填 / 移动须基本面证据 / 未移动禁填 / "
+          "重构须 rollback_html / 首版与市值口径豁免）")

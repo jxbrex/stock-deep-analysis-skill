@@ -7,6 +7,14 @@
 
 ## 整体逻辑
 
+### 指导思想（第一性）
+
+本技能的第一性是**价值投资**：市场先生负责报价，不负责定价——内在价值锚独立于
+即时价格；安全边际=价值−价格，价值随价动则安全边际恒失效。由此定三轨分工：
+**评分**是主观的横向对比工具（分数值不追求客观精确，硬通货是逻辑自洽与信息完整）；
+**估值**是交易决策的决定性变量（不承诺数字准确，承诺假设可追溯、口径一致、
+锚不滑动，以范围表达并靠回测持续精进）。
+
 ### 三轨评分：不是一个混合分，而是三个各司其职的分
 
 | 轨 | 回答什么 | 决策作用 |
@@ -17,6 +25,16 @@
 
 决策主轴 = 质量分 × 估值分。「好公司太贵」的正确结论是「等」，不是扣质量分——
 估值分永远不进质量分。风险层（红/黄灯）不占权重：红灯直接熔断，黄灯从质量分往下扣。
+
+### 估值锚纪律（v5.1.0 起，渲染器硬校验执行）
+
+估值的致命伤是锚跟着价格滑动（跌了下修、涨了上修，左侧信号被系统性地自我消灭）。
+四条纪律把估值对市价的依赖关进笼子（细则见 `references/scoring.md`「估值锚纪律」）：
+① **增量证据锁死**——两版报告间无新增基本面证据，PE 带不得移动（价格/卖方观点
+不构成理由，双向禁用）；② **回滚条款前置**——估值重构（合理带偏离历史分位带 >15%）
+必须写清可观测的回滚条件；③ **锚移动上账**——复盘章固定「锚移动台账」，三情景
+上版 vs 本版逐行对照归因；④ **尺子一致性声明**——采用重构带时，估值分的分位读数
+自动声明参考性降级，禁止「评分用旧尺、目标价用新尺」的口径混用。
 
 ### 分型定尺子
 
@@ -71,7 +89,8 @@ python "<技能目录>/scripts/extract_review.py" --find 600989.SH --dir "D:\个
 `sh600989` / `bj920982` 等价）；
 文件名匹配 + 渲染器生成标记验证 + 取日期最新——找到旧报告即进入
 回测模式（先独立取数打分、再读旧报告、全量重写、最后新旧对比），并直接输出 prev
-锚点与旧三情景假设。手写绕行的 HTML 无生成标记，不会误触发。
+锚点与旧三情景假设（fill 的 `prev.scenarios` 照抄后者，是锚移动台账与 PE 带移动
+校验的共同数据源——估值锚纪律见上节）。手写绕行的 HTML 无生成标记，不会误触发。
 
 ### 报告结构
 
@@ -113,7 +132,7 @@ stock-deep-analysis/
 │   ├── charts_score.py         # 评分类图族：九维评分分布横条 / 敏感性龙卷风
 │   ├── charts_l1.py            # 第 4 章图族：业务构成 / 产业链位置 / 财务趋势图墙
 │   ├── charts_cycle.py         # 第 11 章图族：PE 历史带 / 股价与 PE 发丝图
-│   ├── charts_misc.py          # 其余图族：利润增长图 / 股东户数趋势 / 回测哑铃
+│   ├── charts_misc.py          # 其余图族：利润增长图 / 股东户数趋势 / 回测哑铃 / 锚移动台账
 │   ├── extract_review.py       # 回测触发判定（--find）+ 旧报告复盘锚点提取
 │   ├── score_calibration.py    # 评分统计校准：存量报告三轨分 vs 报告日后实际收益
 │   ├── monthly_checkup.py      # 月度体检：到期复盘提醒 + 评分校准复跑
@@ -128,7 +147,10 @@ stock-deep-analysis/
 │   ├── test_mcap_mode.py       # render_report 市值口径（mcap/metric_label）冒烟自检
 │   ├── test_golden.py          # 渲染器端到端 golden 快照测试（无网络，逐字节比对）
 │   ├── test_calibration.py     # score_calibration 纯函数回归测试
-│   └── test_monthly_checkup.py # monthly_checkup 月度体检回归测试
+│   ├── test_monthly_checkup.py # monthly_checkup 月度体检回归测试
+│   └── test_deploy_meta.py     # 部署元数据守卫（deploy.ps1 排除清单 / UTF-8 BOM 断言）
+├── handoffs/                   # 版本交接文档：最外层只留最新版，旧版归 supercede/
+│   └── supercede/              # 历史 handoff 归档（新版发布须先结转未动工内容再归档原文）
 └── assets/
     └── report-template.html    # 报告模板（唯一 CSS 权威版本）
 ```
@@ -149,7 +171,7 @@ python -m pytest test_render_gate.py test_render_charts.py test_render_e2e.py  #
 python test_em_fetch.py         # 市场映射 / 闰日 / 同比文字化 / 429 硬停
 python test_extract_review.py   # 回测触发判定 / 锚点提取
 python test_mcap_mode.py        # 市值口径渲染
-python test_golden.py           # 渲染器端到端 golden 快照（minimal/full/mcap 三份 fill 全量渲染，产物与入库快照逐字节比对）
+python test_golden.py           # 渲染器端到端 golden 快照（minimal/full/mcap 三份主干 fill + 报告期四态，产物与入库快照逐字节比对）
 python test_calibration.py      # score_calibration 纯函数回归（文件名解析 / 分桶边界 / 同股去重）
 python test_monthly_checkup.py  # monthly_checkup 月度体检回归（scan_reports 合并口径 / --disclosure 市场映射）
 ```

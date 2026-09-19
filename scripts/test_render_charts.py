@@ -745,3 +745,29 @@ def test_three_cards_land_in_sections():
     # 模板 <style> 含 .drv-strip/.stage-strip 类定义——断言对象限定 </style> 之后的渲染内容
     body2 = html2.split('</style>', 1)[1]
     assert 'drv-strip' not in body2 and 'stage-strip' not in body2
+
+
+def test_anchor_ledger_render():
+    """v5.1.0 锚移动台账渲染：回测模式三情景对照 + 增量证据清单 + Δ中枢脚本算；
+    非回测空串；上版解析失败降级不炸链。"""
+    import charts_misc
+    import render_report as RR
+    from conftest import full_fill
+    # 正常路径：full_fill（上版 11-13x/中枢 11.45 元 vs 本版 10-12x/中枢 11 元 → Δ -3.9%）
+    fill = full_fill()
+    calc = RR.compute_valuation(fill)
+    html = charts_misc.build_anchor_ledger(fill, calc)
+    assert "估值锚移动台账" in html and "较上版 2026-08-08" in html
+    assert "75 亿 × 9-11x" in html and "95 亿 × 11-13x" in html   # 上版照抄列
+    assert "80 亿 × 8-10x" in html and "100 亿 × 10-12x" in html  # 本版计算列
+    assert "<strong>基本面</strong>" in html and "煤价中枢下移" in html  # 证据清单渲染
+    # Δ中枢符号：本版基础中枢 11 元 < 上版显示中点 11.45 → 负
+    assert "-" in html.split("Δ中枢")[1]
+    # 非回测（无 prev）→ 空串
+    assert charts_misc.build_anchor_ledger(minimal_fill(), calc) == ""
+    # 上版解析失败（文本格式不对）→ 降级标注不炸链
+    bad = full_fill()
+    bad["prev"]["scenarios"] = [{"scenario": "基础情景", "归母净利": "未知", "PE": "不详"}]
+    html2 = charts_misc.build_anchor_ledger(bad, calc)
+    assert "解析失败" in html2 and "降级" in html2
+    print("OK 锚移动台账（三情景对照 / 证据清单 / 非回测空串 / 解析降级）")

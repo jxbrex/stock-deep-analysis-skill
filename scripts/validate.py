@@ -13,7 +13,7 @@ import re
 import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
-                     _SCENARIO_NAMES)
+                     _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev)
 from charts_base import _C_BLUE
 
 
@@ -418,6 +418,70 @@ def _check_consensus_np(fill: dict, warns: list) -> None:
         raise ValueError(f"valuation_inputs.consensus_np 与 em_fetch 落盘值不一致: fill={fc:g} vs "
                          f"落盘 consensus_np.np_avg={rc:g}{pct}——一致预期照抄落盘禁手改，"
                          f"以落盘值为准修正后重渲")
+
+
+# v5.1.0 估值锚纪律一：PE 带跨版移动的增量证据类型白名单
+_ANCHOR_EVIDENCE_TYPES = ("基本面", "价格", "卖方观点", "市场参数")
+
+
+def _check_anchor_discipline(fill: dict, warns: list) -> None:
+    """v5.1.0 估值锚纪律（恒瑞 2026-09 实证：两版报告间无新增基本面证据——中报对两版
+    均为存量——悲观 PE 带却 35-40→26-32，驱动量只有股价与卖方研报，循环论证）：
+    ①回测模式 prev.scenarios 必填（锚移动台账数据源，照抄 extract_review 输出禁手改）；
+    ②增量证据锁死：基础情景 PE 带相对上版移动 → valuation.pe_band_evidence 必填且至少
+      一条 type=基本面；带未移动 → 该键须缺席/空（防口径漂移）。价格/卖方观点不构成
+      移动理由（双向禁用：跌不许下修、涨不许上修）；上版解析失败降级告警不拒；
+    ③回滚条款前置：pe_band 中枢偏离历史 P25-P75 中枢 >15%（重构声明）→
+      valuation.rollback_html 必填。首版（无 prev）与市值口径不校验 ②③。"""
+    prev = fill.get("prev")
+    if not prev:
+        return
+    if not isinstance(prev.get("scenarios"), list) or not prev["scenarios"]:
+        raise ValueError("回测模式 prev.scenarios 缺失或非数组：照抄 extract_review 输出的 "
+                         "scenarios 数组（锚移动台账数据源，禁手改；v5.1.0 起必填）")
+    v = fill.get("valuation") or {}
+    scen = v.get("scenarios") or []
+    base = next((s for s in scen if isinstance(s, dict)
+                 and str(s.get("key") or "").lower() == "base"), None)
+    prev_pe = (_parse_prev_scenarios(prev["scenarios"]).get("base") or {}).get("pe")
+    ev = v.get("pe_band_evidence")
+    if base is not None and prev_pe is not None:
+        pe = base.get("pe") or []
+        cur_pe = (_num(pe[0]) if len(pe) >= 1 else None, _num(pe[1]) if len(pe) >= 2 else None)
+        if None not in cur_pe:
+            moved = (cur_pe[0], cur_pe[1]) != prev_pe
+            if moved:
+                if not ev or not isinstance(ev, list):
+                    raise ValueError(
+                        f"基础情景 PE 带相对上版移动（{prev_pe[0]:g}-{prev_pe[1]:g}x → "
+                        f"{cur_pe[0]:g}-{cur_pe[1]:g}x）但 valuation.pe_band_evidence 缺失："
+                        f"增量证据锁死纪律——两版间无新增基本面证据时 PE 带不得移动"
+                        f"（v5.1.0 估值锚纪律一）")
+                for i, e in enumerate(ev):
+                    if not isinstance(e, dict) or e.get("type") not in _ANCHOR_EVIDENCE_TYPES:
+                        raise ValueError(
+                            f"pe_band_evidence[{i}].type 非法: {(e or {}).get('type') if isinstance(e, dict) else e!r}"
+                            f"——四选一：{'/'.join(_ANCHOR_EVIDENCE_TYPES)}")
+                    if not str(e.get("note") or "").strip():
+                        raise ValueError(f"pe_band_evidence[{i}].note 为空——证据须写明可核查内容")
+                if not any(e["type"] == "基本面" for e in ev):
+                    raise ValueError(
+                        f"pe_band_evidence 无「基本面」类条目（现有："
+                        f"{'/'.join(e['type'] for e in ev)}）——PE 带移动必须锚定新增基本面证据，"
+                        f"纯价格/卖方观点触发不合法；若无新增基本面证据，请将 PE 带锁回上版数值")
+            elif ev:
+                raise ValueError("PE 带与上版一致，pe_band_evidence 应缺席（画蛇添足防口径漂移）")
+    elif ev:
+        warns.append("上版三情景 PE 解析失败或本版为市值口径：PE 带移动校验跳过，"
+                     "pe_band_evidence 已填无法比对——请人工核对锚移动归因")
+    dev = pe_band_regime_dev(fill)
+    if dev is not None and abs(dev) > 0.15:
+        rb = str(v.get("rollback_html") or "").strip()
+        if not rb:
+            raise ValueError(
+                f"pe_band 中枢偏离历史 P25-P75 中枢 {dev * 100:+.0f}%（>15%，属估值重构声明）"
+                f"但 valuation.rollback_html 缺失：回滚条款前置纪律——必须写明"
+                f"「回滚条件：〈可观测证据〉→ 回滚至历史带/上版带」（v5.1.0 估值锚纪律二）")
 
 
 def _check_thesis_consistency(fill: dict, calc: dict) -> None:
@@ -999,6 +1063,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_valuation_scenarios(fill, warns)
     _check_odds_floor(fill, warns)      # v5.0 机制三：赔率 ∞ 须配悲观地板证据（floor）
     _check_consensus_np(fill, warns)    # v5.0 机制二：乐观税一致预期照抄交叉校验
+    _check_anchor_discipline(fill, warns)  # v5.1.0 估值锚纪律：增量证据锁死+回滚条款前置
     _check_chart_fields(fill)
     _check_quote_present(fill, warns)   # v4.11.1（审核 D5）：date ≥ 2026-09-02 缺 quote 拒渲染
     _check_gap_plot(fill, calc, warns)  # v4.11.1：gap_plot 分布图字段校验（可选字段，缺失不查）

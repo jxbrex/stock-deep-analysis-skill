@@ -5,7 +5,7 @@
 
 import math
 
-from scoring import _num, _fmt, _esc
+from scoring import _num, _fmt, _esc, _parse_prev_scenarios
 from charts_base import *
 
 def build_growth_plot(fill: dict) -> str:
@@ -179,6 +179,73 @@ def build_holders_plot(fill: dict) -> str:
                  '柱=期末股东户数，柱下=截止日与环比；<strong>户数增=筹码分散（红），户数减=集中（绿）</strong>，'
                  '钢蓝柱=最新一期</span>')
     return "".join(parts)
+
+
+def build_anchor_ledger(fill: dict, calc: dict) -> str:
+    """13 章回测复盘·估值锚移动台账（v5.1.0 锚纪律三，恒瑞复盘实证：悲观价月内 41.8→38.5
+    由 PE 带下修驱动而两版间无新增基本面证据——锚移动必须上账接受审判，不许默默重置）：
+    三情景的上版锚 vs 本版锚对照（利润×PE→中枢）+ pe_band_evidence 增量证据清单
+    （与 validate._check_anchor_discipline 门禁同源字段）。上版照抄 prev.scenarios
+    （extract_review 对上版报告 scenario-table 的解析，禁手改），本版取 compute_valuation
+    计算值——两侧均禁手估；中枢列=目标价区间中点（上版为报告显示口径中点，与本版真值
+    中枢比对存显示精度内误差）。非回测（prev.scenarios 缺）/ calc 缺失 → 空串；
+    上版某情景解析不出（旧版格式差异/市值口径无利润PE行）→ 该行降级标注，不炸链。"""
+    prev = fill.get("prev") or {}
+    prev_scen = prev.get("scenarios")
+    if not prev_scen or not calc or not calc.get("rows"):
+        return ""
+    parsed = _parse_prev_scenarios(prev_scen)
+    rows_by_key = {r["key"]: r for r in calc["rows"]}
+    trs = []
+    degraded = 0
+    for key, label in (("pess", "悲观"), ("base", "基础"), ("opt", "乐观")):
+        p = parsed.get(key) or {}
+        cur = rows_by_key.get(key)
+        if cur is None:
+            continue
+        if p.get("pe") and p.get("mid"):
+            profit_txt = f"{p['profit']:g} 亿" if p.get("profit") is not None else "—"
+            prev_txt = f"{profit_txt} × {p['pe'][0]:g}-{p['pe'][1]:g}x → {_fmt_px(p['mid'])} 元"
+        elif p.get("mid"):
+            prev_txt = f"目标价中点 {_fmt_px(p['mid'])} 元（上版无利润/PE 行，市值口径）"
+            degraded += 1
+        else:
+            prev_txt = "解析失败（以原文对照为准）"
+            degraded += 1
+        if cur.get("profit") is not None and cur.get("pe_lo") is not None:
+            cur_txt = (f"{cur['profit']:g} 亿 × {cur['pe_lo']:g}-{cur['pe_hi']:g}x "
+                       f"→ {_fmt_px(cur['mid'])} 元")
+        else:
+            cur_txt = f"目标市值区间 → {_fmt_px(cur['mid'])} 元"
+        if p.get("mid"):
+            d_txt = f"{(cur['mid'] / p['mid'] - 1) * 100:+.1f}%"
+        else:
+            d_txt = "—"
+        trs.append(f'<tr><td>{label}</td><td>{_esc(prev_txt)}</td><td>{_esc(cur_txt)}</td>'
+                   f'<td class="num">{d_txt}</td></tr>')
+    if not trs:
+        return ""
+    ev = (fill.get("valuation") or {}).get("pe_band_evidence") or []
+    ev_html = ""
+    if ev:
+        lis = "".join(
+            f'<li><strong>{_esc(str(e.get("type") or "?"))}</strong>｜'
+            f'{_esc(str(e.get("note") or ""))}</li>'
+            for e in ev if isinstance(e, dict))
+        ev_html = ('<div class="info-card"><strong>锚移动增量证据</strong>（两版报告间的新增信息；'
+                   '无新增基本面证据时 PE 带不得移动——估值锚纪律一，价格与卖方观点不构成理由）：'
+                   f'<ul>{lis}</ul></div>')
+    src = ('锚移动台账（脚本生成）：上版照抄 prev.scenarios（extract_review 对上版报告的解析），'
+           '本版为脚本计算值；中枢=目标价区间中点（上版为报告显示口径中点），Δ=本版中枢÷'
+           '上版中枢−1；锚的每次移动必须归因到上方增量证据清单，写不出基本面增量的移动不合法'
+           + ('；上版含解析降级行（旧版格式或市值口径），以原文对照为准' if degraded else ''))
+    return (f'<span class="section-tag">估值锚移动台账（较上版 '
+            f'{_esc(str(prev.get("date") or "—"))}）</span>'
+            '<div class="table-scroll"><table><thead><tr><th>情景</th>'
+            '<th>上版锚（利润×PE→中枢）</th><th>本版锚（利润×PE→中枢）</th>'
+            '<th class="num">Δ中枢</th></tr></thead><tbody>'
+            + "".join(trs) + '</tbody></table></div>' + ev_html
+            + f'<span class="source">{src}</span>')
 
 
 def build_review_dumbbell(prev: dict, quality: float, valuation: float, timing) -> str:

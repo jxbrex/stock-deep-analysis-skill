@@ -352,14 +352,59 @@ def build_price_history(fill: dict) -> str:
             px = last[0] if (not has_ohlc or tail_incomplete) else X(n - 1)
             _pill(px - 6, Yp(last[1]) + 16, f'{_fmt(last[1])}x', _C_BLUE)
     parts.append(_svg_close())
+    # 判词（v5.1.0，恒瑞反馈：图注只教方法「读交叉」却不给当前结论）：季K 分支追加
+    # 「当前交叉状态」——①最新月收 vs 4 季均线（偏离%+连续方位季数）；②近 4 季价与 PE(TTM)
+    # 方向四象限（E=价÷PE 的 TTM 业绩方向：价涨E涨=业绩驱动 / 价涨E跌=估值扩张 /
+    # 价跌E涨=估值消化 / 价跌E跌=业绩估值双杀）。全部取自本图已渲染序列，确定性可复算；
+    # 部件数据不足（无均线/当季 PE 缺/窗口不足 4 季）自动缺席，不硬凑整句。
+    verdict = ""
+    if has_ohlc and ma_pts:
+        ma_vals = [sum(quarters[k]["c"] for k in range(i - 3, i + 1)) / 4
+                   for i in range(3, len(quarters))]
+        if ma_vals[-1] > 0:
+            dev = (quarters[-1]["c"] / ma_vals[-1] - 1) * 100
+            sides = [1 if quarters[i]["c"] >= mv else -1
+                     for i, mv in zip(range(3, len(quarters)), ma_vals)]
+            run = 1
+            for s in reversed(sides[:-1]):
+                if s == sides[-1]:
+                    run += 1
+                else:
+                    break
+            if abs(dev) < 3:
+                pos = f"最新月收贴近 4 季均线，偏离 {dev:+.1f}%"
+            else:
+                pos = f"最新月收{'低' if dev < 0 else '高'}于 4 季均线 {abs(dev):.1f}%"
+            side_s = "下" if sides[-1] < 0 else "上"
+            stint = (f"本季刚转入均线{side_s}方"
+                     if run == 1 and len(sides) > 1 else f"连续 {run} 季收于均线{side_s}方")
+            verdict = f"；当前：{pos}，{stint}"
+            k = 4 if len(quarters) >= 9 else 0
+            pe_now = pe_line[-1][1] if pe_line else None
+            pe_old = pe_line[-1 - k][1] if k and len(pe_line) > k else None
+            if k and pe_now and pe_old and pe_old > 0:
+                pc = (quarters[-1]["c"] / quarters[-1 - k]["c"] - 1) * 100
+                ppe = (pe_now / pe_old - 1) * 100
+                de = ((1 + pc / 100) / (1 + ppe / 100) - 1) * 100   # E=价÷PE 的 TTM 业绩方向
+                if pc >= 3:
+                    quad = ("业绩驱动上涨段" if de >= 3 else
+                            "估值扩张段（价涨而 TTM 业绩降）" if de <= -3 else "价与业绩同步上行")
+                elif pc <= -3:
+                    quad = ("估值消化段（TTM 业绩仍增）" if de >= 3 else
+                            "业绩与估值双杀段" if de <= -3 else "价与业绩同步回落")
+                else:
+                    quad = "价格横盘段"
+                verdict += f"；近 {k} 季价 {pc:+.0f}%、PE(TTM) {ppe:+.0f}%——{quad}"
     if has_ohlc:
         src = ('股价季K/PE 历史走势（脚本按 price_history 字段生成，同源 E2 月线全序列）：'
                '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向）'
-               + ('，暖灰=4 季均线' if ma_pts else '')
+               + ('，暖灰=4 季均线（每季一点，取近 4 季收盘均值——与 PE 同为季度频率，'
+                  '「4 季」是平滑窗口非频率）' if ma_pts else '')
                + '，钢蓝=PE(TTM)（右轴，季度）；'
                '灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义——诚实区间非断数）；双轴各自定标，读交叉不读绝对高度')
         if pe_cap:
             src += f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注（正常段可读性优先）'
+        src += verdict
     else:
         src = ('股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
                '深灰=月收盘价（左轴）'

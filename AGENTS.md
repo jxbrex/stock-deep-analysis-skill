@@ -23,9 +23,11 @@
 
 ## 目录约定
 
-- `handoffs/`：每轮版本交接文档（v4.1 起），写完归档不再修改（未开工的计划交接
-  如 v5.0 除外——它是跟踪载体，可随联动修订）。交接文档以仓库内为权威，仓库外
-  `_skill_repo` 目录已停止使用。`deploy.ps1` 排除清单（v4.11.2 扩充）：/XD 目录 =
+- `handoffs/`：每轮版本交接文档（v4.1 起），写完归档不再修改。**v5.1.0 起归档制度
+  （用户拍板）：最外层只留最新版 handoff，旧版一律挪入 `handoffs/supercede/`（已入库
+  的用 `git mv` 保历史）；新版本发布时须先把历史 handoff 未动工的部分与思考合并进
+  当版 handoff 的结转章节，再归档原文——结转章节成为未决议题的唯一权威清单。**
+  交接文档以仓库内为权威，仓库外 `_skill_repo` 目录已停止使用。`deploy.ps1` 排除清单（v4.11.2 扩充）：/XD 目录 =
   .git / __pycache__ / .pytest_cache / artifacts / handoffs / tasks / golden（快照
   测试基线，仅 test_golden.py 消费，运行时零依赖）；/XF 文件 = test_*.py / conftest.py /
   CHANGELOG.md / README.md / AGENTS.md / deploy.ps1（测试与仓库维护侧，运行副本零依赖）。

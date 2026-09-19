@@ -250,11 +250,29 @@ def full_fill(**over):
                   {"cond": "销量转正", "status": "pending"},
                   {"cond": "成本回落", "status": "miss"}],
         prev={"date": "2026-08-08", "quality": 6.4, "valuation": 5.0, "timing": 4.8,
-              "target_range": "9-11"},
+              "target_range": "9-11",
+              # v5.1.0：prev.scenarios（extract_review 对上版报告 scenario-table 的照抄格式）——
+              # 锚移动台账数据源；上版 base PE 11-13x ≠ 本版 10-12x → 罩住台账渲染与
+              # 锚纪律门禁的合规路径（pe_band_evidence 在下方 fill 构建后补入）
+              "scenarios": [
+                  {"scenario": "悲观情景", "时间维度": "12个月", "触发条件": "上版悲观触发",
+                   "归母净利": "75 亿", "EPS": "0.75", "PE": "9-11x",
+                   "目标价": "6.8-8.3 元", "较现价": "-24.0%（中值7.6）"},
+                  {"scenario": "基础情景", "时间维度": "12个月", "触发条件": "上版基础触发",
+                   "归母净利": "95 亿", "EPS": "0.95", "PE": "11-13x",
+                   "目标价": "10.5-12.4 元", "较现价": "+14.5%（中值11.5）"},
+                  {"scenario": "乐观情景", "时间维度": "12个月", "触发条件": "上版乐观触发",
+                   "归母净利": "110 亿", "EPS": "1.10", "PE": "13-15x",
+                   "目标价": "14.3-16.5 元", "较现价": "+54.0%（中值15.4）"}]},
         review_html=('<table><tr><td>假设变更对比</td></tr></table>'
                      '<span class="source">数据来源：测试</span>'
                      '<span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>'),
     )
+    # v5.1.0 锚纪律一：PE 带跨版移动（11-13x → 10-12x）必填增量证据且含基本面类——
+    # 本夹具走合规路径（门禁通过），违规拦截用例见 test_render_gate.py
+    fill["valuation"]["pe_band_evidence"] = [
+        {"type": "基本面", "note": "上版至今煤价中枢下移 15%，2026E 盈利预测随之下修（新增证据）"},
+        {"type": "市场参数", "note": "无风险利率 1.7%→1.6%（折现率环境变化）"}]
     fill.update(over)
     return fill
 

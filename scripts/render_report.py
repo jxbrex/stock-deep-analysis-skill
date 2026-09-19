@@ -35,7 +35,7 @@ from scoring import (
     _esc, compute_scores,
     build_score_summary, build_valuation_process_card, build_position_card,
     _quality_verdict, _valuation_verdict,
-    compute_valuation, compute_valuation_score, build_dcf_cards,
+    compute_valuation, compute_valuation_score, build_dcf_cards, build_regime_note,
     _edge_info, build_edge_upgrade_rows,
 )
 from charts_base import _fmt_px, _prev_track_rows
@@ -47,7 +47,7 @@ from charts_l1 import _inject_l1_charts
 from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
-    _inject_gap_chart, build_driver_cards, build_cycle_stages,
+    _inject_gap_chart, build_driver_cards, build_cycle_stages, build_anchor_ledger,
     build_period_summary, build_period_kpi, build_period_bullets, build_period_sqplot,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
@@ -56,7 +56,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v5.0.0"
+RENDERER_VERSION = "v5.1.0"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -387,10 +387,15 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "PRICE_HIST_HTML": build_price_history(fill),
         "HOLDERS_PLOT_HTML": build_holders_plot(fill),
         "REVIEW_PLOT_HTML": build_review_dumbbell(prev, quality, valuation, timing),
+        # v5.1.0 锚纪律三：锚移动台账（回测模式 prev.scenarios 存在时生成；空串裸替换）
+        "ANCHOR_LEDGER_HTML": build_anchor_ledger(fill, calc),
         # v4.11.3：DCF 双卡（dcf 字段，垫在估值分计算过程卡前；空串替换）
         "DCF_CARDS_HTML": build_dcf_cards(fill),
+        # v5.1.0 锚纪律四：估值重构尺子声明（pe_band 中枢偏离历史 P25-P75 >15% 时自动出现，
+        # 附 rollback_html 回滚条款）拼在估值分过程卡后
         "VALUATION_PROCESS_HTML": build_valuation_process_card(calc, valuation_calc,
-                                                               fill.get("valuation_inputs") or {}),
+                                                               fill.get("valuation_inputs") or {})
+                                  + build_regime_note(fill),
         "POSITION_CARD_HTML": build_position_card(fill, quality, valuation, timing, calc, red_flag,
                                                   floor_uplift=valuation_calc.get("floor_uplift")),
 

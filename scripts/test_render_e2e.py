@@ -45,7 +45,11 @@ def test_currency_hkd():
 def test_review_dumbbell():
     """回测模式：prev 填了才出三轨哑铃图；回测章=第 13 章（v4.8.1 起提前，在跟踪仪表盘之前）。"""
     fill = minimal_fill(prev={"date": "2026-08-08", "quality": 7.0, "valuation": 5.5,
-                              "timing": 5.0, "target_range": "10-12"},
+                              "timing": 5.0, "target_range": "10-12",
+                              # v5.1.0：回测模式 prev.scenarios 必填；base PE 与本版一致
+                              # （10-12x）不触发移动校验
+                              "scenarios": [{"scenario": "基础情景", "归母净利": "95 亿",
+                                             "PE": "10-12x", "目标价": "9.5-11.4 元"}]},
                         review_html='<table><tr><td>假设变更对比</td></tr></table>'
                                     '<span class="source">数据来源：测试</span>'
                                     '<span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>')

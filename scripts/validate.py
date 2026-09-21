@@ -14,7 +14,8 @@ import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
                      _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev)
-from charts_base import _C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio
+from charts_base import (_C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio,
+                         parse_stage_period)
 
 
 # 正文 HTML 字段全集（写作纪律/代号泄漏/.rev 高亮检查用）
@@ -1560,7 +1561,9 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
     current 恰 1 个升级为拒渲染（0 或 ≥2 个「本轮」徽章同屏即事实矛盾；
     本轮由分析师划段标注，脚本不加冕）；字段已填而 cycle_html 缺失 → 告警
     （阶段卡挂第 11 章条件块内，整章消失则卡无处显示，同 pe_history 绑定规则）；
-    cycle_html 手写阶段表与字段的关系：字段未填 → 迁移告警；并存 → 重复告警。"""
+    cycle_html 手写阶段表与字段的关系：字段未填 → 迁移告警；并存 → 重复告警；
+    v5.1.3：period 格式校验——解析不出起止月份软告警「季K图阶段分界不落该段」
+    （格式 YYYY/MM–YYYY/MM；与渲染同源 parse_stage_period，单源防漂移）。"""
     stages = [s for s in fill.get("cycle_stages") or [] if isinstance(s, dict)]
     hand_table = re.search(r"<th[^>]*>\s*阶段\s*</th>", fill.get("cycle_html") or "")
     if not stages:
@@ -1591,6 +1594,10 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
     for s in stages:
         tag = _plain_text(str(s.get("name") or "")).strip() or "?"
         short = tag[:6] + ("…" if len(tag) > 6 else "")
+        period = str(s.get("period") or "").strip()
+        if period and parse_stage_period(period) is None:
+            warns.append(f"cycle_stages[{short}] period「{period[:14]}」解析不出起止月份："
+                         "季K图阶段分界不落该段（格式 YYYY/MM–YYYY/MM）")
         if len(tag) > 8:
             warns.append(f"cycle_stages[{short}] name {len(tag)} 字 > 8（槽位契约）")
         driver_w = _disp_w(_plain_text(str(s.get("driver") or "")).strip())

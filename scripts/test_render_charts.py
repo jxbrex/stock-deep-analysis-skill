@@ -825,3 +825,84 @@ def test_anchor_ledger_render():
     html2 = charts_misc.build_anchor_ledger(bad, calc)
     assert "解析失败" in html2 and "降级" in html2
     print("OK 锚移动台账（三情景对照 / 证据清单 / 非回测空串 / 解析降级）")
+
+
+def test_price_history_verdict_block():
+    """v5.1.3（迈瑞反馈）：判词从图注独立为 .layer-summary 横条（图注回归纯口径说明），
+    并扩「区间段」——全窗口均线上方占比 + 全窗口价/PE/E 归因（中性事实，褒贬只落近期段）；
+    全窗口 PE 缺首末值时归因缺席、占比句仍在（部件不足不硬凑）。"""
+    months = []
+    for i in range(36):  # 2023-01 ~ 2025-12，单调上行
+        y, m = 2023 + i // 12, i % 12 + 1
+        months.append({"m": f"{y}-{m:02d}", "open": 10 + i * 0.1, "high": 10 + i * 0.1 + 0.5,
+                       "low": 10 + i * 0.1 - 0.5, "close": 10 + i * 0.1 + 0.2,
+                       "pe": 12.0 + i * 0.05})
+    html = render_fill(minimal_fill(price_history={"label": "近3年", "series": months},
+                                    cycle_html='<table><tr><td>x</td></tr></table>'))
+    seg = html.split('aria-label="股价季K与PE历史走势"', 1)[1]
+    src_seg = seg.split('<span class="source">', 1)[1].split("</span>", 1)[0]
+    assert "当前：" not in src_seg and "全区间" not in src_seg, "判词不应再混在图注里"
+    v_seg = seg.split('<div class="layer-summary"><strong>判词：</strong>', 1)[1].split("</div>", 1)[0]
+    assert "区间业绩驱动的上涨：区间价 +32%、PE(TTM) +14%。" in v_seg, "区间归因应为人话结论"
+    assert "当前最新月收高于 4 季均线 3.4%，连续 9 季收于均线上方（全区间 9 季中 9 季收于上方）。" in v_seg, "当前位置句应带全区间占比佐证"
+    assert "近 4 季业绩驱动的上涨（价 +10%、PE +5%）。" in v_seg, "近季归因句（同向不加切换推断）"
+    # 切换推断：区间业绩增（价涨 pe 缓涨）+ 近 4 季业绩降（价跌 pe 跳涨）→ 拐头未确认结论
+    months_sw = []
+    for i in range(48):  # 4 年 16 季
+        y, m = 2022 + i // 12, i % 12 + 1
+        c = 10 + min(i, 40) * 0.25         # 区间大涨至 20（价涨幅远超 pe → 区间业绩增）
+        if i >= 44:
+            c = 20.0 - (i - 43) * 0.5      # 近 4 月回落 → 近 4 季价跌
+        pe = 12 + min(i, 40) * 0.01        # 区间 pe 缓涨（远慢于价）
+        if i >= 44:
+            pe = 12.4 + (i - 43) * 1.55    # 近 4 月 pe 跳涨（业绩转降）
+        months_sw.append({"m": f"{y}-{m:02d}", "open": c, "high": c + 0.5, "low": c - 0.5,
+                          "close": c, "pe": round(pe, 2)})
+    html3 = render_fill(minimal_fill(price_history={"label": "近4年", "series": months_sw},
+                                     cycle_html='<table><tr><td>x</td></tr></table>'))
+    v3 = html3.split('aria-label="股价季K与PE历史走势"', 1)[1].split("<strong>判词：</strong>", 1)[1].split("</div>", 1)[0]
+    assert "业绩由增转弱——均线拐头尚未得到业绩确认" in v3, "区间业绩增+近季业绩降应下拐头未确认结论"
+    # 全窗口 PE 缺失 → 归因缺席，占比句+当前段仍在
+    months_nope = [dict(mo, pe=None) for mo in months]
+    html2 = render_fill(minimal_fill(price_history={"label": "近3年", "series": months_nope},
+                                     cycle_html='<table><tr><td>x</td></tr></table>'))
+    v2 = html2.split('aria-label="股价季K与PE历史走势"', 1)[1] \
+              .split("<strong>判词：</strong>", 1)[1].split("</div>", 1)[0]
+    assert "区间价" not in v2 and "近 4 季" not in v2 and "当前最新月收" in v2, "全窗口 PE 缺失时区间/近季归因缺席（当前句仍在）"
+    print("OK 判词独立横条与区间段扩充")
+
+
+def test_price_history_stage_seams():
+    """v5.1.3（迈瑞反馈）：季K图叠加周期阶段分界——竖虚线 + 顶部阶段名（current 带「本轮·」
+    前缀加粗）；整段在序列外/period 解析失败不画，部分超出夹取；相邻段共享缝去重；
+    图注补阶段分界来源说明；无 cycle_stages 则无阶段线。"""
+    months = []
+    for i in range(36):  # 2023-01 ~ 2025-12
+        y, m = 2023 + i // 12, i % 12 + 1
+        months.append({"m": f"{y}-{m:02d}", "open": 10, "high": 11, "low": 9,
+                       "close": 10.5, "pe": 12.0})
+    stages = [
+        {"name": "全外段", "period": "2021/01–2021/12", "current": False},  # 整段在左外
+        {"name": "左夹段", "period": "2022/01–2024/01", "current": False},  # 左边界夹到 2023-01
+        {"name": "右夹段", "period": "2024/02–2026/08", "current": True},   # 右边界夹到 2025-12
+        {"name": "开口段", "period": "2025/06–至今", "current": False},    # 终点「至今」夹到序列末
+        {"name": "坏格式", "period": "去年至今", "current": False},         # 解析失败 → 跳过
+    ]
+    html = render_fill(minimal_fill(price_history={"label": "近3年", "series": months},
+                                    cycle_html="<p>周期</p>", cycle_stages=stages))
+    seg = html.split('aria-label="股价季K与PE历史走势"', 1)[1].split("</svg>", 1)[0]
+    assert seg.count('stroke-dasharray="4 3"') == 2, "内缝两条（左夹段右缘=右夹段左缘共享一缝 + 开口段左缘）"
+    assert "左夹段" in seg and "右夹段" in seg, "夹取段的标签应渲染"
+    assert "开口段" in seg, "「至今」开口段应渲染（终点夹取到序列末月）"
+    assert 'fill-opacity="0.3"' in seg, "交替段应铺浅沙底（v5.1.4；0.5 近白不可见实证）"
+    assert 'fill-opacity="0.08"' in seg, "本轮段应铺淡钢蓝底（v5.1.4）"
+    assert "左轴，元" in seg, "图例币种不应被循环变量覆盖（cur 覆盖 currency 回归两次实证）"
+    assert "本轮·右夹段" in seg and 'font-weight="700"' in seg, "current 段应「本轮」前缀加粗"
+    assert "全外段" not in seg, "整段在序列外不应渲染"
+    assert "坏格式" not in seg, "period 解析失败不应渲染（validate 同源软告警）"
+    assert "淡底/竖虚线=周期阶段" in html, "图注应说明阶段分界来源"
+    html2 = render_fill(minimal_fill(price_history={"label": "近3年", "series": months},
+                                     cycle_html="<p>周期</p>"))
+    seg2 = html2.split('aria-label="股价季K与PE历史走势"', 1)[1].split("</svg>", 1)[0]
+    assert "左夹段" not in seg2 and "淡底/竖虚线=周期阶段" not in html2,         "无 cycle_stages 不应有阶段线与其图注说明"
+    print("OK 阶段分界竖虚线（夹取/去重/跳过/图注说明）")

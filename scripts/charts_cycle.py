@@ -2,8 +2,23 @@
 # -*- coding: utf-8 -*-
 """charts_cycle.py — 第 11 章（周期规律）图族（v4.9 从 charts.py 拆出）：PE 历史带（build_pe_band）/ 股价与 PE 历史发丝图（build_price_history）。依赖 charts_base 与 scoring。"""
 
+from bisect import bisect_left, bisect_right
+
 from scoring import _num, _fmt, _esc
 from charts_base import *
+
+
+def _quad_word(de: float, pc: float) -> str:
+    """价/PE 四象限归因的人话结论（E=价÷PE 的 TTM 业绩方向：de ≥3 业绩增 / ≤-3 业绩降）。
+    近期段与全窗口共用措辞（v5.1.3 单源）；v5.1.4 迈瑞二轮反馈：「XX段」改结论短句——
+    判词是给人读的，不是分类标签。"""
+    if pc >= 3:
+        return ("业绩驱动的上涨" if de >= 3 else
+                "估值扩张的上涨（价涨业绩降）" if de <= -3 else "价与业绩同步上行")
+    if pc <= -3:
+        return ("杀估值的下跌（业绩仍增）" if de >= 3 else
+                "业绩估值双杀" if de <= -3 else "价与业绩同步回落")
+    return "横盘"
 
 def build_pe_band(fill: dict) -> str:
     """08→11 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
@@ -229,6 +244,50 @@ def build_price_history(fill: dict) -> str:
              _svg_open(W, H, "股价季K与PE历史走势" if has_ohlc else "股价与PE历史走势")]
     # 亏损期底纹（连续缺 pe 段；先画在最底层）。审计 P0-2：尾部段（延伸到序列末，
     # 即当前仍亏损——困境反转标的恰恰如此）旧哨兵逻辑永不收尾 → 显式收 run_start 到末尾。
+    # 周期阶段分界（v5.1.3 迈瑞反馈起；v5.1.4 二轮反馈加淡底阴影——只用虚线太简陋）：
+    # 下方阶段卡（cycle_stages）手填区间叠上图内——交替淡沙底 + 本轮段淡钢蓝底 + 竖虚线
+    # 分界 + 顶部阶段名（current「本轮」前缀加粗，与阶段卡角标同源）。绘制层次：阶段底
+    # 最底层，亏损期灰底纹在其上（两色叠加亏损段更深，可区分），虚线/标签最上。
+    # period 解析失败整段跳过（与 validate 告警同源 parse_stage_period）；整段超序列范围
+    # 不画，部分超出夹取到绘图区。只画季K 分支（发丝退化路径不做，YAGNI）。
+    stage_seams, stage_labels = [], []
+    stage_rects = []   # (x0, x1, is_cur)，按起点排序后奇偶交替铺底
+    if has_ohlc:
+        ms_all = [p["m"] for p in pts]
+        parsed = []
+        for s in fill.get("cycle_stages") or []:
+            if not isinstance(s, dict):
+                continue
+            name = str(s.get("name") or "").strip()
+            pr = parse_stage_period(s.get("period"))
+            if not name or pr is None:
+                continue
+            (y0, m0), (y1, m1) = pr
+            s_ym, e_ym = f"{y0:04d}-{m0:02d}", f"{y1:04d}-{m1:02d}"
+            if e_ym < ms_all[0] or s_ym > ms_all[-1]:
+                continue                      # 整段在序列外
+            i0 = min(max(bisect_left(ms_all, s_ym), 0), n - 1)
+            i1 = min(bisect_right(ms_all, e_ym) - 1, n - 1)
+            x0 = max(X(i0) - step / 2, L)
+            x1 = min(X(i1) + step / 2, W - R)
+            if x1 <= x0:
+                continue                      # 夹取后零宽（整段落在同一个月槽）
+            parsed.append((x0, x1, name, bool(s.get("current"))))
+        parsed.sort()
+        for si, (x0, x1, name, is_cur) in enumerate(parsed):
+            stage_rects.append((x0, x1, is_cur))
+            stage_labels.append(((x0 + x1) / 2, name, is_cur))
+        stage_seams = sorted({x for _x0, x1, _n, _c in parsed for x in (_x0, x1)
+                              if L + 0.5 < x < W - R - 0.5})
+    # 阶段淡底（最底层：交替浅沙 0.3 / 本轮淡钢蓝 0.08——v5.1.4 迈瑞二轮反馈；首版 0.5
+    # 近白不可见实证，须压出与图纸的明度差）
+    for si, (x0, x1, is_cur) in enumerate(stage_rects):
+        if is_cur:
+            parts.append(f'<rect x="{x0:.1f}" y="{T}" width="{x1 - x0:.1f}" height="{H - B - T}" '
+                         f'fill="{_C_BLUE}" fill-opacity="0.08"/>')
+        elif si % 2 == 0:
+            parts.append(f'<rect x="{x0:.1f}" y="{T}" width="{x1 - x0:.1f}" height="{H - B - T}" '
+                         f'fill="{_C_SAND_LT}" fill-opacity="0.3"/>')
     # v5.0（F）：季K 分支随 PE 季频序列按季判缺（连续缺点的季成段，1 季 ≈ 旧月频 ≥3 个月口径）；
     # 退化路径仍逐月（≥3 个月成段）。runs 存月槽索引区间，下方渲染口径不变
     runs, run_start = [], None
@@ -253,6 +312,19 @@ def build_price_history(fill: dict) -> str:
             parts.append(f'<text x="{(x1 + x2) / 2:.1f}" y="{T + 16}" text-anchor="middle" font-size="11" '
                          f'fill="{_C_STONE}" stroke="{_C_PAPER_CELL}" stroke-width="3" '
                          f'paint-order="stroke">{_shade_label}</text>')
+    # 阶段虚线分界 + 顶部标签（亏损底纹之上，保证线条/标签不被底纹吞掉）
+    if has_ohlc:
+        for x in stage_seams:
+            parts.append(f'<line x1="{x:.1f}" y1="{T}" x2="{x:.1f}" y2="{H - B}" '
+                         f'stroke="{_C_STONE}" stroke-width="1.1" stroke-dasharray="4 3"/>')
+        for li, (cx, name, is_cur) in enumerate(stage_labels):
+            txt = f"本轮·{name}" if is_cur else name
+            anc, tx = _anchor_clamp(cx, _text_w(txt, 10.5), L + 2, W - R - 2)
+            ly = T + 14 if li % 2 == 0 else T + 28
+            parts.append(f'<text x="{tx:.1f}" y="{ly}" text-anchor="{anc}" font-size="10.5" '
+                         f'font-weight="{"700" if is_cur else "400"}" fill="{_C_INK if is_cur else _C_STONE}" '
+                         f'stroke="{_C_PAPER_CELL}" stroke-width="3" '
+                         f'paint-order="stroke">{_esc(txt)}</text>')
     # 图例（左上）
     if has_ohlc:
         parts.append(f'<rect x="{L}" y="{T - 17}" width="12" height="9" rx="2" fill="{_C_RED}"/>')
@@ -352,11 +424,13 @@ def build_price_history(fill: dict) -> str:
             px = last[0] if (not has_ohlc or tail_incomplete) else X(n - 1)
             _pill(px - 6, Yp(last[1]) + 16, f'{_fmt(last[1])}x', _C_BLUE)
     parts.append(_svg_close())
-    # 判词（v5.1.0，恒瑞反馈：图注只教方法「读交叉」却不给当前结论）：季K 分支追加
-    # 「当前交叉状态」——①最新月收 vs 4 季均线（偏离%+连续方位季数）；②近 4 季价与 PE(TTM)
-    # 方向四象限（E=价÷PE 的 TTM 业绩方向：价涨E涨=业绩驱动 / 价涨E跌=估值扩张 /
-    # 价跌E涨=估值消化 / 价跌E跌=业绩估值双杀）。全部取自本图已渲染序列，确定性可复算；
-    # 部件数据不足（无均线/当季 PE 缺/窗口不足 4 季）自动缺席，不硬凑整句。
+    # 判词（v5.1.0 恒瑞反馈起；v5.1.3 迈瑞一轮反馈独立成条；v5.1.4 二轮反馈重写）：
+    # 数据罗列读不出结论 → 叙事主线三段式——①区间归因（人话结论 _quad_word：「杀估值的
+    # 下跌（业绩仍增）」这类）②当前位置（偏离/方位，全区间上方占比作稀缺性佐证）
+    # ③归因切换推断：区间业绩方向（E=价÷PE 的 TTM 业绩方向）与近季相反时才给结论句
+    # （增→降「业绩由增转弱——均线拐头尚未得到业绩确认」/ 降→增「业绩由弱转强——双杀
+    # 出现拐点」）；方向相同不加，不硬凑。全部取自本图已渲染序列，确定性可复算；
+    # 部件数据不足自动缺席。
     verdict = ""
     if has_ohlc and ma_pts:
         ma_vals = [sum(quarters[k]["c"] for k in range(i - 3, i + 1)) / 4
@@ -378,23 +452,35 @@ def build_price_history(fill: dict) -> str:
             side_s = "下" if sides[-1] < 0 else "上"
             stint = (f"本季刚转入均线{side_s}方"
                      if run == 1 and len(sides) > 1 else f"连续 {run} 季收于均线{side_s}方")
-            verdict = f"；当前：{pos}，{stint}"
+            m_up = sum(1 for s in sides if s > 0)
+            # ① 区间归因（首末季 PE 缺一即缺席，w_dir 记录区间业绩方向供③用）
+            w_dir = None
+            pe_first = pe_line[0][1] if pe_line else None
+            pe_lastw = next((v for _x, v, _a, _b in reversed(pe_line) if v is not None), None)
+            if pe_first and pe_first > 0 and pe_lastw and len(quarters) >= 2:
+                pcw = (quarters[-1]["c"] / quarters[0]["c"] - 1) * 100
+                ppew = (pe_lastw / pe_first - 1) * 100
+                dew = ((1 + pcw / 100) / (1 + ppew / 100) - 1) * 100
+                if abs(dew) >= 3:
+                    w_dir = 1 if dew > 0 else -1
+                verdict = f"区间{_quad_word(dew, pcw)}：区间价 {pcw:+.0f}%、PE(TTM) {ppew:+.0f}%。"
+            # ② 当前位置（占比作位置稀缺性佐证）
+            verdict += f"当前{pos}，{stint}（全区间 {len(sides)} 季中 {m_up} 季收于上方）。"
+            # ③ 近季归因 + 归因切换推断（与区间业绩方向相反才下结论）
             k = 4 if len(quarters) >= 9 else 0
             pe_now = pe_line[-1][1] if pe_line else None
             pe_old = pe_line[-1 - k][1] if k and len(pe_line) > k else None
             if k and pe_now and pe_old and pe_old > 0:
                 pc = (quarters[-1]["c"] / quarters[-1 - k]["c"] - 1) * 100
                 ppe = (pe_now / pe_old - 1) * 100
-                de = ((1 + pc / 100) / (1 + ppe / 100) - 1) * 100   # E=价÷PE 的 TTM 业绩方向
-                if pc >= 3:
-                    quad = ("业绩驱动上涨段" if de >= 3 else
-                            "估值扩张段（价涨而 TTM 业绩降）" if de <= -3 else "价与业绩同步上行")
-                elif pc <= -3:
-                    quad = ("估值消化段（TTM 业绩仍增）" if de >= 3 else
-                            "业绩与估值双杀段" if de <= -3 else "价与业绩同步回落")
-                else:
-                    quad = "价格横盘段"
-                verdict += f"；近 {k} 季价 {pc:+.0f}%、PE(TTM) {ppe:+.0f}%——{quad}"
+                de = ((1 + pc / 100) / (1 + ppe / 100) - 1) * 100
+                verdict += f"近 {k} 季{_quad_word(de, pc)}（价 {pc:+.0f}%、PE {ppe:+.0f}%）"
+                n_dir = 1 if de >= 3 else (-1 if de <= -3 else 0)
+                if w_dir == 1 and n_dir == -1:
+                    verdict += "，业绩由增转弱——均线拐头尚未得到业绩确认"
+                elif w_dir == -1 and n_dir == 1:
+                    verdict += "，业绩由弱转强——双杀出现拐点"
+                verdict += "。"
     if has_ohlc:
         src = ('股价季K/PE 历史走势（脚本按 price_history 字段生成，同源 E2 月线全序列）：'
                '蜡烛=季度 K 线（季首月开/季内高低/季末月收；红涨绿跌仅股价方向）'
@@ -404,7 +490,9 @@ def build_price_history(fill: dict) -> str:
                '灰底纹段=亏损期（TTM 净利 ≤0，PE 无定义——诚实区间非断数）；双轴各自定标，读交叉不读绝对高度')
         if pe_cap:
             src += f'；右缘「峰值 {_fmt(hi_raw)}x →」=PE 右轴截断标注（正常段可读性优先）'
-        src += verdict
+        if stage_seams:
+            src += ('；淡底/竖虚线=周期阶段（交替浅沙、本轮淡蓝；按下方阶段卡手填区间绘制，'
+                    '超图序列自动截断）')
     else:
         src = ('股价/PE 历史走势（脚本按 price_history 字段生成，与上方历史带同源 E2 月线）：'
                '深灰=月收盘价（左轴）'
@@ -415,4 +503,6 @@ def build_price_history(fill: dict) -> str:
                + '；双轴各自定标，读交叉不读绝对高度；'
                '判读：价涨 PE 平=业绩驱动，价平 PE 跳=估值重定价（财报日 TTM 净利跳变所致）')
     parts.append(f'<span class="source">{src}</span>')
+    if verdict:
+        parts.append(f'<div class="layer-summary"><strong>判词：</strong>{verdict}</div>')
     return "".join(parts)

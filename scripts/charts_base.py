@@ -100,6 +100,27 @@ def _gap_dim_ok(d) -> bool:
     return bool(name) and ours is not None and cons is not None and cons > 0
 
 
+def parse_stage_period(period: str):
+    """cycle_stages period → ((年0,月0),(年1,月1))；解析失败/月份越界 → None。
+    终点可写「至今/今/现在」→ (9999,12) 开口（渲染端夹取到序列末月；迈瑞 2026/01–至今实证，
+    当前段是 analyst 最常写的开口形态，禁写会逼出手填未来月份）。
+    渲染（季K图阶段分界）与 validate 校验的唯一权威（v5.1.3 单源教训：影石 first_var
+    双定义矛盾同源修复）。容忍分隔符 / - . 与「年」，起止各取首个匹配。"""
+    text = str(period or "").strip()
+    ms = re.findall(r"(\d{4})\s*[/\-.年]\s*(\d{1,2})", text)
+    if len(ms) >= 2:
+        (y0, m0), (y1, m1) = (int(ms[0][0]), int(ms[0][1])), (int(ms[1][0]), int(ms[1][1]))
+        if not (1 <= m0 <= 12 and 1 <= m1 <= 12):
+            return None
+        return (y0, m0), (y1, m1)
+    if len(ms) == 1 and any(k in text for k in ("至今", "今", "现在")):
+        y0, m0 = int(ms[0][0]), int(ms[0][1])
+        if not (1 <= m0 <= 12):
+            return None
+        return (y0, m0), (9999, 12)
+    return None
+
+
 def _period_ratio(pt: dict, amt_k: str, goal_k: str = None, cons_k: str = None):
     """报告期完成度（v5.1.2，子弹图与判词对账同源）：分母=一致预期优先、缺则经营目标
     （与 charts_misc.build_period_bullets 同一选取规则）；返回 累计÷分母，
@@ -281,6 +302,7 @@ __all__ = [
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
     "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_prev_track_rows",
     "_var_key", "_sensitivity_items", "_first_var_name", "_gap_dim_ok", "_period_ratio",
+    "parse_stage_period",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_hgrid_ticks", "_legend_row",
     "_inject_chart_anchors", "_anchor_fit", "_anchor_clamp",

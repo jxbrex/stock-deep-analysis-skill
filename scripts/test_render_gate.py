@@ -1638,3 +1638,19 @@ def test_anchor_discipline():
     R.validate_content(minimal_fill(), R.compute_valuation(minimal_fill()))
     print("OK 估值锚纪律门禁（prev.scenarios 必填 / 移动须基本面证据 / 未移动禁填 / "
           "重构须 rollback_html / 首版与市值口径豁免）")
+
+
+def test_cycle_stages_period_warn():
+    """v5.1.3：period 解析不出起止月份 → 软告警「季K图阶段分界不落该段」
+    （与渲染同源 parse_stage_period；合法格式如 2023/01–2023/12、2023-01~2024-06 放行）。"""
+    base = [{"name": "阶段一", "period": "2023/01–2023/12", "current": False},
+            {"name": "阶段二", "period": "2024-01~2024-12", "current": False},
+            {"name": "阶段三", "period": "2025/01-2025/12", "current": False},
+            {"name": "阶段四", "period": "2026/01–至今", "current": True}]
+    out = validate_stderr(minimal_fill(cycle_stages=base))
+    assert "阶段分界不落该段" not in out, "合法 period 不应告警"
+    bad = [dict(base[0], period="去年至今"), base[1],
+           dict(base[2], period="2025/13–2026/01"), base[3]]   # 无数字/月份越界；current 在阶段四
+    out2 = validate_stderr(minimal_fill(cycle_stages=bad))
+    assert out2.count("阶段分界不落该段") == 2, "非法 period（无数字/月份越界）应各告警一条"
+    print("OK period 格式软告警（合法放行 / 无数字与月份越界各告警）")

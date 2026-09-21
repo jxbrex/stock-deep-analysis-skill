@@ -14,7 +14,7 @@ import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
                      _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev)
-from charts_base import _C_BLUE
+from charts_base import _C_BLUE, _sensitivity_items, _var_key
 
 
 # 正文 HTML 字段全集（写作纪律/代号泄漏/.rev 高亮检查用）
@@ -1095,6 +1095,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_misc_required(fill, warns)
     _check_optional_charts(fill, warns)
     _check_driver_cards(fill, warns)      # v4.11.3：P0 驱动卡字段（drivers/driver_verdict）
+    _check_sensitivity_units(fill, warns)  # v5.1.1：sensitivity.delta 量纲规范
     _check_cycle_stages(fill, warns)      # v4.11.3：周期阶段卡字段（cycle_stages）
     _check_dcf(fill, warns)               # v4.11.3：DCF 双卡字段（dcf）
     _check_period_track(fill, warns)      # v5.0：3 章 period_track（照抄落盘交叉校验/判词四选一/年报期整章消失）
@@ -1128,9 +1129,13 @@ def _disp_w(s: str) -> int:
 
 def _check_driver_cards(fill: dict, warns: list) -> None:
     """v4.11.3：P0 驱动卡字段校验（drivers/driver_verdict，软告警迁移期——缺失不拒）。
-    drivers 1-2 项、first_var 恰 1 个、chips 恰 悲观/基础/乐观 三情景档（+可选 unit）、
-    name ≤12 字、note 显示宽 ≤300（≈3 行；宁德时代融合版备注 137 字实测可读，原 90 字过紧
-    已放宽——宽度口径：CJK 计 2、ASCII 计 1）；first_var 名与 sensitivity 首行变量名不一致 → 告警；
+    drivers 1-2 项、chips 恰 悲观/基础/乐观 三情景档（+可选 unit）、name ≤12 字、
+    note 显示宽 ≤300（≈3 行；宁德时代融合版备注 137 字实测可读，原 90 字过紧
+    已放宽——宽度口径：CJK 计 2、ASCII 计 1）；
+    v5.1.1：第一变量改由脚本按 sensitivity |impact| 降序加冕（与龙卷风图同源，
+    charts_base._first_var_name；影石创新驱动卡手标与排序图各执一词、校验比数组
+    第 0 项放过矛盾实证）——sensitivity 有有效行时首行无同名驱动卡 → 拒渲染，
+    手标 first_var 与加冕不一致 → 告警（手标忽略）；sensitivity 缺失时回退手标、仍须恰 1 个；
     p0_html 仍手写「为什么…第一变量」info-card → 重复告警。"""
     drivers = [d for d in fill.get("drivers") or [] if isinstance(d, dict)]
     if not drivers:
@@ -1141,8 +1146,6 @@ def _check_driver_cards(fill: dict, warns: list) -> None:
     if len(drivers) > 2:
         warns.append(f"drivers 共 {len(drivers)} 项（应 1-2 个）：只保留对利润弹性最大的 1-2 个驱动")
     firsts = [d for d in drivers if d.get("first_var")]
-    if len(firsts) != 1:
-        warns.append(f"drivers 的 first_var 应恰为 1 个（当前 {len(firsts)} 个）：第一变量只有一个")
     for d in drivers:
         tag = _plain_text(str(d.get("name") or "")).strip() or "?"
         short = tag[:8] + ("…" if len(tag) > 8 else "")
@@ -1162,17 +1165,38 @@ def _check_driver_cards(fill: dict, warns: list) -> None:
     if not str(fill.get("driver_verdict") or "").strip():
         warns.append("driver_verdict 未填：「为什么 X 是第一变量」判词缺失"
                      "（弹性对比+不确定性不对称一句，卡下横条承载）")
-    sens = [s for s in fill.get("sensitivity") or [] if isinstance(s, dict)]
-    if firsts and sens:
-        fv = _plain_text(str(firsts[0].get("name") or "")).strip().replace(" ", "")
-        sv = _plain_text(str(sens[0].get("name") or "")).strip().replace(" ", "")
-        if fv and sv and fv != sv:
-            warns.append(f"drivers 第一变量「{firsts[0].get('name')}」与 sensitivity 首行「{sens[0].get('name')}」"
-                         "不同名：两处应一致（龙卷风图排序标签与驱动卡同源）")
+    sens_items = _sensitivity_items(fill)
+    if sens_items:
+        crowned = sens_items[0]["name"]
+        ck = _var_key(crowned)
+        if not any(_var_key(d.get("name")) == ck for d in drivers):
+            raise ValueError(
+                f"sensitivity 首行（|impact| 降序）「{crowned}」在 drivers 中无同名驱动卡："
+                "第一变量必须是 1-2 张驱动卡之一（v5.1.1 起拒渲染——驱动卡角标与龙卷风图"
+                "由脚本同源加冕；对齐变量名或修正 impact 后重渲）")
+        for d in firsts:
+            if _var_key(d.get("name")) != ck:
+                warns.append(f"drivers 手标 first_var「{d.get('name')}」与 sensitivity 首行（|impact| 降序）"
+                             f"「{crowned}」不一致：v5.1.1 起第一变量由脚本按 sensitivity 加冕，"
+                             "手标忽略（可删 first_var 键）")
+    elif len(firsts) != 1:
+        warns.append(f"drivers 的 first_var 应恰为 1 个（当前 {len(firsts)} 个）：第一变量只有一个"
+                     "（sensitivity 缺失时角标与判词前缀仍由手标承载）")
     if re.search(r'<div class="info-card"><strong>为什么', fill.get("p0_html") or ""):
         warns.append("p0_html 仍含手写「为什么…」info-card：v4.11.3 起由 driver_verdict 判词横条承载，"
                      "请删除手写块（drivers 已填）")
 
+
+def _check_sensitivity_units(fill: dict, warns: list) -> None:
+    """v5.1.1：sensitivity.delta 量纲规范——变量自身变动幅度必须带单位：比例写 ±10%、
+    百分点写 ±1pct（毛利率/利差类变量的变动是百分点，与脚本按 impact 生成的净利影响 %
+    区分；影石创新报告同屏混排 1pct 与 20%、读者无从分辨两种量纲实证）。delta 非空但
+    不合规 → 告警。"""
+    for s in _sensitivity_items(fill):
+        d = s["delta"]
+        if d and not re.fullmatch(r"±?\d+(\.\d+)?([~–-]\d+(\.\d+)?)?(pct|%)", d.replace(" ", "")):
+            warns.append(f"sensitivity[{s['name'][:8]}] delta「{d}」量纲不规范：变动幅度须带单位——"
+                         "比例写 ±10%、百分点写 ±1pct（条端/坐标轴的净利影响 % 由脚本按 impact 生成）")
 
 def _check_cycle_stages(fill: dict, warns: list) -> None:
     """v4.11.3：周期阶段卡字段校验（cycle_stages，软告警迁移期——缺失不拒）。

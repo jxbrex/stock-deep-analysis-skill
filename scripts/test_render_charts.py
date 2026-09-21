@@ -694,6 +694,21 @@ def test_driver_cards():
     assert 'drv-badge' not in h2 and '第一变量判词：' in h2
 
 
+def test_driver_cards_auto_crown():
+    """v5.1.1：第一变量由脚本按 sensitivity |impact| 降序加冕——手标 first_var 与排序冲突时
+    角标/判词前缀跟图走（影石创新驱动卡与龙卷风各执一词实证）；手标不再决定角标。"""
+    from charts_misc import build_driver_cards
+    html = build_driver_cards(minimal_fill(
+        drivers=[{"name": "毛利率", "first_var": True, "elastic": "±1pct → 净利 ±15%"},
+                 {"name": "收入增速", "elastic": "±10% → 净利 ±20%"}],
+        driver_verdict="弹性对比一句。",
+        sensitivity=[{"name": "毛利率", "impact": 15, "delta": "±1pct"},
+                     {"name": "收入增速", "impact": 20, "delta": "±10%"}]))
+    assert '收入增速</span><span class="drv-badge">第一变量' in html
+    assert html.count('drv-badge') == 1
+    assert '为什么收入增速是第一变量：' in html
+
+
 def test_cycle_stages():
     """v4.11.3 周期阶段卡：序号自动编排（跳过非法项仍连续）、current 高亮+「本轮」角标、
     pe/price 可省不炸；缺字段返回空串。"""

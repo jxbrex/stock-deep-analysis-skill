@@ -203,7 +203,8 @@ def full_fill(**over):
                         "downstream": ["聚烯烃加工", "包装", "家电"]},
         sensitivity=[{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
                      {"name": "产量", "impact": 13}],
-        # v4.11.3：P0 驱动卡（first_var 名与 sensitivity 首行同名）+ 周期阶段卡 + DCF 双卡进 golden
+        # v4.11.3：P0 驱动卡 + 周期阶段卡 + DCF 双卡进 golden
+        # （v5.1.1：第一变量由脚本按 sensitivity impact 降序加冕——金价 20 > 产量 13，手标一致不告警）
         drivers=[{"name": "金价", "first_var": True,
                   "elastic": "±10% → 净利 ±20%", "elastic_sub": "±10%，金价 900 元/g 基数",
                   "note": "当前约 900 元/g，被三重力量撕扯：美元实际利率、央行购金、地缘溢价。",

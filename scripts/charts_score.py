@@ -60,19 +60,13 @@ def build_sensitivity_tornado(fill: dict) -> str:
     影响幅度（%）的双向条，红=不利方向、绿=有利方向，排序=弹性大小（首行=第一变量）。
     sensitivity: [{"name":"矿产金售价（金价）","impact":20,"delta":"±10%","amount":"约±9-10亿元"}, ...]
     （impact 取绝对值；delta/amount 可选——填了即在变量名下展示「变动幅度 → 金额影响」，
-    信息覆盖旧敏感性表，填了本字段 P0 就不必再手写敏感性表）。字段缺失 → 返回空串。"""
-    items = []
-    for s in fill.get("sensitivity") or []:
-        imp = _num(s.get("impact"))
-        name = str(s.get("name") or "").strip()
-        if imp is None or not name:
-            continue
-        items.append({"name": name, "impact": abs(imp),
-                      "delta": str(s.get("delta") or "").strip(),
-                      "amount": str(s.get("amount") or "").strip()})
+    信息覆盖旧敏感性表，填了本字段 P0 就不必再手写敏感性表。delta 量纲规范 v5.1.1：
+    变量自身变动幅度须带单位——比例写 ±10%、百分点写 ±1pct，与条端/坐标轴的净利影响 % 区分）。
+    有效行过滤与 |impact| 降序由 charts_base._sensitivity_items 承载（v5.1.1 起校验/驱动卡同源，
+    首行加冕不再各算各的）。字段缺失 → 返回空串。"""
+    items = _sensitivity_items(fill)
     if not items:
         return ""
-    items.sort(key=lambda r: -r["impact"])
     has_detail = any(it["delta"] or it["amount"] for it in items)
     W = 1000
     # v4.8.2：变量名列宽度自适应——先组文本行并用 _text_w 量宽，超 388px 的长名折两行；
@@ -128,7 +122,8 @@ def build_sensitivity_tornado(fill: dict) -> str:
         parts.append(f'<text x="{X0 + w + 8:.1f}" y="{cy + BAR_H / 2 + 4.5:.1f}" font-size="12" '
                      f'font-weight="700" fill="{_C_GREEN}">+{_fmt(it["impact"])}%</text>')
     parts.append(_svg_close())
-    parts.append('<span class="source">敏感性龙卷风（脚本按 sensitivity 字段生成）：条长=变量变动对归母净利的'
-                 '影响幅度（估算绝对值），红=不利方向、绿=有利方向，左列=变动幅度与金额影响，'
+    parts.append('<span class="source">敏感性龙卷风（脚本按 sensitivity 字段生成）：条长/条端/坐标轴=变量变动'
+                 '对归母净利的影响幅度 %（估算绝对值），红=不利方向、绿=有利方向，'
+                 '左列=变量自身变动幅度（pct=百分点、%=比例）→ 金额影响，'
                  '排序=弹性大小（首行=第一变量）；填了本字段，P0 不必再写敏感性表</span>')
     return "".join(parts)

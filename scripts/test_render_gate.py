@@ -671,22 +671,52 @@ if __name__ == "__main__":
 
 
 def test_driver_cards_validate():
-    """v4.11.3 驱动卡校验：缺失告警；chips 非三情景档告警；first_var 与 sensitivity 首行
-    不同名告警；p0_html 手写「为什么…」info-card 且 drivers 已填 → 重复告警。"""
+    """v4.11.3 驱动卡校验：缺失告警；chips 非三情景档告警；p0_html 手写「为什么…」info-card
+    且 drivers 已填 → 重复告警。v5.1.1：第一变量改由脚本按 sensitivity |impact| 降序加冕——
+    首行无同名驱动卡 → 拒渲染（原「不同名」告警升级；校验曾比数组第 0 项而图按 impact 排序，
+    影石创新矛盾静默穿过实证）；加冕与手标 first_var 不一致 → 告警（手标忽略）。"""
     warns = validate_stderr(minimal_fill())
     assert "drivers 字段未填" in warns
+    good_chips = [{"label": "悲观", "value": "1"}, {"label": "基础", "value": "2"},
+                  {"label": "乐观", "value": "3"}]
     warns = validate_stderr(minimal_fill(
-        drivers=[{"name": "金价", "first_var": True, "elastic": "x",
-                  "chips": [{"label": "高", "value": "1"}]}],
-        driver_verdict="v", sensitivity=[{"name": "铜价", "impact": 10}]))
-    assert "chips 情景档" in warns and "不同名" in warns
+        drivers=[{"name": "金价", "elastic": "x", "chips": [{"label": "高", "value": "1"}]}],
+        driver_verdict="v"))
+    assert "chips 情景档" in warns
+    # 首行无同名卡 → 拒渲染（数组第 0 项同名不算数：按 |impact| 降序首行为准）
+    expect_valueerror(minimal_fill(
+        drivers=[{"name": "金价", "first_var": True, "elastic": "x", "chips": good_chips}],
+        driver_verdict="v", sensitivity=[{"name": "铜价", "impact": 10}]), "首行无同名驱动卡")
+    expect_valueerror(minimal_fill(
+        drivers=[{"name": "毛利率", "first_var": True, "elastic": "x", "chips": good_chips}],
+        driver_verdict="v",
+        sensitivity=[{"name": "毛利率", "impact": 15}, {"name": "收入增速", "impact": 20}]),
+        "数组第 0 项同名但 impact 非最大仍拒")
+    # 加冕名在卡中、手标与加冕不一致 → 告警不拒
+    warns = validate_stderr(minimal_fill(
+        drivers=[{"name": "毛利率", "first_var": True, "elastic": "x", "chips": good_chips},
+                 {"name": "收入增速", "elastic": "x", "chips": good_chips}],
+        driver_verdict="v",
+        sensitivity=[{"name": "毛利率", "impact": 15}, {"name": "收入增速", "impact": 20}]))
+    assert "手标" in warns and "加冕" in warns
     warns = validate_stderr(minimal_fill(
         p0_html='<div class="info-card"><strong>为什么X是第一变量</strong></div>',
-        drivers=[{"name": "金价", "first_var": True, "elastic": "x",
-                  "chips": [{"label": "悲观", "value": "1"}, {"label": "基础", "value": "2"},
-                            {"label": "乐观", "value": "3"}]}],
+        drivers=[{"name": "金价", "first_var": True, "elastic": "x", "chips": good_chips}],
         driver_verdict="v"))
     assert "info-card" in warns and "为什么" in warns
+
+
+def test_sensitivity_units_validate():
+    """v5.1.1：sensitivity.delta 量纲规范——比例 ±10% / 百分点 ±1pct 合规；裸数字或
+    文字单位 → 告警（条端/坐标轴净利影响 % 由脚本按 impact 生成）。"""
+    warns = validate_stderr(minimal_fill(sensitivity=[
+        {"name": "毛利率", "impact": 15, "delta": "±1pct"},
+        {"name": "收入增速", "impact": 20, "delta": "±10%"}]))
+    assert "量纲不规范" not in warns
+    warns = validate_stderr(minimal_fill(sensitivity=[
+        {"name": "毛利率", "impact": 15, "delta": "1个百分点"},
+        {"name": "量", "impact": 8, "delta": "10"}]))
+    assert warns.count("量纲不规范") == 2
 
 
 def test_cycle_stages_validate():

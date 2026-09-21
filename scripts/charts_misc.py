@@ -692,6 +692,9 @@ def build_driver_cards(fill: dict) -> str:
     1-2 个关键利润驱动各一张卡——弹性值（大字号）+ 备注（当前值/撕扯力量）+ 三情景锚标签；
     第一变量带 drv-badge 角标；卡下判词横条（.layer-summary）承载「为什么 X 是第一变量」
     （v4.11.3 起替代 p0_html 手写 info-card）。
+    v5.1.1：第一变量改由脚本按 sensitivity |impact| 降序加冕（charts_base._first_var_name，
+    与龙卷风图/校验同源——影石创新驱动卡手标与排序图各执一词实证）；sensitivity 缺失时
+    才回退手标 first_var。
     drivers: [{"name":"单Wh净利（单位盈利）","first_var":true,
                "elastic":"±0.01元/Wh → 净利 ±100亿","elastic_sub":"±10.6%，1,000GWh 基数",
                "note":"当前约 0.10元/Wh。……",
@@ -699,13 +702,16 @@ def build_driver_cards(fill: dict) -> str:
                         {"label":"乐观","value":"0.105"},{"label":"元/Wh","unit":true}]}, ...]
     （chips 恰 3 情景档 + 可选 1 个 unit 标签；字段缺失/空 → 返回空串）"""
     drivers = [d for d in fill.get("drivers") or [] if isinstance(d, dict)]
+    first_var = _first_var_name(fill)
+    first_key = _var_key(first_var)
     cards = []
     for d in drivers:
         name = str(d.get("name") or "").strip()
         elastic = str(d.get("elastic") or "").strip()
         if not name or not elastic:
             continue
-        badge = '<span class="drv-badge">第一变量</span>' if d.get("first_var") else ""
+        badge = ('<span class="drv-badge">第一变量</span>'
+                 if first_key and _var_key(name) == first_key else "")
         sub = str(d.get("elastic_sub") or "").strip()
         sub_html = f'<span class="unit">（{_esc(sub)}）</span>' if sub else ""
         note = str(d.get("note") or "").strip()
@@ -732,8 +738,9 @@ def build_driver_cards(fill: dict) -> str:
     verdict = str(fill.get("driver_verdict") or "").strip()
     verdict_html = ""
     if verdict:
-        first = next((d for d in drivers if d.get("first_var")), None)
-        first_name = str((first or {}).get("name") or "").strip()
+        first = next((d for d in drivers
+                      if first_key and _var_key(d.get("name")) == first_key), None)
+        first_name = str((first or {}).get("name") or "").strip() or first_var
         lead = f"为什么{_esc(first_name)}是第一变量：" if first_name else "第一变量判词："
         verdict_html = f'<div class="layer-summary"><strong>{lead}</strong>{_esc(verdict)}</div>'
     return '<div class="drv-strip">' + "".join(cards) + '</div>' + verdict_html

@@ -10,9 +10,10 @@ _vgrid_ticks/_hgrid_ticks/_legend_row/_anchor_fit/_anchor_clamp/_inject_chart_an
 只依赖 scoring，被各图族模块与 validate.py 导入。"""
 
 import math
+import re
 import sys
 
-from scoring import _esc, _fmt, _num
+from scoring import _esc, _fmt, _num, _plain_text
 
 # SVG 色板（全站图表共用暖灰/钢蓝色系，唯一权威处；改色只动这里）
 _C_LABEL = "#6f695e"       # 轴刻度/灰字说明/虚线时点刻（v4.9 自 #8a8375 压深，小字对比度达标）
@@ -51,6 +52,42 @@ def _fmt_amt(v) -> str:
         return "—"
     s = f"{float(v):,.1f}"
     return s[:-2] if s.endswith(".0") else s
+
+
+def _var_key(name) -> str:
+    """变量名比对键：剥 HTML + 去全部空白（驱动卡/龙卷风/校验同源，v5.1.1）。"""
+    return re.sub(r"\s+", "", _plain_text(str(name or "")))
+
+
+def _sensitivity_items(fill: dict) -> list:
+    """sensitivity 有效行（name 非空 + impact 可解析为数值），按 |impact| 降序。
+    「首行=第一变量」的唯一定义处（v5.1.1：此前龙卷风按 impact 排序加冕、校验却比 fill 数组
+    第 0 项，两套「首行」让影石创新驱动卡与排序图各执一词静默过检）。"""
+    items = []
+    for s in fill.get("sensitivity") or []:
+        if not isinstance(s, dict):
+            continue
+        imp = _num(s.get("impact"))
+        name = str(s.get("name") or "").strip()
+        if imp is None or not name:
+            continue
+        items.append({"name": name, "impact": abs(imp),
+                      "delta": str(s.get("delta") or "").strip(),
+                      "amount": str(s.get("amount") or "").strip()})
+    items.sort(key=lambda r: -r["impact"])
+    return items
+
+
+def _first_var_name(fill: dict) -> str:
+    """第一变量名（唯一定义，v5.1.1）：sensitivity 有效行 |impact| 降序首行；
+    sensitivity 缺失/无有效行 → 回退 drivers 手标 first_var（无龙卷风形态兼容）；皆无 → ""。"""
+    items = _sensitivity_items(fill)
+    if items:
+        return items[0]["name"]
+    for d in fill.get("drivers") or []:
+        if isinstance(d, dict) and d.get("first_var"):
+            return str(d.get("name") or "").strip()
+    return ""
 
 
 
@@ -219,6 +256,7 @@ __all__ = [
     "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_PAPER_CELL",
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
     "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_prev_track_rows",
+    "_var_key", "_sensitivity_items", "_first_var_name",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_hgrid_ticks", "_legend_row",
     "_inject_chart_anchors", "_anchor_fit", "_anchor_clamp",

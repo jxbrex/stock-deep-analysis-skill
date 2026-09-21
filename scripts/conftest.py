@@ -142,12 +142,14 @@ def minimal_fill(**over):
         # v4.9.1 形态：归母净利面板带扣非第二柱；第 4 面板为纯线周转天数面板
         "fin_trend": {"years": ["2021", "2022", "2023", "2024", "2025"], "panels": [
             {"title": "营收 × 毛利率",
-             "bars": [{"name": "营收", "unit": "亿", "values": [100, 110, 120, 125, 130]}],
+             # v5.1.2：数值成比例化（归母净利末年 93 亿 ≈ base.profit 100 ÷ (1+7.5%)，
+             # 原 11 亿 vs base.profit 100 亿 → growth 换算对账恒定误报 809% 越界，热核 P2-1）
+             "bars": [{"name": "营收", "unit": "亿", "values": [800, 850, 880, 920, 950]}],
              "lines": [{"name": "毛利率", "pct": True, "values": [30, 31, 32, 33, 34]}]},
             {"title": "归母净利+扣非净利 × 净利率 × ROE",
-             "bars": [{"name": "归母净利", "unit": "亿", "values": [8, 9, 10, 10.5, 11]},
-                      {"name": "扣非净利", "unit": "亿", "values": [7.5, 8.5, 9.5, 10, 10.5]}],
-             "lines": [{"name": "净利率", "pct": True, "values": [8, 8.5, 9, 9.5, 10]},
+             "bars": [{"name": "归母净利", "unit": "亿", "values": [80, 84, 88, 91, 93]},
+                      {"name": "扣非净利", "unit": "亿", "values": [75, 79, 83, 86, 88]}],
+             "lines": [{"name": "净利率", "pct": True, "values": [10, 9.9, 10, 9.9, 9.8]},
                        {"name": "ROE", "pct": True, "values": [12, 13, 14, 14, 14]}]},
             {"title": "经营现金流+自由现金流 × 现金含量",
              "bars": [{"name": "经营现金流", "unit": "亿", "values": [10, 11, 12, 12, 13]},
@@ -247,9 +249,10 @@ def full_fill(**over):
                        '<span class="source">时机判定：中性 5 分起始，逐条信号加减（微调 ±1 档）。</span>'
                        + '<p>时机判定与决策逻辑。' * 12 + '</p>'),
         consensus={"lo": 9, "hi": 13},
-        triggers=[{"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%", "status": "hit"},
+        triggers=[{"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%｜实际 47.2%", "status": "hit"},
                   {"cond": "销量转正", "status": "pending"},
-                  {"cond": "成本回落", "status": "miss"}],
+                  # v5.1.2：hit/miss 行 target 须写「阈值｜实际值」（方向与 status 不矛盾）
+                  {"cond": "成本回落", "target": "存储成本环比转负｜实际 环比+3%", "status": "miss"}],
         prev={"date": "2026-08-08", "quality": 6.4, "valuation": 5.0, "timing": 4.8,
               "target_range": "9-11",
               # v5.1.0：prev.scenarios（extract_review 对上版报告 scenario-table 的照抄格式）——
@@ -306,12 +309,15 @@ def _calc(dispersion=0.55, odds=1.2, floor_type=None):
     return c
 
 
-def expect_valueerror(fill, msg):
-    """compute_scores + validate_content 均未抛 ValueError → AssertionError。"""
+def expect_valueerror(fill, msg, kw=None):
+    """compute_scores + validate_content 均未抛 ValueError → AssertionError。
+    kw 给定时锁定报错文案（v5.1.2 热核审计加固：防止「被无关规则误拒」的假绿）。"""
     try:
         R.compute_scores(fill)
         R.validate_content(fill, R.compute_valuation(fill))
-    except ValueError:
+    except ValueError as e:
+        if kw is not None:
+            assert kw in str(e), f"拒渲染来源不符：期望含「{kw}」，实际 {e}"
         return
     raise AssertionError(f"应拒渲染但未拒：{msg}")
 

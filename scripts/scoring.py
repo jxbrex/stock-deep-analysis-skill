@@ -103,10 +103,11 @@ def _timing_verdict(t: float) -> str:
 
 
 def _num(v):
-    """"390.40" / "18,062.5" / 390.4 → float；取首个数字串，失败返回 None"""
+    """"390.40" / "18,062.5" / 390.4 → float；取首个数字串，失败返回 None。
+    v5.1.2：U+2212 负号（−）归一为 ASCII -——研报/网页复制来的「−1」此前被解析为 +1。"""
     if isinstance(v, (int, float)):
         return float(v)
-    m = re.search(r"-?\d[\d,]*\.?\d*", str(v))
+    m = re.search(r"-?\d[\d,]*\.?\d*", str(v).replace("−", "-"))
     return float(m.group(0).replace(",", "")) if m else None
 
 
@@ -408,14 +409,20 @@ def compute_scores(fill: dict):
         raise ValueError("yellow_deductions 键缺失：黄灯扣分明细必须显式给出，无扣分请填 []")
     yellow = fill.get("yellow_deductions") or []
     for y in yellow:
-        yp = float(y.get("points", 0))
+        if not isinstance(y, dict):
+            raise ValueError(f"yellow_deductions 条目需为对象（{{label, points}}），实际: {y!r}")
+        ypv = _num(y.get("points"))
+        if ypv is None:
+            raise ValueError(f"yellow_deductions[{y.get('label', '?')}] points 缺失或不可解析: "
+                             f"{y.get('points')!r}（v5.1.2 起明确报错——此前 float() 裸 traceback）")
+        yp = float(ypv)
         if yp < 0:
             raise ValueError(f"黄灯单项扣分 {yp} < 0（{y.get('label', '?')}）："
                              f"负扣分等于变相加分、绕过扣分上限，拒渲染")
         if yp > 1:
             raise ValueError(f"黄灯单项扣分 {yp} > 1（{y.get('label', '?')}）："
                              f"累计扣分>2 或单项>1，应按规则升红灯")
-    yellow_total = round(sum(float(y.get("points", 0)) for y in yellow), 2)
+    yellow_total = round(sum(float(_num(y.get("points"))) for y in yellow), 2)
     if yellow_total > 2:
         raise ValueError(f"黄灯累计扣分 {yellow_total} > 2：累计扣分>2 或单项>1，应按规则升红灯")
     quality = max(0.0, round(pre_risk - yellow_total, 2))  # 最终质量分（下限 0）
@@ -658,6 +665,10 @@ def build_dcf_cards(fill: dict) -> str:
     if value is None or not implied_g or not verdict:
         return ""
 
+    # v5.1.2：每股值单位跟随 fill.currency（与 render_report 同口径，默认元、港股港元——
+    # 此前硬编码「元」，港股报告 Hero 港元 / DCF 元 同屏打架）
+    cur = str(fill.get("currency") or "元")
+
     fcf0 = str(d.get("fcf0") or "").strip()
     params = "、".join(p for p in (
         f"5年增速 {str(d.get('growth_5y') or '').strip()}" if str(d.get("growth_5y") or "").strip() else "",
@@ -668,7 +679,7 @@ def build_dcf_cards(fill: dict) -> str:
                                  _esc(params) if params else "",
                                  f"含净现金 {_esc(net_cash)}" if net_cash else "") if p)
     card1 = ('<div class="metric-card"><div class="label">保守参数 DCF 每股值</div>'
-             f'<div class="value">{_esc(_fmt(value))}<span class="unit">元</span></div>'
+             f'<div class="value">{_esc(_fmt(value))}<span class="unit">{_esc(cur)}</span></div>'
              + (f'<div class="sub">{sub1}</div>' if sub1 else "") + '</div>')
 
     implied_note = str(d.get("implied_note") or "").strip()

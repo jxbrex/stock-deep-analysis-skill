@@ -90,6 +90,30 @@ def _first_var_name(fill: dict) -> str:
     return ""
 
 
+def _gap_dim_ok(d) -> bool:
+    """gap_plot 维度行有效性（v5.1.2：图行/附注/校验同源判定）：dict 且 name/ours/consensus
+    可解析、consensus >0（≤0 行图内剔除——此前附注按原始数组取行，剔除后图①与注①错位）。"""
+    if not isinstance(d, dict):
+        return False
+    name = str(d.get("name") or "").strip()
+    ours, cons = _num(d.get("ours")), _num(d.get("consensus"))
+    return bool(name) and ours is not None and cons is not None and cons > 0
+
+
+def _period_ratio(pt: dict, amt_k: str, goal_k: str = None, cons_k: str = None):
+    """报告期完成度（v5.1.2，子弹图与判词对账同源）：分母=一致预期优先、缺则经营目标
+    （与 charts_misc.build_period_bullets 同一选取规则）；返回 累计÷分母，
+    任一缺失或分母 ≤0 → None。"""
+    v = _num(pt.get(amt_k))
+    goal = _num(pt.get(goal_k)) if goal_k else None
+    cons = _num(pt.get(cons_k)) if cons_k else None
+    d = cons if cons is not None else goal
+    # 累计 ≤0（亏损期）完成度无意义 → None（与子弹图「累计 ≤0 不标完成度」同源，热核审计修复）
+    if v is None or v <= 0 or not d or d <= 0:
+        return None
+    return v / d
+
+
 
 _SCENARIO_COLORS = {"pess": _C_RED, "base": _C_ORANGE, "opt": _C_GREEN}
 
@@ -256,7 +280,7 @@ __all__ = [
     "_C_STONE", "_C_OLIVE", "_C_SAND", "_C_SAND_LT", "_C_TRACK", "_C_PAPER_CELL",
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
     "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_prev_track_rows",
-    "_var_key", "_sensitivity_items", "_first_var_name",
+    "_var_key", "_sensitivity_items", "_first_var_name", "_gap_dim_ok", "_period_ratio",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_hgrid_ticks", "_legend_row",
     "_inject_chart_anchors", "_anchor_fit", "_anchor_clamp",

@@ -663,6 +663,35 @@ def test_gap_plot():
     print("OK 预期差图 A/B 档 / 剔除门禁 / 防叠确定性 / 锚点注入 / 热核修复")
 
 
+def test_gap_notes_renumber():
+    """v5.1.2：gap 附注与图同源——行过滤一致（cons≤0 剔除、取前 6、<2 不生成），
+    圈号前缀按过滤后行序脚本改写（剔除行后图①注①不错位）；text_dims 续行号。"""
+    from charts_misc import _gap_notes_html, build_gap_plot
+    gp = {"dims": [
+        {"name": "出货量", "ours": 5, "consensus": -1, "note": "<b>① 出货量：</b>该行被剔除"},
+        {"name": "净利", "ours": 930, "consensus": 905, "note": "<b>② 净利：</b>分歧根源在周期"},
+        {"name": "目标价", "ours": 50, "consensus": 45, "note": "<b>③ 目标价：</b>本文更乐观"}],
+        "text_dims": ["<b>④ 产能：</b>未形成共同披露"]}
+    notes = _gap_notes_html(gp)
+    # 剔除首行后：净利成图行①，附注圈号被改写为①（原手写②）；目标价②；text_dims 续③
+    assert "<b>① 净利：</b>" in notes and "<b>② 目标价：</b>" in notes
+    assert "<b>③ 产能：</b>" in notes and "出货量" not in notes
+    # 图行号与附注一致（图内首行标签为「① 净利」）
+    assert "① 净利" in build_gap_plot({"gap_plot": gp})
+    # 无圈号前缀原样保留；有效行 <2 不生成
+    n2 = _gap_notes_html({"dims": [
+        {"name": "A", "ours": 1, "consensus": 1, "note": "无前缀注"},
+        {"name": "B", "ours": 2, "consensus": 2}]})
+    assert "无前缀注" in n2
+    assert _gap_notes_html({"dims": [gp["dims"][1]]}) == ""
+    # 热核 P2-1：任意标签前缀（<i>/<b style>/&nbsp;）同样改写
+    n3 = _gap_notes_html({"dims": [
+        {"name": "X", "ours": 1, "consensus": -1, "note": "<b>① X：</b>剔除"},
+        {"name": "A", "ours": 1, "consensus": 1, "note": "<i>② 斜体：</i>注"},
+        {"name": "B", "ours": 2, "consensus": 2, "note": '<b style="color:red">③ 带样式：</b>注'}]})
+    assert "<i>① 斜体：</i>" in n3 and '<b style="color:red">② 带样式：</b>' in n3
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
@@ -735,6 +764,16 @@ def test_dcf_cards():
     assert '较现价高 25.0%' in html
     assert build_dcf_cards(minimal_fill()) == ""
     assert build_dcf_cards(minimal_fill(dcf={"value": 12.5})) == ""
+
+
+def test_dcf_cards_currency():
+    """v5.1.2：DCF 每股值单位跟随 fill.currency（默认元、港股港元——此前硬编码「元」，
+    港股报告 Hero 港元 / DCF 元 同屏打架）。"""
+    from scoring import build_dcf_cards
+    dcf = {"value": 12.5, "implied_g": "0.5",
+           "verdict": "隐含 g 极低、市场白送增长——判词足够长，超过四十字的地板要求啊啊。"}
+    assert '<span class="unit">港元</span>' in build_dcf_cards(minimal_fill(currency="港元", dcf=dcf))
+    assert '<span class="unit">元</span>' in build_dcf_cards(minimal_fill(dcf=dcf))
 
 
 def test_three_cards_land_in_sections():

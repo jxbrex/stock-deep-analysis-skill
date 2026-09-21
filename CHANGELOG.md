@@ -152,6 +152,55 @@
 
 ## 版本历史
 
+### V5.1.2（2026-09-21）— 全 skill 一致性彻查修复（影石矛盾同类 22 项）
+
+> 立项：影石创新矛盾修复（v5.1.1）后用户要求彻查整个 skill 的同类问题。三路探查
+> （校验 vs 渲染口径 / 双数据源并存 / 契约虚言与量纲）确认 40+ 条疑似，复核去重后
+> 中高危 22 项本版全修（用户拍板「中高危全修、一版装完」）。
+> 三大 bug 类：①校验比对对象 ≠ 渲染消费终态（排序/过滤/回退后）；②同一事实两处
+> 数据源无硬同步（手标 vs 脚本算、手写 HTML vs 脚本生成、文本数字 vs 结构化数值）；
+> ③契约声称的校验不存在、自由文本无量纲规范。
+
+- **校验对齐渲染终态（7 项）**：gap 附注与图同源过滤 + 圈号脚本按行序改写
+  （此前剔除 cons≤0 行后图①注①错位）；cycle_stages 条数/本轮判定按有效项
+  （缺 name/period 不落图）、**current ≠1 拒渲染**、已填字段而 cycle_html 缺失告警；
+  dcf.value/implied_g 非空但不可解析告警（整卡曾静默消失）；segments 占比合计按
+  落图行过滤；holders 期数口径与渲染同；peers_plot target 比对落在可解析点集合并查多 target。
+- **跨字段数字对账（10 项）**：**Hero 顶层 pe_ttm vs valuation_inputs.pe_ttm >1% 拒渲染**
+  （metric_label 豁免；存量 fill 无 quote 时两处 PE 打架的最后一口）+ Hero ✓ 字段缺失告警；
+  horizon 顶层 vs valuation 告警；mcap vs price×shares >5% 告警；gap_plot 净利维度
+  consensus 对落盘 np_avg（>1%）、ours 对 base.profit（>2%）；growth_plot np_consensus
+  对落盘换算增速、base.profit 换算增速越本文区间（基数=fin_trend 归母净利柱，条件不齐跳过）；
+  **L4 黄灯表逐项 points 不一致拒渲染**（行检出同步放宽容忍属性）；**thesis 三 span 全缺
+  且含价格形态拒渲染**（裸文本绕行硬校验的静默口）；triggers hit/miss 行 target 须写
+  「阈值｜实际值」且方向不矛盾；时机小表得分对 timing_scores、技术面信号数值/方向对
+  quote 落盘 timing（**神华假 MA60 修复闭环**）；period_track 判词超前/滞后对完成度
+  （分母与子弹图同源，抽 `_period_ratio` 共享）。
+- **手写表检测 + 契约补齐（5 项）**：手写表四禁告警（p0 敏感性表 / valuation 三情景表
+  与指标卡 / l1 多年年表 / gap 逐机构对照表——v4.11.3 只堵三种手写，其余四种同型补全）；
+  **红旗 ≥2 项（red_deductions 条数）→ conclusion 首卡首句「利润真实性存疑」拒渲染**
+  （schema 承诺多年、零实现的虚言兑现）；target_sub_html 禁具体百分比/价格（区间被脚本
+  覆盖后失配）；scenario.trigger >15 字 / chips 档值 >12 字告警（槽位契约补闸）；
+  **DCF 每股值单位跟随 fill.currency**（此前硬编码「元」，港股 Hero 港元/DCF 元同屏打架）。
+  另：4.3 压力测试阈值在 14 章 triggers/dash 无对应行告警（启发式执行文档既定要求）。
+- **sensitivity impact 估算纪律入契约**（影石数据核算产出：impact=100 系叙事非算术，
+  被 H1 边际净利率 −26% 证伪——同一 fill 里写了「变动额+净利基数」的毛利率行对了、
+  没写的收入增速行错了）：fill-schema 与 SKILL.md Phase 0 补三要素（变动额/净利基数
+  全表统一/边际假设——增量收入不增利时禁用历史净利率外推）+ 同一因果链只留一个刻度
+  （影石第三行「存储芯片价格」与毛利率行同链重复计量、顶走加冕排序）；amount-vs-impact
+  数字对账留作下版评估（边界：抓两处分裂、抓不了两处一致地错）。
+- 测试 141→154：新增 13 用例（gap 附注重编号 / cycle 拒与过滤 / Hero 互查 / gap·growth
+  对账 / L4 逐项 / thesis 裸文本 / triggers 核对 / timing 落盘比对 / period 判词对账 /
+  手写表四禁 / 红旗存疑句 / 槽位长度 / DCF 港元）。**热核审计（三路 glm-5.3-flash 子代理）
+  P0×2+P1×7 修复**：thesis 价格形态收紧为只认带「元」数字组（年份/数量区间曾误拒）、
+  L4 逐项比对崩溃链与 0 分母修复（scoring 层 points 同步明确报错）、gap ours 预测年守卫、
+  period 标签认全一季/三季/H1、timing 方向词现在时守卫、_period_ratio 亏损期同源、
+  _num U+2212 负号归一；minimal_fill fin_trend 成比例化 + full_fill triggers 补实际值——
+  **golden 七份有意重建（diff 逐行核验=图墙四序列+triggers 两行），expect_valueerror 加
+  kw 文案锁防误拒假绿**。
+- fill-schema 17 处同步（各校验从「文档承诺」落为「代码执行」逐条注记）、SKILL.md
+  产出前自查清单补 v5.1.2 一致性行、lessons.md 新增「废止一种形态必须同步配检测」。
+
 ### V5.1.1（2026-09-21）— 第一变量单源加冕 + sensitivity.delta 量纲规范（影石创新矛盾实证）
 
 > 立项：影石创新报告用户实读两问——①驱动卡「第一变量=毛利率（存储成本传导）」与

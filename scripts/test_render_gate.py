@@ -686,12 +686,13 @@ def test_driver_cards_validate():
     # 首行无同名卡 → 拒渲染（数组第 0 项同名不算数：按 |impact| 降序首行为准）
     expect_valueerror(minimal_fill(
         drivers=[{"name": "金价", "first_var": True, "elastic": "x", "chips": good_chips}],
-        driver_verdict="v", sensitivity=[{"name": "铜价", "impact": 10}]), "首行无同名驱动卡")
+        driver_verdict="v", sensitivity=[{"name": "铜价", "impact": 10}]), "首行无同名驱动卡",
+        kw="无同名驱动卡")
     expect_valueerror(minimal_fill(
         drivers=[{"name": "毛利率", "first_var": True, "elastic": "x", "chips": good_chips}],
         driver_verdict="v",
         sensitivity=[{"name": "毛利率", "impact": 15}, {"name": "收入增速", "impact": 20}]),
-        "数组第 0 项同名但 impact 非最大仍拒")
+        "数组第 0 项同名但 impact 非最大仍拒", kw="无同名驱动卡")
     # 加冕名在卡中、手标与加冕不一致 → 告警不拒
     warns = validate_stderr(minimal_fill(
         drivers=[{"name": "毛利率", "first_var": True, "elastic": "x", "chips": good_chips},
@@ -719,15 +720,286 @@ def test_sensitivity_units_validate():
     assert warns.count("量纲不规范") == 2
 
 
+def test_hero_cross_validate():
+    """v5.1.2：Hero 与估值结构化字段互查——顶层 pe_ttm vs valuation_inputs.pe_ttm >1% 拒
+    （metric_label 豁免）；horizon 不一致告警；mcap vs price×shares >5% 告警；
+    Hero ✓ 字段缺失告警；target_sub_html 含具体数字告警。"""
+    warns = validate_stderr(minimal_fill())
+    assert "horizon 顶层" not in warns and "price×shares" not in warns
+    expect_valueerror(minimal_fill(pe_ttm="11.5"), "Hero pe_ttm 与四件套偏差 >1%", kw="Hero pe_ttm")
+    warns = validate_stderr(minimal_fill(horizon="24个月"))
+    assert "horizon 顶层" in warns
+    warns = validate_stderr(minimal_fill(mcap="1200"))
+    assert "price×shares" in warns
+    f = minimal_fill()
+    del f["pe_ttm"]
+    warns = validate_stderr(f)
+    assert "Hero pe_ttm 缺失" in warns
+    warns = validate_stderr(minimal_fill(target_sub_html="较现价 +21%"))
+    assert "target_sub_html 含具体" in warns
+
+
+def test_gap_growth_consensus_validate():
+    """v5.1.2：gap_plot 净利维度（consensus 对落盘 np_avg、ours 对 base.profit）与
+    growth_plot 换算对账（np_consensus 对落盘换算增速、base.profit 换算增速越界）。"""
+    import conftest as C
+    ref = C._period_ref_file("v512_gap", {"consensus_np": 905})
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": ref},
+        gap_plot={"dims": [
+            {"name": "2026E 归母净利（亿元）", "ours": 90, "consensus": 870},
+            {"name": "2026E 目标价（元）", "ours": 11, "consensus": 10}]}))
+    assert "np_avg" in warns and "基础情景净利" in warns
+    # 合规路径：年份不一致（2027E vs 落盘 2026）静默跳过；一致不告警
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": ref},
+        gap_plot={"dims": [
+            {"name": "2027E 归母净利（亿元）", "ours": 100, "consensus": 870},
+            {"name": "2026E 归母净利（亿元）", "ours": 100, "consensus": 905},
+            {"name": "2026E 目标价（元）", "ours": 11, "consensus": 10}]}))
+    assert "gap_plot「" not in warns
+    # growth_plot：np_avg=120 ÷ 上年归母净利 100 − 1 = 20% vs np_consensus 15% → 差 5pct 告警；
+    # base.profit=100 → 换算 0% 越出本文区间 [5,10]（容差 ±2pct）→ 告警
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": C._period_ref_file("v512_g", {"consensus_np": 120})},
+        fin_trend={"years": ["2023", "2024", "2025"], "panels": [
+            {"title": "盈利", "bars": [{"name": "归母净利", "unit": "亿", "values": [80.0, 90.0, 100.0]}]},
+            {"title": "营收", "bars": [{"name": "营收", "unit": "亿", "values": [800.0, 900.0, 1000.0]}]},
+            {"title": "毛利", "lines": [{"name": "毛利率", "pct": True, "values": [29.0, 30.0, 31.0]}]}]},
+        growth_plot={"hist": [{"y": "2023", "np": 10.0}, {"y": "2024", "np": 11.0},
+                              {"y": "2025", "np": 12.0}],
+                     "fcst": [{"y": "2026E", "np_lo": 5, "np_hi": 10, "np_consensus": 15}]}))
+    assert "np_consensus" in warns and "基础情景换算增速" in warns
+
+
+def test_l4_yellow_points_validate():
+    """v5.1.2：L4 黄灯表逐项数值比对——行数一致但扣分值不一致 → 拒渲染；行检出容忍带属性。"""
+    tbl = ('<div class="pm-grid"><div>a</div><div>b</div><div>c</div></div>'
+           '<div class="table-scroll"><table><thead><tr><th>类别</th><th>风险</th><th>扣分</th></tr></thead>'
+           '<tbody><tr class="x"><td>a 交易与股东行为</td><td>减持</td><td class="num">0.5</td>'
+           '<td>据公告</td></tr></tbody></table></div><span class="source">数据来源：x</span>')
+    warns = validate_stderr(minimal_fill(
+        l4_html=tbl, yellow_deductions=[{"label": "减持", "points": 0.5}]))
+    assert "扣分值" not in warns
+    expect_valueerror(minimal_fill(
+        l4_html=tbl, yellow_deductions=[{"label": "减持", "points": 0.8}]), "逐项数值不一致",
+        kw="多重集")
+    # 热核 P0-2：points 不可解析不崩——pos_y 过滤后行数不符按「正扣分 0 条」拒（报错可定位）；
+    # P1-4：0 分条目不啝分母；表侧 class=num 缺失 → 降级告警不拒
+    expect_valueerror(minimal_fill(
+        l4_html=tbl, yellow_deductions=[{"label": "减持", "points": None}]),
+        "points 不可解析", kw="points 缺失或不可解析")
+    warns = validate_stderr(minimal_fill(
+        l4_html=tbl, yellow_deductions=[{"label": "减持", "points": 0.5},
+                                        {"label": "零分项", "points": 0}]))
+    assert "多重集" not in warns
+    warns = validate_stderr(minimal_fill(
+        l4_html=tbl.replace('<td class="num">0.5</td>', '<td>0.5</td>'),
+        yellow_deductions=[{"label": "减持", "points": 0.5}]))
+    assert "降级" in warns
+
+
+def test_thesis_baretext_validate():
+    """v5.1.2：thesis 三 span 全缺且含价格形态 → 拒渲染（手写价绕行一致性硬校验）。
+    热核 P0-1：价格形态只认带「元」的数字组——年份/数量/百分比区间不带元，不误拒。"""
+    expect_valueerror(minimal_fill(
+        thesis_html="好公司但坏价格，三情景目标价 15.7/37.5/61.8 元，年化中枢 -10.9%，回避。"),
+        "三 span 全缺含价格形态", kw="全缺")
+    warns = validate_stderr(minimal_fill(thesis_html="只是定性判断，没有价格，文字量足够撑过地板就行。"))
+    assert "绕行" not in warns
+    # P0-1 回归：年份区间/数量区间/百分比区间/单个现价数字，不得误拒
+    warns = validate_stderr(minimal_fill(
+        thesis_html="公司 2023-2025 营收复合增速 20%，覆盖 3-5 家核心客户，市占率 10%-15%，"
+                    "当前股价 11 元，估值不便宜，继续观望等待更好的价格出现。"))
+    assert "绕行" not in warns
+    # 带元的区间=价格形态，仍拒
+    expect_valueerror(minimal_fill(
+        thesis_html="基本面稳健但估值偏高，等 25-29 元观察区再介入，当前回避为宜。"),
+        "带元区间仍拒", kw="全缺")
+
+
+def test_triggers_target_validate():
+    """v5.1.2：triggers hit/miss 行 target 核对——缺「实际值」告警；阈值方向矛盾告警。"""
+    warns = validate_stderr(minimal_fill(triggers=[
+        {"cond": "提价兑现", "metric": "26H2 毛利率", "target": "≥46%", "status": "hit"}]))
+    assert "未写实际值" in warns
+    warns = validate_stderr(minimal_fill(triggers=[
+        {"cond": "提价兑现", "target": "≥46%｜实际 44.1%", "status": "hit"}]))
+    assert "矛盾" in warns
+    warns = validate_stderr(minimal_fill(triggers=[
+        {"cond": "提价兑现", "target": "≥46%｜实际 47.2%", "status": "hit"}]))
+    assert "矛盾" not in warns and "未写实际值" not in warns
+    # miss 方向矛盾（阈值满足却标 miss）同样检出
+    warns = validate_stderr(minimal_fill(triggers=[
+        {"cond": "提价兑现", "target": "≥46%｜实际 47.2%", "status": "miss"}]))
+    assert "矛盾" in warns
+
+
+def test_timing_table_validate():
+    """v5.1.2：时机小表得分 vs timing_scores（>0.1 告警）；信号数值/方向 vs 落盘 timing。"""
+    tbl = ('<p>时机判定：筹码面改善、技术面偏弱，仓位维持观察池不变，决策逻辑见下表与正文。</p>'
+           '<table><thead><tr><th>维度</th><th>得分</th><th>命中信号与加减</th></tr></thead>'
+           '<tbody><tr><td>筹码面</td><td>6.0</td><td>户数下降 +1</td></tr>'
+           '<tr><td>技术面</td><td>4.0</td><td>现价 10.5 站上 MA60 9.8</td></tr>'
+           '<tr><td>合计</td><td>5.3</td><td>微调 ±1 档</td></tr></tbody></table>'
+           '<span class="source">时机信号：quote 落盘 timing（现价/MA60/MA120/52 周高低），'
+           '筹码面数据：E4 股东户数，均取自 em_fetch 落盘输出。</span>'
+           '<div class="info-card"><strong>决策逻辑：</strong>质量分好公司但估值无安全边际，'
+           '时机微调不足以升档，维持观察池，等估值回到合理带下沿再评估。</div>')
+    with render_workspace() as d:
+        ref = write_fill({"price": 10.0, "pe_ttm": 11.0,
+                          "timing": {"price": 10.0, "ma60": 9.9, "ma120": 9.5,
+                                     "high_52w": 12.0, "low_52w": 8.0}}, d, "_ref_t.json")
+        # 筹码面 6.0 vs timing_scores 5 → 告警；现价 10.5 vs 落盘 10.0 差 5% → 告警；
+        # 「站上 MA60」与 10.0 > 9.9 不矛盾 → 无方向告警
+        warns = validate_stderr(minimal_fill(quote={"source_file": ref}, position_html=tbl))
+        assert "「筹码面」得分" in warns and "现价=10.5" in warns
+        assert "上方/站上" not in warns
+        # 方向矛盾：现价 10.0 < MA120 12.0 却写「站上 MA120」→ 告警
+        tbl2 = tbl.replace("现价 10.5 站上 MA60 9.8", "现价 10.0 站上 MA120")
+        ref2 = write_fill({"price": 10.0, "pe_ttm": 11.0,
+                           "timing": {"price": 10.0, "ma60": 9.9, "ma120": 12.0,
+                                      "high_52w": 13.0, "low_52w": 8.0}}, d, "_ref_t2.json")
+        warns = validate_stderr(minimal_fill(quote={"source_file": ref2}, position_html=tbl2))
+        assert "上方/站上" in warns
+
+
+def test_period_verdict_cross_validate():
+    """v5.1.2：period_track 判词 vs 完成度机械对账（分母=一致预期优先、时间进度按报告期）。"""
+    import conftest as C
+    pt = {"period": "2026中报", "is_annual": False, "np": 30, "consensus_np": 100,
+          "verdict_np": "超前"}
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": C._period_ref_file("v512_pv", pt)}, period_track=dict(pt)))
+    assert "超前 但完成度" in warns
+    pt2 = {"period": "2026中报", "is_annual": False, "np": 60, "consensus_np": 100,
+           "verdict_np": "超前"}
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": C._period_ref_file("v512_pv2", pt2)}, period_track=dict(pt2)))
+    assert "超前 但完成度" not in warns
+    # 一季/三季标签同样生效（热核 P1-2：此前认不出项目自家标签）
+    pt3 = {"period": "2026一季", "is_annual": False, "np": 5, "consensus_np": 100,
+           "verdict_np": "超前"}
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": C._period_ref_file("v512_pv3", pt3)}, period_track=dict(pt3)))
+    assert "超前 但完成度" in warns
+    # 亏损期累计 ≤0 → 完成度无意义静默跳过（热核 P1，_period_ratio 返回 None）
+    pt4 = {"period": "2026中报", "is_annual": False, "np": -5, "consensus_np": 100,
+           "verdict_np": "超前"}
+    warns = validate_stderr(minimal_fill(
+        quote={"source_file": C._period_ref_file("v512_pv4", pt4)}, period_track=dict(pt4)))
+    assert "超前 但完成度" not in warns
+
+
+def _l1_with_43(body_43: str) -> str:
+    """6 个规范 dim-name 的 l1_html，4.3 块正文由参数给定。"""
+    plain = "该维度分析：公司基本面稳健，数据支撑充分，论据详实可靠，行业地位稳固，具备长期参考价值。"
+    out = []
+    for nm in ("4.1 赛道与宏观", "4.2 产业链位置", "4.3 商业模式与护城河", "4.4 财务健康",
+               "4.5 治理与资本配置", "4.6 资本回报质量"):
+        body = body_43 if nm.startswith("4.3") else plain
+        out.append(f'<div class="dim-block"><div class="dim-header"><span class="dim-name">{nm}</span>'
+                   f'</div><p>{body}</p></div>')
+    return "".join(out)
+
+
+def test_handwritten_dupes_validate():
+    """v5.1.2：手写表与脚本生成并存检测——p0 敏感性表 / valuation 三情景表与指标卡 /
+    l1 多年年表 / gap 机构对照表，均已由字段或脚本承载。"""
+    warns = validate_stderr(minimal_fill(
+        p0_html=('<span class="section-tag">分型：周期股</span><p>识别特征一段，周期定位与弹性来源。</p>'
+                 '<table><thead><tr><th>变量</th><th>净利影响</th></tr></thead>'
+                 '<tbody><tr><td>金价</td><td>±20%</td></tr></tbody></table>'
+                 '<span class="source">数据来源：x</span>'),
+        sensitivity=[{"name": "金价", "impact": 20, "delta": "±10%"},
+                     {"name": "产量", "impact": 13}]))
+    assert "手写敏感性表" in warns
+    warns = validate_stderr(minimal_fill(
+        valuation_html=('<div class="table-scroll"><table class="scenario-table">'
+                        '<thead><tr><th>指标</th></tr></thead><tbody><tr><td>x</td></tr></tbody>'
+                        '</table></div><span class="source">数据来源：x</span>')))
+    assert "手写三情景表" in warns
+    warns = validate_stderr(minimal_fill(
+        valuation_html=('<div class="metric-row"><div class="metric-card"><div class="label">年化中枢'
+                        '</div></div></div><p>校准逻辑说明一段。</p>')))
+    assert "手写三指标卡" in warns
+    warns = validate_stderr(minimal_fill(l1_html=_l1_with_43(
+        '护城河分析一段。'
+        '<table><thead><tr><th>指标</th><th>2021</th><th>2022</th><th>2023</th><th>2024</th>'
+        '<th>2025</th></tr></thead><tbody><tr><td>营收</td><td>1</td><td>2</td><td>3</td>'
+        '<td>4</td><td>5</td></tr><tr><td>净利</td><td>1</td><td>2</td><td>3</td><td>4</td>'
+        '<td>5</td></tr></tbody></table><span class="source">数据来源：x</span>')))
+    assert "手写年表" in warns
+    warns = validate_stderr(minimal_fill(
+        gap_plot={"dims": [{"name": "2026E 归母净利（亿元）", "ours": 100, "consensus": 100},
+                           {"name": "2026E 目标价（元）", "ours": 11, "consensus": 10}]},
+        gap_html=('<table><thead><tr><th>机构</th><th>预测</th></tr></thead>'
+                  '<tbody><tr><td>野村</td><td>952</td></tr></tbody></table>'
+                  '<span class="source">数据来源：x</span>')))
+    assert "逐机构对照表" in warns
+
+
+def test_red_flag_conclusion_validate():
+    """v5.1.2：红旗 ≥2 项 → conclusion 首卡首句必须含「利润真实性存疑」（拒渲染）。"""
+    red2 = [{"item": "现金含量连续2年<0.7", "points": 0.5},
+            {"item": "应收增速远超营收", "points": 0.5}]
+    expect_valueerror(minimal_fill(red_deductions=red2), "首卡首句存疑句", kw="利润真实性存疑")
+    f = minimal_fill(red_deductions=red2)
+    f["conclusion_html"] = f["conclusion_html"].replace(
+        "关键优势</div>", "关键优势</div>利润真实性存疑，", 1)
+    validate_stderr(f)  # 不拒即通过
+
+
+def test_slot_widths_validate():
+    """v5.1.2：槽位契约补闸——scenario.trigger >15 字 / drivers.chips 档值 >12 字告警。"""
+    warns = validate_stderr(minimal_fill(valuation={
+        "shares": 100, "horizon": "12个月", "scenarios": [
+            {"key": "pess", "label": "悲观", "trigger": "下", "profit": 80, "pe": [8, 10]},
+            {"key": "base", "label": "基础", "trigger": "NIM 降至 1.22%、信用成本升至 0.65%",
+             "profit": 100, "pe": [10, 12]},
+            {"key": "opt", "label": "乐观", "trigger": "上", "profit": 120, "pe": [12, 14]}]}))
+    assert "trigger" in warns and "字 > 15" in warns
+    warns = validate_stderr(minimal_fill(
+        drivers=[{"name": "金价", "elastic": "x",
+                  "chips": [{"label": "悲观", "value": "800"}, {"label": "基础", "value": "900"},
+                            {"label": "乐观", "value": "1,000"},
+                            {"label": "悲观另注", "value": "这是一个超过十二字的档值啊"}]}],
+        driver_verdict="v", sensitivity=[{"name": "金价", "impact": 20}]))
+    assert "chips 档值" in warns
+
+
+def test_threshold_coverage_validate():
+    """v5.1.2：4.3 压力测试阈值须在 14 章 triggers/dash_html 有对应行，否则告警。"""
+    l1 = _l1_with_43("护城河压力测试：若市占率跌破 15% 则逻辑失效，需要持续跟踪该指标变化。")
+    warns = validate_stderr(minimal_fill(l1_html=l1))
+    assert "无对应行" in warns
+    warns = validate_stderr(minimal_fill(l1_html=l1, dash_html=(
+        '<div class="table-scroll"><table class="dash-table"><thead><tr><th>指标</th><th>当前值</th>'
+        '<th>触发阈值</th></tr></thead><tbody><tr><td>市占率</td><td>17%</td><td>跌破 15%</td></tr>'
+        '</tbody></table></div><span class="source">数据来源：x</span>')))
+    assert "无对应行" not in warns
+
+
 def test_cycle_stages_validate():
-    """v4.11.3 阶段卡校验：手写阶段表迁移告警；current 非 1 个告警；driver 超 24 字告警。"""
+    """v4.11.3 阶段卡校验：手写阶段表迁移告警；driver 超宽告警。
+    v5.1.2：current ≠1（与渲染同源的有效项口径）→ 拒渲染；缺 name/period 项告警不落图；
+    字段已填但 cycle_html 缺失 → 告警（阶段卡挂第 11 章条件块内）。"""
     warns = validate_stderr(minimal_fill(cycle_html='<table><tr><th>阶段</th></tr></table>'))
     assert "迁移 cycle_stages" in warns
-    warns = validate_stderr(minimal_fill(cycle_stages=[
+    expect_valueerror(minimal_fill(cycle_stages=[
         {"name": "a", "period": "2021", "current": True},
         {"name": "b", "period": "2022", "current": True},
-        {"name": "c", "period": "2023", "driver": "长" * 30}]))
-    assert "current" in warns and "> 48" in warns
+        {"name": "c", "period": "2023"}]), "current 恰 1 个", kw="恰为 1 个")
+    expect_valueerror(minimal_fill(cycle_stages=[
+        {"name": "a", "period": "2021"},
+        {"name": "b", "period": "2022"},
+        {"name": "c", "period": "2023"}]), "0 个 current 同拒", kw="恰为 1 个")
+    warns = validate_stderr(minimal_fill(cycle_stages=[
+        {"name": "a", "period": "2021", "current": True},
+        {"name": "b", "current": True},
+        {"name": "c", "period": "2023", "driver": "长" * 30},
+        {"name": "d", "period": "2024"}]))
+    assert "不落图" in warns and "> 48" in warns and "cycle_html 缺失" in warns
 
 
 def test_dcf_validate():

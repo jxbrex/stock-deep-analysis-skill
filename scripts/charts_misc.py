@@ -4,6 +4,7 @@
 
 
 import math
+import re
 
 from scoring import _num, _fmt, _esc, _parse_prev_scenarios
 from charts_base import *
@@ -418,12 +419,10 @@ def build_gap_plot(fill: dict) -> str:
     gp = fill.get("gap_plot") or {}
     dims = []
     for d in gp.get("dims") or []:
-        if not isinstance(d, dict):
+        if not _gap_dim_ok(d):   # 行有效性唯一定义（charts_base，v5.1.2 起附注/校验同源）
             continue
         name = str(d.get("name") or "").strip()
         ours, cons = _num(d.get("ours")), _num(d.get("consensus"))
-        if not name or ours is None or cons is None or cons <= 0:
-            continue
         street = []
         for s in d.get("street") or []:
             if not isinstance(s, dict):
@@ -655,29 +654,46 @@ def _gap_plot_b(dims: list) -> str:
     return "".join(parts)
 
 
+def _renumber_note(note: str, circled: str) -> str:
+    """把附注文首（可隔 <b> 开标签）的圈号前缀改写为指定行号；无圈号前缀原样返回。
+    v5.1.2：note 圈号本是填写方手写，行被剔除后手写编号失效——脚本按过滤后行序统一改写。"""
+    # v5.1.2：前缀形态放宽为「任意标签/实体/空白」（热核 P2-1：<i>/<b style>/&nbsp; 开头
+    # 的 note 此前不改写，剔除行后手写圈号与图行再次错位）
+    return re.sub(r"^((?:\s|&nbsp;|<[^>]+>)*)[①-⑥]", rf"\g<1>{circled}", note, count=1)
+
+
 def _gap_notes_html(gp: dict) -> str:
-    """gap-notes 附注（图下编号注）：dims[].note 按行序（①②… 与图行一一对应）+ text_dims 续编号
-    文本项。内容为填写方直写 HTML（含 <b>① 短名：</b> 前缀，图已有数值不复述），脚本只包 <li>；
+    """gap-notes 附注（图下编号注）：dims[].note 按图行序（①②… 与图行一一对应）+ text_dims 续编号
+    文本项。v5.1.2：行过滤与图同源（_gap_dim_ok，cons≤0 行剔除、取前 6、有效行 <2 随图不生成），
+    附注编号由脚本按过滤后行序改写（此前按原始数组取行前 6 且编号手写——剔除行后图①与注①
+    错位，读者把 A 行的注读成 B 行的）。内容为填写方直写 HTML，脚本只包 <li>；
     无任何附注 → 空串。"""
+    dims = [d for d in (gp.get("dims") or []) if _gap_dim_ok(d)][:6]
+    if len(dims) < 2:
+        return ""
     items = []
-    for d in (gp.get("dims") or [])[:6]:   # 与图行截断同口径（审计 P2-2：附注不得指向未画的行）
-        if not isinstance(d, dict):
-            continue
+    for i, d in enumerate(dims):
         note = str(d.get("note") or "").strip()
         if note:
-            items.append(f"<li>{note}</li>")
-    for t in gp.get("text_dims") or []:
+            items.append(f"<li>{_renumber_note(note, _GAP_CIRCLED[i])}</li>")
+    for j, t in enumerate(gp.get("text_dims") or []):
         t = str(t or "").strip()
-        if t:
-            items.append(f"<li>{t}</li>")
+        if not t:
+            continue
+        if len(dims) + j < len(_GAP_CIRCLED):
+            t = _renumber_note(t, _GAP_CIRCLED[len(dims) + j])
+        else:
+            # 无圈号可用（图行已占满 ①-⑥）：剥掉手写文首圈号，避免与图行撞号（热核 P2-3）
+            t = re.sub(r"^((?:\s|&nbsp;|<[^>]+>)*)[①-⑥]", r"\g<1>", t, count=1)
+        items.append(f"<li>{t}</li>")
     return '<ol class="gap-notes">' + "".join(items) + "</ol>" if items else ""
 
 
 def _inject_gap_chart(gap_html: str, fill: dict) -> str:
     """9 预期差图锚点注入（与 _inject_l3_charts 同一注入机）：gap_html 里的 <!--GAP--> 注释
     原位替换为「图 + <ol class="gap-notes"> 附注」整体；锚点缺失但字段已填 → 垫第 9 章章首 +
-    告警（prepend——图是本章主体）；字段未填 → 锚点静默清除；维度不足但有附注 →
-    锚点替换为纯附注（C 档信息不丢，图不生成）。"""
+    告警（prepend——图是本章主体）；字段未填 → 锚点静默清除；有效维度 <2 → 图与附注同不生成
+    （v5.1.2 起附注与图行同源，text_dims 一并丢弃）。"""
     block = build_gap_plot(fill) + _gap_notes_html(fill.get("gap_plot") or {})
     return _inject_chart_anchors(
         gap_html,

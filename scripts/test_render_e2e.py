@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""test_render_e2e.py — render_report 端到端回归（无网络，直接 python 运行）
+"""test_render_e2e.py — render_report 端到端回归（无网络；pytest 唯一入口，无 __main__ 直跑契约）
 
 覆盖 render() 全流程产物：千位符归一、BOM fill 解析、币种替换、回测模式章节、
 字面 {{KEY}} 实体化、低价股目标价精度、渲染后归档。
@@ -9,10 +9,11 @@
 import json
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report as R
-from conftest import minimal_fill, render_fill, render_workspace, write_fill
+from conftest import minimal_fill, render_fill, write_fill, capture_stderr_value
 
 
 def test_fmt_thousands():
@@ -28,7 +29,7 @@ def test_fmt_thousands():
 
 def test_bom_fill_loads():
     """带 BOM 的 UTF-8 fill JSON 必须可解析。"""
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         p = write_fill(minimal_fill(), d, name="_fill_t.json", encoding="utf-8-sig")  # 写带 BOM
         fill = R._load_fill(p)
     assert fill["company"] == "测试股份"
@@ -99,7 +100,7 @@ def test_low_price_precision():
 def test_archive_after_render():
     """v4.10 B-min 归档：渲染成功后 _fill_/_em_ 前缀文件移入 _archive/ 并追加 _index.jsonl；
     非 _fill_ 命名的 fill（fixture/存量文件）不动；归档在渲染成功之后（防伪链不断）。"""
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         quote_path = write_fill({"price": 10, "pe_ttm": 11}, d, name="_em_600000_quote.json")
         fill = minimal_fill(quote={"source_file": quote_path, "date": "2026-08-27"})
         p = write_fill(fill, d)
@@ -120,9 +121,23 @@ def test_archive_after_render():
     print("OK 渲染后归档（fill+quote 移入 _archive、索引追加、非 _fill_ 不动）")
 
 
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    for t in tests:
-        t()
-        print(f"OK {t.__name__}")
-    print(f"全部 {len(tests)} 项测试通过")
+def test_if_block_guardrails():
+    """P0-2：IF 条件块护栏——模板 IF 键不在 repl map → stderr 点名告警（此前整块静默删除
+    零告警）；渲染后残留 <!--IF:/<!--ENDIF-->（模板嵌套错配或 fill 片段含字面标记）→ 拒渲染。"""
+    _, err = capture_stderr_value(lambda: R._fill_template({}))
+    assert "IF 键" in err and "不在 repl" in err, f"缺键应告警，实际 stderr：{err[:200]}"
+    f = minimal_fill()
+    f["thesis_html"] += "<p>补充说明：本段含字面条件块标记 <!--IF:X-->（护栏测试）。</p>"
+    try:
+        render_fill(f)
+        raise AssertionError("残留 <!--IF:--> 应拒渲染但未拒")
+    except ValueError as e:
+        assert "条件块" in str(e) and "残留" in str(e), f"实际: {e}"
+    print("OK IF 条件块护栏（缺键告警 / 残留拒渲染）")
+
+
+def test_scalar_placeholders_escaped():
+    """P0-3：15 个标量占位键统一 _esc——next_review 带 < 渲染后 HTML 含 &lt; 不含裸 <。"""
+    html = render_fill(minimal_fill(next_review="2026-11-27<"))
+    assert "2026-11-27&lt;" in html and "2026-11-27<" not in html
+    print("OK 标量键转义（next_review 裸 < → &lt;）")

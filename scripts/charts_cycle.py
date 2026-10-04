@@ -238,8 +238,7 @@ def build_price_history(fill: dict) -> str:
         ma_pts = [(X(i), Yc(sum(closes[i - 11:i + 1]) / 12))
                   for i in range(11, n)] if n >= 13 else []
     # PE 序列同源 E2 月线（价格×股本÷TTM净利），恒为 PE(TTM) 口径，不随 metric_label 换标签
-    tag = f'股价季K 与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}' if has_ohlc \
-        else f'股价与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}'
+    tag = f'股价{"季K " if has_ohlc else ""}与 PE(TTM) 历史{("（" + _esc(label) + "）") if label else ""}'
     parts = [f'<span class="section-tag">{tag}</span>',
              _svg_open(W, H, "股价季K与PE历史走势" if has_ohlc else "股价与PE历史走势")]
     # 亏损期底纹（连续缺 pe 段；先画在最底层）。审计 P0-2：尾部段（延伸到序列末，
@@ -326,14 +325,13 @@ def build_price_history(fill: dict) -> str:
                          f'stroke="{_C_PAPER_CELL}" stroke-width="3" '
                          f'paint-order="stroke">{_esc(txt)}</text>')
     # 图例（左上）
+    _leg1 = f"股价季K（左轴，{cur}；红涨绿跌）" if has_ohlc else f"股价（左轴，{cur}）"
     if has_ohlc:
         parts.append(f'<rect x="{L}" y="{T - 17}" width="12" height="9" rx="2" fill="{_C_RED}"/>')
         parts.append(f'<rect x="{L + 14}" y="{T - 17}" width="12" height="9" rx="2" fill="{_C_GREEN}"/>')
-        parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价季K（左轴，{_esc(cur)}；红涨绿跌）</text>')
     else:
         parts.append(f'<line x1="{L}" y1="{T - 12}" x2="{L + 26}" y2="{T - 12}" stroke="{_C_INK}" stroke-width="1.6"/>')
-        parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">股价（左轴，{_esc(cur)}）</text>')
-    _leg1 = f"股价季K（左轴，{cur}；红涨绿跌）" if has_ohlc else f"股价（左轴，{cur}）"
+    parts.append(f'<text x="{L + 32}" y="{T - 8}" font-size="11" fill="{_C_INK}">{_esc(_leg1)}</text>')
     # v4.11.1（海油反馈）：叠加趋势均线——季K 模式=季度收盘 MA4，发丝模式=月收盘 MA12；
     # 中性暖灰细线，不抢蜡烛/PE 线视觉层级
     _ma_leg = "4 季均线" if has_ohlc else "12 月均线"

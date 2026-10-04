@@ -4,7 +4,7 @@
 em_fetch.py — 批量取数脚本（stock-deep-analysis skill 专用，v4.8.3 起拆分为多模块）
 
 模块分工：
-    em_fetch.py   宿主：E7 定性站内搜索与输出组装（search_e7/red_flags/_sec_*/summarize/main/CLI）。
+    em_fetch.py   宿主：E7 定性站内搜索与输出组装（search_e7/_sec_*/summarize/main/CLI）。
                  传输/缓存/映射/格式化由 em_core.py 提供，取数函数族从四个取数块 re-export
                  供宿主函数体与测试按名访问（em_fetch 是取数能力的唯一汇总出口）。
     em_core.py   传输/缓存/映射/格式化核心层（ts_call/get + 磁盘缓存状态与统计、代码映射、
@@ -42,15 +42,14 @@ from datetime import date
 
 import em_core as _C
 # 兼容性 re-export：外部按 em_fetch.X 按名访问（score_calibration / monthly_checkup / 测试），
-# 均为本模块原有的模块级名字；内部调用一律走 _C.<name>，此处名字不参与内部解析。
+# 只保留有真实消费方的名字——此处名字供外部访问与内部函数体裸用（yi/pct/yoy_text/secid_of/
+# RateLimitError/_TS_DEBUG/_STATS）；其余内部解析走 _C.<name>（迟绑定）。
 from em_core import (  # noqa: F401
-    UA, CURL_UA, TIMEOUT, TS_API,
-    RateLimitError, HttpStatusError,
-    _MKT_MAP, _MKT_SZ, _MKT_HK, _mkt_of, secid_of, to_ts_code,
-    _tushare_token,
-    _TS_CACHE, _TS_LOCKS, _TS_DEBUG, _STATS, _STATS_LOCK, _stat, _CACHE_DIR, _NO_CACHE,
-    ts_call, _fin_rng, _get_via_curl, _get_via_urllib, get,
-    yi, _r2, pct, _yoy, yoy_text, _fmt_date, _ttm_cutoff,
+    RateLimitError,
+    secid_of, to_ts_code,
+    _TS_DEBUG, _STATS,
+    ts_call, get,
+    yi, pct, _yoy, yoy_text, _ttm_cutoff,
 )
 
 # Windows 控制台默认 GBK 编码，打印中文/货币符号会 UnicodeEncodeError —— 强制 UTF-8
@@ -61,7 +60,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 # E1 落盘捕获：_sec_e1 成功路径填充，main() 的 --out 把它写成 JSON（现价防伪通道的源头）
-_E1_CAPTURE: dict = {}
+_CAPTURE: dict = {}
 
 
 # ---------------- 取数函数族 re-export（四个取数块，v4.10.3 Step 3 起） ----------------
@@ -70,13 +69,13 @@ _E1_CAPTURE: dict = {}
 # 传输函数不是内部解析路径：宿主一律走 _C.<name>（迟绑定），em_fetch.ts_call 只是 em_core
 # 的兼容别名——rebind 目标是 em_core 命名空间（约定见 em_core.py 文件头）。
 from em_market import (  # noqa: E402,F401
-    _em_quote, _em_kline_url,
+    _em_quote, kline_url,
     fetch_pe_pb_band, fetch_quote, fetch_kline_monthly, fetch_timing_material,
 )
 from em_finance import (  # noqa: E402,F401
-    _em_f10, _ts_annual_rows, _ts_latest_quarter, _ts_hk_annual_rows,
+    _ts_hk_annual_rows,
     fetch_annual_rows, fetch_latest_quarter, fetch_period_track, fetch_hk_period_track,
-    fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt,
+    fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt, red_flags,
 )
 from em_owner import (  # noqa: E402,F401
     fetch_holders, fetch_holders_quarterly, fetch_consensus, fetch_mainop,
@@ -88,18 +87,17 @@ from em_misc import (  # noqa: E402,F401
 
 # ---------------- E7 定性站内搜索（东财，走 em_core.get 统一管线） ----------------
 
-def search_e7(keyword: str, types: list = None, page_size: int = 8) -> dict:
-    """E7 东方财富站内搜索。types: cmsArticleWebOld(新闻), cmsResearchWeb(研报) 等。
+def search_e7(keyword: str) -> dict:
+    """E7 东方财富站内搜索（固定只搜新闻 type=cmsArticleWebOld；搜研报等其他 type
+    需按 data-sources.md E7 节接口格式手写 jsonp URL——当前无此调用方）。
     返回 {'ok': bool, 'raw_head': str, 'items': [...]}。失败时 raw_head 含原始返回前 500 字符。
     传输走 em_core.get(url, raw=True)（jsonp 需原始文本）：重试/429 硬停/_stat/磁盘判定与
     其余取数同规；RateLimitError 原样上抛（由 main 限流硬停），其他传输/解析失败转 ok=False。"""
-    if types is None:
-        types = ["cmsArticleWebOld"]
-    p = {"uid": "", "keyword": keyword, "type": types,
+    p = {"uid": "", "keyword": keyword, "type": ["cmsArticleWebOld"],
          "client": "web", "clientType": "web", "clientVersion": "curr",
-         "param": {t: {"searchScope": "default", "sort": "default",
-                       "pageIndex": 1, "pageSize": page_size,
-                       "preTag": "", "postTag": ""} for t in types}}
+         "param": {"cmsArticleWebOld": {"searchScope": "default", "sort": "default",
+                                        "pageIndex": 1, "pageSize": 8,
+                                        "preTag": "", "postTag": ""}}}
     url = ("https://search-api-web.eastmoney.com/search/jsonp?cb=cb&param="
            + urllib.parse.quote(json.dumps(p, ensure_ascii=False)))
     try:
@@ -119,67 +117,21 @@ def search_e7(keyword: str, types: list = None, page_size: int = 8) -> dict:
     except Exception:
         return {"ok": False, "raw_head": f"[解析失败] 原始返回前500字符: {raw[:500]}", "items": []}
     result = d.get("result") or {}
+    blk = result.get("cmsArticleWebOld") or {}
+    # 兼容两种结构：{"list":[...]} 或直接 [...]
+    lst = blk if isinstance(blk, list) else blk.get("list") or []
     items = []
-    for t in types:
-        blk = result.get(t) or {}
-        # 兼容两种结构：{"list":[...]} 或直接 [...]
-        if isinstance(blk, list):
-            lst = blk
-        else:
-            lst = blk.get("list") or []
-        for it in lst:
-            items.append({
-                "title": (it.get("title") or it.get("TITLE") or "").strip(),
-                "date": (it.get("showTime") or it.get("SHOWTIME") or it.get("date") or "")[:10],
-                "url": (it.get("url") or it.get("URL") or ""),
-                "summary": (it.get("summary") or it.get("SUMMARY") or "")[:150],
-                "source": (it.get("mediaName") or it.get("MEDIANAME") or ""),
-            })
+    for it in lst:
+        items.append({
+            "title": (it.get("title") or it.get("TITLE") or "").strip(),
+            "date": (it.get("showTime") or it.get("SHOWTIME") or it.get("date") or "")[:10],
+            "url": (it.get("url") or it.get("URL") or ""),
+            "summary": (it.get("summary") or it.get("SUMMARY") or "")[:150],
+            "source": (it.get("mediaName") or it.get("MEDIANAME") or ""),
+        })
     if not items:
         return {"ok": True, "raw_head": f"[空结果] 原始返回前500字符: {raw[:500]}", "items": []}
     return {"ok": True, "raw_head": "", "items": items}
-
-
-# ---------------- 盈利质量红旗 ----------------
-
-def red_flags(annual: list) -> list:
-    """盈利质量红旗四项检查（现金含量/应收/存货/毛利率；审计意见已挪出，单独一行输出）。
-    annual: 年报列表（新→旧，东财键名同构）。
-    三态输出：✓=真通过（有数据且未恶化）/ ✗=真恶化 / △=数据不足——数据缺失显示△，
-    绝不显示✓（"✓ API未触发"是虚假通过，芯原股份实证）。"""
-    flags = []
-    annual = annual[:3]
-
-    # 1. 利润现金含量（经营现金流/净利润 <0.7 视为不达标；数值为倍数如 1.48=148%；
-    #    口径：净利润为负的年份该比率无意义，上游已置 None 跳过，不计入连续年数）
-    vals = [r.get("NCO_NETPROFIT") for r in annual if r.get("NCO_NETPROFIT") is not None]
-    if len(vals) >= 2:
-        bad_n = sum(1 for v in vals if v < 0.7)
-        if bad_n >= 2:
-            flags.append(f"✗ 利润现金含量 连续{bad_n}年<0.7（仅计净利润>0年份）")
-        else:
-            flags.append(f"✓ 利润现金含量（最低{round(min(vals), 2)}，仅计净利润>0年份）")
-    else:
-        flags.append(f"△ 利润现金含量 数据不足({len(vals)}期有效)")
-
-    # 2/3. 应收/存货周转天数趋势（变长=恶化）
-    def worsening(key, name):
-        vals = [r.get(key) for r in annual if r.get(key) is not None]
-        if len(vals) >= 3:
-            if vals[0] > vals[-1] * 1.3:
-                return f"✗ {name} 恶化（{vals[-1]:.0f}→{vals[0]:.0f}天）"
-            return f"✓ {name}（{vals[0]:.0f}天，未恶化）"
-        return f"△ {name} 数据不足({len(vals)}期有效)"
-    flags.append(worsening("YSZKZZTS", "应收账款周转"))
-    flags.append(worsening("CHZZTS", "存货周转"))
-
-    # 4. 毛利率异常（需同业对照，此处仅列数值）
-    if annual and annual[0].get("XSMLL") is not None:
-        flags.append(f"△ 毛利率 {pct(annual[0].get('XSMLL'))}（待与同业对照）")
-    else:
-        flags.append("△ 毛利率 数据不足")
-
-    return flags
 
 
 # ---------------- 汇总输出 ----------------
@@ -189,7 +141,7 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
     out = []
     try:
         q = fetch_quote(secid, is_hk)
-        _E1_CAPTURE.update({"code": q.get("代码"), "name": q.get("名称"),
+        _CAPTURE.update({"code": q.get("代码"), "name": q.get("名称"),
                             "market": "港股" if is_hk else "A股",
                             "price": q.get("最新价"), "pe_ttm": q.get("PE_TTM"),
                             "pb": q.get("PB"), "mcap_yi": q.get("总市值亿"),
@@ -202,10 +154,10 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
         if not is_hk:
             band = fetch_pe_pb_band(pure)
             if band:
-                _E1_CAPTURE["pe_band"] = [band["pe_min"], band["pe_max"]]
-                _E1_CAPTURE["pe_pct"] = band["pe_pct"]
-                _E1_CAPTURE["pe_p25"] = band.get("pe_p25")
-                _E1_CAPTURE["pe_p75"] = band.get("pe_p75")
+                _CAPTURE["pe_band"] = [band["pe_min"], band["pe_max"]]
+                _CAPTURE["pe_pct"] = band["pe_pct"]
+                _CAPTURE["pe_p25"] = band.get("pe_p25")
+                _CAPTURE["pe_p75"] = band.get("pe_p75")
                 out.append(f"PE(TTM) {band['years']}年带: {band['pe_min']:.1f}~{band['pe_max']:.1f}x，"
                            f"当前分位{band['pe_pct']}% | PB 带: {band['pb_min']:.2f}~{band['pb_max']:.2f}x，"
                            f"当前分位{band['pb_pct']}%（n={band['n']}交易日）\n"
@@ -226,7 +178,7 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
                 out.append("财报披露: [未获取到披露计划，请降级：妙想 MCP mx_finance_search_notice 或交易所官网查证]\n")
         rf = fetch_risk_free()
         if rf:
-            _E1_CAPTURE["risk_free"] = rf[1]
+            _CAPTURE["risk_free"] = rf[1]
             out.append(f"无风险利率（中债10Y）: {rf[1]}%（{rf[0]}，东财国债收益率）"
                        f"——valuation_inputs.risk_free 直接引用此值\n")
         else:
@@ -235,7 +187,7 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
         if not is_hk:
             dy = fetch_div_yield(pure, q.get("最新价"))
             if dy:
-                _E1_CAPTURE["div_yield"] = round(dy[1], 2)
+                _CAPTURE["div_yield"] = round(dy[1], 2)
                 detail = " + ".join(f"{v:g}({d})" for d, v in dy[2])
                 out.append(f"TTM股息率（税前）: {dy[1]:.2f}%（近12月每股派息{dy[0]:g}元＝{detail} "
                            f"÷ 现价{q.get('最新价')}，tushare dividend 实施口径）"
@@ -248,7 +200,7 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
         # 月收序列不在此重复——归 E2 月线输出（月度收盘/月末PE，price_history 的 pe 字段照抄 E2）
         tm = fetch_timing_material(pure, is_hk)
         if tm:
-            _E1_CAPTURE["timing"] = tm
+            _CAPTURE["timing"] = tm
             out.append(f"时机素材: 现价{tm['price']} | MA60 {tm.get('ma60')} / "
                        f"MA120 {tm.get('ma120') or '—'} | 52周高低 {tm['high_52w']}/{tm['low_52w']}"
                        f"（{tm['n']}个交易日，日线序列计算——技术面信号一律取自本行，禁止手估；"
@@ -259,6 +211,11 @@ def _sec_e1(secid: str, is_hk: bool, pure: str) -> list:
     except Exception as e:
         out.append(f"## E1 行情估值\n[失败: {e}]\n")
     return out
+
+
+def _amt(v):
+    # F10：去千分符——带逗号的金额（如 3,448.15）照抄进 fill 会被 _strict_num 拒
+    return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
 
 
 def _sec_e3_hk(pure: str) -> list:
@@ -279,11 +236,7 @@ def _sec_e3_hk(pure: str) -> list:
         # 占比带；扣非/经营现金流/单季拆分港股无口径，不编造
         hk_track = fetch_hk_period_track(pure)
         if hk_track:
-            _E1_CAPTURE["period_track"] = hk_track
-
-            def _amt(v):
-                # F10：去千分符——带逗号的金额（如 3,448.15）照抄进 fill 会被 _strict_num 拒
-                return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
+            _CAPTURE["period_track"] = hk_track
 
             out.append(f"报告期进度（period_track 照抄行——第 3 章数据源，禁手估；港股口径）: "
                        f"{hk_track['period']}累计 营收{_amt(hk_track['rev'])}亿"
@@ -332,11 +285,7 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
     # 禁手估；随 --out 落盘 period_track 键供渲染器交叉校验（quote 防伪同款纪律）
     track = fetch_period_track(pure, secucode)
     if track:
-        _E1_CAPTURE["period_track"] = track
-
-        def _amt(v):
-            # F10：去千分符——带逗号的金额（如 3,448.15）照抄进 fill 会被 _strict_num 拒
-            return f"{v:.2f}" if isinstance(v, (int, float)) else "—"
+        _CAPTURE["period_track"] = track
 
         out.append(f"报告期进度（period_track 照抄行——第 3 章数据源，禁手估）: "
                    f"{track['period']}累计 营收{_amt(track['rev'])}亿(同比{yoy_text(track['rev_yoy'])}) ｜ "
@@ -382,26 +331,12 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
     if turnover_bits:
         out.append("周转天数（应收/存货，天；旧→新，fin_trend 周转天数面板照抄本行）: "
                    + " ｜ ".join(turnover_bits) + "\n")
-    # 有息负债（tushare balancesheet 最新报告期；短债=短期借款+一年内到期非流动负债，
-    # 长债=长期借款+应付债券；短债覆盖=货币资金÷短债，分母 0 显示「无短债」）
+    # 有息负债（tushare balancesheet 最新报告期；组装口径在 fetch_debt，v5.1.5 下沉）
     debt = fetch_debt(pure)
     if debt:
-        def _f0(v):
-            try:
-                return float(v or 0)
-            except (TypeError, ValueError):
-                return 0.0
-        st_debt = _f0(debt.get("st_borr")) + _f0(debt.get("non_cur_liab_due_1y"))
-        lt_debt = _f0(debt.get("lt_borr")) + _f0(debt.get("bond_payable"))
-        mc = debt.get("money_cap")
-        if st_debt <= 0:
-            cover = "无短债"
-        elif mc is None:
-            cover = "—"
-        else:
-            cover = f"{float(mc) / st_debt:.2f}"
-        out.append(f"有息负债 {yi(st_debt + lt_debt)}亿（短债 {yi(st_debt)}亿 / 长债 {yi(lt_debt)}亿）"
-                   f"｜货币资金 {yi(mc)}亿｜短债覆盖 {cover}\n")
+        out.append(f"有息负债 {yi(debt['st_debt'] + debt['lt_debt'])}亿（短债 {yi(debt['st_debt'])}亿 / "
+                   f"长债 {yi(debt['lt_debt'])}亿）｜货币资金 {yi(debt.get('money_cap'))}亿｜"
+                   f"短债覆盖 {debt['cover']}\n")
     else:
         out.append("有息负债: 未获取（tushare balancesheet 失败），请降级：东财F10资产负债表\n")
     return out, annual
@@ -507,7 +442,7 @@ def _sec_forecast(pure: str) -> list:
         out.append("## 业绩预告/快报（tushare）")
         for r in fe:
             period = r.get("报告期") or "—"
-            period_s = f"{period[:4]}-{period[4:6]}-{period[6:]}" if len(str(period)) == 8 else period
+            period_s = _C._fmt_date(period)
             if r["类型"] == "快报":
                 out.append(f"[快报] {period_s}（披露{r.get('披露')}）: 营收{r.get('营收')}亿 "
                            f"归母净利{r.get('净利')}亿 同比{r.get('同比')}")
@@ -572,7 +507,7 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                     np_avg = sum(slot["np"]) / len(slot["np"])
                     if yr == str(date.today().year):
                         # 当年一致预期净利均值落盘：第 3 章完成度卖方分母的防伪源头
-                        _E1_CAPTURE["consensus_np"] = {"year": int(yr), "np_avg": round(np_avg, 2),
+                        _CAPTURE["consensus_np"] = {"year": int(yr), "np_avg": round(np_avg, 2),
                                                        "orgs": len(slot["np"])}
                     line = (f"{yr}E: 归母净利均值{np_avg:,.2f}亿"
                             f"(区间{min(slot['np']):,.1f}-{max(slot['np']):,.1f})")
@@ -614,7 +549,7 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                     except (TypeError, ValueError):
                         continue
                     if _yr == date.today().year and c.get(f"EPS{_yi}"):
-                        _E1_CAPTURE["consensus_eps"] = {
+                        _CAPTURE["consensus_eps"] = {
                             "year": _yr, "eps": float(c[f"EPS{_yi}"]),
                             "orgs": c.get("RATING_ORG_NUM")}
                         break
@@ -626,7 +561,7 @@ def _sec_e5(pure: str, is_hk: bool) -> list:
                        f"{c.get('YEAR2')}{c.get('YEAR_MARK2')}={c.get('EPS2') and round(c['EPS2'], 2)} "
                        f"{c.get('YEAR3')}{c.get('YEAR_MARK3')}={c.get('EPS3') and round(c['EPS3'], 2)}\n"
                        + ("（当年 EPS 均值已按 ×总股本 换算落盘 consensus_np——第 3 章完成度分母照抄源）\n"
-                          if "consensus_eps" in _E1_CAPTURE else "")
+                          if "consensus_eps" in _CAPTURE else "")
                        + f"行业: {c.get('INDUSTRY_BOARD')} | 概念: {(c.get('CONCEPTINDEX_BOARD') or '')[:80]}\n")
         elif is_hk:
             out.append("## E5 一致预期\n[港股无覆盖（tushare report_rc/东财均空），预期差按档位C处理]\n")
@@ -710,7 +645,7 @@ def summarize(code: str, years: int, searches: list = None) -> str:
     out = [f"# {pure} 数据摘要（{mkt}）\n"]
 
     # E1 并入并发池（v4.8.3 评估）：原「E1 先跑供 K 线缩放校准」的理由不成立——E2 东财兜底
-    # _em_kline_monthly 在函数内自调 fetch_quote 取价校准，不依赖 E1 先行；_E1_CAPTURE 仅
+    # _em_kline_monthly 在函数内自调 fetch_quote 取价校准，不依赖 E1 先行；_CAPTURE 仅
     # _sec_e1 写入、main 在线程池 join（with 块退出）后才读，无时序竞态；map 保序使 E1 输出
     # 仍居首。E1 入池后其串行的 6 个取数与其余章节并行，缩短整段等待；同冷键并发由
     # ts_call per-key 锁兜底（quote 先拉 430 天 daily、timing 同 E1 job 内串行复用不受影响）。
@@ -777,28 +712,28 @@ def main():
         # E1 落盘：现价/PE/分位带/报告期进度(period_track)/当年一致预期净利(consensus_np)等
         # 源头数字写 JSON，fill 的 quote.source_file 引用它，
         # render 时比对 price/pe_ttm 防手填造假（神华 601088 事故修复，偏差>1% 拒渲染）
-        if not _E1_CAPTURE:
+        if not _CAPTURE:
             print("警告：--out 已指定但 E1 捕获为空（E1 取数失败？），未落盘", file=sys.stderr)
         else:
             # v5.1.0：东财降级源的 consensus_eps 存根换算为 consensus_np
             # （EPS×总股本≈总市值/现价；与 tushare 源的 np_avg 同构，validate 照抄门禁同源消费；
             # 此处已是线程池 join 之后，quote 的 mcap_yi/price 可读）
-            _ce = _E1_CAPTURE.pop("consensus_eps", None)
+            _ce = _CAPTURE.pop("consensus_eps", None)
             if _ce and _ce.get("eps"):
                 try:
-                    _mc = float(str(_E1_CAPTURE.get("mcap_yi") or "").replace(",", ""))
-                    _pr = float(_E1_CAPTURE.get("price") or 0)
+                    _mc = float(str(_CAPTURE.get("mcap_yi") or "").replace(",", ""))
+                    _pr = float(_CAPTURE.get("price") or 0)
                     if _mc > 0 and _pr > 0:
-                        _E1_CAPTURE["consensus_np"] = {
+                        _CAPTURE["consensus_np"] = {
                             "year": _ce["year"],
                             "np_avg": round(_ce["eps"] * _mc / _pr, 2),
                             "orgs": _ce.get("orgs"), "src": "东财E5 EPS×股本"}
                 except (TypeError, ValueError):
                     pass
-            _E1_CAPTURE["fetched_at"] = date.today().isoformat()
-            _E1_CAPTURE["source"] = "em_fetch.py"
+            _CAPTURE["fetched_at"] = date.today().isoformat()
+            _CAPTURE["source"] = "em_fetch.py"
             with open(opts["out"], "w", encoding="utf-8") as f:
-                json.dump(_E1_CAPTURE, f, ensure_ascii=False, indent=2)
+                json.dump(_CAPTURE, f, ensure_ascii=False, indent=2)
             print(f"[E1 已落盘] {opts['out']}（fill 的 quote.source_file 引用此文件）",
                   file=sys.stderr)
     for peer in (opts.get("peers") or "").split(","):

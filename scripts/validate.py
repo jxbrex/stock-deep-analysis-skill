@@ -13,9 +13,10 @@ import re
 import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
-                     _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev)
+                     _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev,
+                     _cn_placeholders)
 from charts_base import (_C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio,
-                         parse_stage_period)
+                         parse_stage_period, _PERIOD_VERDICTS)
 
 
 # 正文 HTML 字段全集（写作纪律/代号泄漏/.rev 高亮检查用）
@@ -62,20 +63,20 @@ def _req_strict(owner: str, key: str, raw):
     return v
 
 
-def _quote_ref(fill: dict) -> dict:
-    """读 quote.source_file 落盘 JSON（各照抄/对账校验共用入口，v5.1.2）；未声明/读不到 → {}。
+def _quote_ref(fill: dict):
+    """读 quote.source_file 落盘 JSON（各照抄/对账校验共用入口，v5.1.2）；未声明/读不到 → None。
     quote 防伪主校验（_check_quote_consistency）读不到会拒渲染，这里只做降级返回。"""
     q = fill.get("quote")
     if not isinstance(q, dict) or not q.get("source_file"):
-        return {}
+        return None
     try:
         with open(q["source_file"], encoding="utf-8") as f:
             ref = json.load(f)
     except (OSError, json.JSONDecodeError):
-        return {}
-    return ref if isinstance(ref, dict) else {}
+        return None
+    return ref if isinstance(ref, dict) else None
 
-def _check_quote_consistency(fill: dict) -> None:
+def _check_quote_consistency(fill: dict, warns: list) -> None:
     """quote 防伪（神华 601088 现价造假事故修复）：fill 声明 quote.source_file 时，
     读 em_fetch --out 落盘 JSON，比对 price/pe_ttm，偏差 >1% 拒渲染（与估值分四件套同级）。
     fill 侧一律严格解析（_strict_num），夹带文字即拒；quote 字段缺失不拒（存量 fill 兼容），
@@ -128,8 +129,8 @@ def _check_quote_consistency(fill: dict) -> None:
         if k == "div_yield" and ref.get("market") != "A股":
             continue  # 港股通/红筹税后折算差异天然 >0.3pct，不做机械比对
         if abs(fv - rv) > 0.3:
-            print(f"⚠️ 内容校验: valuation_inputs.{k}（{fv:g}）与 E1 落盘值（{rv:g}）偏差 >0.3pct"
-                  f"——若为手工估算或税后折算口径，请在 .source 注明", file=sys.stderr)
+            warns.append(f"valuation_inputs.{k}（{fv:g}）与 E1 落盘值（{rv:g}）偏差 >0.3pct"
+                         f"——若为手工估算或税后折算口径，请在 .source 注明")
 
 
 def _check_score_ranges(fill: dict) -> None:
@@ -155,7 +156,7 @@ def _check_valuation_inputs(fill: dict) -> None:
         raise ValueError(f"valuation_inputs 缺键: {miss_vi}（四键必填：pe_ttm / pe_band / div_yield / risk_free）")
 
 
-def _check_valuation_scenarios(fill: dict, warns: list = None) -> None:
+def _check_valuation_scenarios(fill: dict, warns: list) -> None:
     """valuation 结构化三情景必填且完整（每情景：profit+PE 区间 或 mcap 市值区间 + horizon）。
     v4.11.1（审核 D2）：增跨情景顺序硬校验（pess.mid ≤ base.mid ≤ opt.mid，倒挂拒渲染）——
     旧版只校验单情景内部区间，跨档倒挂只告警不拒，负离散度还会被决策链误判为
@@ -202,7 +203,7 @@ def _check_valuation_scenarios(fill: dict, warns: list = None) -> None:
             # 与 mcap 侧对称的区间校验：倒挂（高<低）或非正值一律拒渲染
             if pe_lo <= 0 or pe_hi < pe_lo:
                 raise ValueError(f"valuation.scenarios[{slab}] PE 区间非法（pe: [低, 高]，需 0<低≤高）")
-            if profit < 0 and warns is not None:
+            if profit < 0:
                 warns.append(f"valuation.scenarios[{slab}] profit={profit:g} 为负：困境反转/未盈利标的"
                              f"请确认口径——profit+pe 口径应用正常化利润，原始亏损口径请改 mcap 市值区间")
             modes.add("pe")
@@ -269,7 +270,7 @@ def _check_gap_plot(fill: dict, calc: dict, warns: list) -> None:
     # v5.1.2：「净利」维度对账——consensus 照抄落盘 consensus_np.np_avg（>1% 告警）；
     # ours 与 valuation 基础情景 profit 一致（>2% 告警，镜像目标价维度口径）
     ref = _quote_ref(fill)
-    cnp = ref.get("consensus_np") or {}
+    cnp = (ref or {}).get("consensus_np") or {}
     np_avg = _num(cnp.get("np_avg"))
     base_profit = None
     for sc in (fill.get("valuation") or {}).get("scenarios") or []:
@@ -357,7 +358,7 @@ def _check_red_flag_breaker(fill: dict) -> None:
         raise ValueError(f"红灯熔断：red_flag「{red_flag}」非空，position_html 必须包含「{_LABEL_REFUSE}」结论")
 
 
-def _check_odds_floor(fill: dict, warns: list) -> None:
+def _check_odds_floor(fill: dict, warns: list, calc=None) -> None:
     """v5.0 机制三（赔率 ∞ 收紧·地板分级）：悲观下限 ≥ 现价（即 compute_valuation 赔率 ∞
     条件，down = price − pess_low ≤ 0）时，pess 情景必须带 floor 证据对象且托得住下限——
     floor 存在、type ∈ {net_cash, dividend}、evidence 非空、value ≥ 悲观下限×0.99
@@ -382,14 +383,21 @@ def _check_odds_floor(fill: dict, warns: list) -> None:
                  if str((s or {}).get("key") or "").lower() == "pess"), None)
     if not pess:
         return
-    # 与 compute_valuation 同口径复算悲观下限：profit×pe_lo÷shares 或 mcap_lo÷shares
-    profit, pe_lo, _pe_hi, mc_lo, _mc_hi = _scenario_numbers(pess)
-    if mc_lo is not None:
-        low = mc_lo / shares
-    elif profit is not None and pe_lo is not None:
-        low = profit * pe_lo / shares
+    # 悲观下限与 compute_valuation 同源（v5.1.5 热核 P0-5 公式双写收敛）：有 calc 直取
+    # pess 行 low；calc 为 None（纯 --check 无估值输入路径）按同公式复算兜底
+    if calc is not None:
+        row = next((r for r in calc.get("rows") or [] if r.get("key") == "pess"), None)
+        if row is None:
+            return
+        low = row["low"]
     else:
-        return
+        profit, pe_lo, _pe_hi, mc_lo, _mc_hi = _scenario_numbers(pess)
+        if mc_lo is not None:
+            low = mc_lo / shares
+        elif profit is not None and pe_lo is not None:
+            low = profit * pe_lo / shares
+        else:
+            return
     floor = pess.get("floor")
     if low < price:
         if floor:
@@ -429,15 +437,7 @@ def _check_consensus_np(fill: dict, warns: list) -> None:
     if raw is not None and str(raw).strip() and fc is None:
         raise ValueError(f"valuation_inputs.consensus_np 不是纯数字: {raw!r}——照抄字段禁止夹带文字"
                          f"（亿元；口径注请写进 .source 说明后重渲）")
-    q = fill.get("quote") or {}
-    src = q.get("source_file") if isinstance(q, dict) else None
-    ref = None
-    if src:
-        try:
-            with open(src, encoding="utf-8") as f:
-                ref = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            ref = None   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
+    ref = _quote_ref(fill)   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
     rc = _num(((ref or {}).get("consensus_np") or {}).get("np_avg")) if ref is not None else None
     if fc is None and rc is None:
         return
@@ -654,7 +654,7 @@ def _check_growth_consistency(fill: dict, warns: list) -> None:
     if not m_y:
         return
     last_year = int(m_y.group(0))
-    cnp = _quote_ref(fill).get("consensus_np") or {}
+    cnp = (_quote_ref(fill) or {}).get("consensus_np") or {}
     np_avg = _num(cnp.get("np_avg"))
     base_profit = None
     for s in (fill.get("valuation") or {}).get("scenarios") or []:
@@ -724,7 +724,9 @@ def _check_thesis_info_floor(fill: dict, warns: list) -> None:
 def _check_peers_plot_target(fill: dict, warns: list) -> None:
     """peers_plot 目标公司标记 + 目标点 PE/ROE 与数据口径一致性告警（不拒渲染）。"""
     pp = fill.get("peers_plot")
-    pts = (pp.get("points") if isinstance(pp, dict) else pp) or []
+    if pp is not None and not isinstance(pp, dict):
+        raise ValueError("peers_plot 必须为 {points, pe_bands, roe_bands} 对象，数组简写已废止")
+    pts = (pp or {}).get("points") or []
     if pts:
         # v5.1.2：比对对象与渲染同源——渲染只画 roe/pe 可解析的点（charts_scenario），
         # 不可解析的 target 点不落图（此前拿原始数组第一个 target 点比对）
@@ -766,7 +768,7 @@ def _check_peers_plot_target(fill: dict, warns: list) -> None:
 def _check_timing_table_cells(fill: dict, warns: list) -> None:
     """时机判定小表单元格超长告警（长句塞格会溢出横向滚动；长解释应挪到表下 .source 行）。
     v5.1.2：小表「筹码面/技术面」得分 vs timing_scores 数值比对（>0.1 告警）；技术面信号中的
-    现价/MA60/MA120 数值与方向词 vs quote 落盘 timing（神华假 MA60 修复闭环——信号取自落盘、
+    现价/MA60/MA120/52 周高低 数值与方向词 vs quote 落盘 timing（神华假 MA60 修复闭环——信号取自落盘、
     禁手估，数值偏差 >1% 或方向矛盾告警；自由文本全量语义比对不做）。"""
     pos_html = fill.get("position_html") or ""
     for tm in re.finditer(r"<table\b[^>]*>.*?</table>", pos_html, re.I | re.S):
@@ -792,18 +794,30 @@ def _check_timing_table_cells(fill: dict, warns: list) -> None:
                         warns.append(f"时机判定小表「{dim}」得分（{sm.group(0)}）与 timing_scores"
                                      f"（{ref_s:g}）不一致（>0.1）：两处应同源（v5.1.2）")
         # v5.1.2：信号数字/方向 vs 落盘 timing（神华假 MA60 同源修复闭环）
-        ref_t = _quote_ref(fill).get("timing") or {}
+        # v5.1.5（热核 P0-1，文档虚言闭合）：52 周高低补入比对（fill-schema/SKILL 承诺的
+        # 技术面信号四件套此前只查三键）——「52周高低 高/低」合并写法（照抄 E1 时机素材行
+        # 形态）与「52周高 X」「52周低 X」分拆写法都认；方向词比对仍只做 MA60/MA120
+        ref_t = (_quote_ref(fill) or {}).get("timing") or {}
         rp = _num(ref_t.get("price"))
         txt = _plain_text(tbl)
+        for hi_s, lo_s in re.findall(r"52周高低\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*[/／]\s*(\d+(?:\.\d+)?)", txt):
+            for lbl, v_s, rv2 in (("52周高", hi_s, _num(ref_t.get("high_52w"))),
+                                  ("52周低", lo_s, _num(ref_t.get("low_52w")))):
+                if rv2 and abs(float(v_s) - rv2) / rv2 > 0.01:
+                    warns.append(f"时机小表信号 {lbl}={v_s} 与落盘值 {rv2:g} 偏差 >1%："
+                                 "技术面信号一律取自 quote 落盘 timing、禁手估（v5.1.2）")
         for label, rv in (("现价", rp), ("MA60", _num(ref_t.get("ma60"))),
-                          ("MA120", _num(ref_t.get("ma120")))):
+                          ("MA120", _num(ref_t.get("ma120"))),
+                          ("52周高", _num(ref_t.get("high_52w"))),
+                          ("52周低", _num(ref_t.get("low_52w")))):
             if not rv:
                 continue
-            for nm_ in re.findall(label + r"\s*[:：=]?\s*(\d+(?:\.\d+)?)", txt):
+            pat = ("52周高(?!低)" if label == "52周高" else label) + r"\s*[:：=]?\s*(\d+(?:\.\d+)?)"
+            for nm_ in re.findall(pat, txt):
                 if abs(float(nm_) - rv) / rv > 0.01:
                     warns.append(f"时机小表信号 {label}={nm_} 与落盘值 {rv:g} 偏差 >1%："
                                  "技术面信号一律取自 quote 落盘 timing、禁手估（v5.1.2）")
-            if label == "现价" or not rp:
+            if label not in ("MA60", "MA120") or not rp:
                 continue
             up = re.search(r"(站上|突破|收复|高于|上穿).{0,6}" + label, txt, re.S) or \
                 re.search(label + r".{0,4}(上方|之上)", txt, re.S)
@@ -1253,7 +1267,7 @@ def _check_price_history_pe(fill: dict, warns: list) -> None:
                      "港股或数据确实不可得时请在图注/正文注明口径")
 
 
-def _check_l4_form(fill: dict) -> None:
+def _check_l4_form(fill: dict, warns: list) -> None:
     """v4.10：L4 固定形态硬门禁（工行 09-11 报告照抄 09-09 旧形态实证——软规则不拦就没人守）。
     ①损失预演必须为三联卡（.pm-grid，骨架见 fill-schema），禁止退回单段 danger-card 长文；
     ②黄灯扣分明细表行数必须与顶层 yellow_deductions 条数一致——多列=零扣分空行该删，
@@ -1279,15 +1293,15 @@ def _check_l4_form(fill: dict) -> None:
             row_pts.append(round(float(nm_.group(1)), 3) if nm_ else None)
         y_pts = sorted(round(_num(y.get("points")), 3) for y in pos_y)
         if None in row_pts:
-            print("⚠️ 内容校验: l4_html 黄灯表扣分单元格未检出数值（class=num）：逐项数值比对降级，"
-                  "请人工核对与 yellow_deductions 一致（v5.1.2）", file=sys.stderr)
+            warns.append("l4_html 黄灯表扣分单元格未检出数值（class=num）：逐项数值比对降级，"
+                         "请人工核对与 yellow_deductions 一致（v5.1.2）")
         elif sorted(row_pts) != y_pts:
             raise ValueError(f"l4_html 黄灯表扣分值 {sorted(row_pts)} 与 yellow_deductions {y_pts} 不一致："
                              "表与字段数值多重集一致（脚本按 yellow_deductions 扣分，v5.1.2 起拒渲染）")
     if not row_ms and pos_y:
-        print(f"⚠️ 内容校验: l4_html 黄灯扣分明细未检出表格形态（<td>a-d 类别行），但有 "
-              f"{len(yellow)} 条 yellow_deductions——请用扣分表正典形态（fill-schema「L4 黄灯扣分明细」）",
-              file=sys.stderr)
+        warns.append(f"l4_html 黄灯扣分明细未检出表格形态（<td>a-d 类别行），但有 "
+                     f"{len(yellow)} 条 yellow_deductions——请用扣分表正典形态"
+                     f"（fill-schema「L4 黄灯扣分明细」）")
 
 
 def _check_cn_placeholder(fill: dict) -> None:
@@ -1297,8 +1311,7 @@ def _check_cn_placeholder(fill: dict) -> None:
     以单个 a-d 字母开头的）是合法引用，不算占位符；fill 里的字面 {{KEY}} 合法
     （渲染时实体化显示），不在此查。"""
     for name in _HTML_FIELDS:
-        hits = [x for x in re.findall(r"【[^】]{0,40}】", fill.get(name) or "")
-                if not re.match(r"【[a-dA-D][ 、\s]", x)]
+        hits = _cn_placeholders(fill.get(name))
         if hits:
             raise ValueError(f"{name} 残留中文占位符: {sorted(set(hits))}——请填写实际内容后重渲")
 
@@ -1316,12 +1329,12 @@ def _check_review_miss_diagnostics(fill: dict, warns: list) -> None:
 def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     """validate_content 的执行主体（拆出是为了硬拒前 flush 告警，见包装函数）。"""
     _check_price_date(fill)
-    _check_quote_consistency(fill)
+    _check_quote_consistency(fill, warns)
     _check_score_ranges(fill)
 
     _check_valuation_inputs(fill)
     _check_valuation_scenarios(fill, warns)
-    _check_odds_floor(fill, warns)      # v5.0 机制三：赔率 ∞ 须配悲观地板证据（floor）
+    _check_odds_floor(fill, warns, calc)  # v5.0 机制三：赔率 ∞ 须配悲观地板证据（floor）
     _check_consensus_np(fill, warns)    # v5.0 机制二：乐观税一致预期照抄交叉校验
     _check_anchor_discipline(fill, warns)  # v5.1.0 估值锚纪律：增量证据锁死+回滚条款前置
     _check_chart_fields(fill)
@@ -1332,7 +1345,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_red_flag_conclusion(fill)  # v5.1.2：红旗 ≥2 项 → 首卡首句存疑句硬门禁
     _check_thesis_consistency(fill, calc)
     _check_content_floor(fill)
-    _check_l4_form(fill)
+    _check_l4_form(fill, warns)
     _check_cn_placeholder(fill)
 
     _check_missing_required_warns(fill, warns)
@@ -1617,10 +1630,18 @@ def _check_dcf(fill: dict, warns: list) -> None:
     valuation_html 仍手写 DCF 表 → 重复告警。"""
     d = fill.get("dcf")
     if not isinstance(d, dict) or not d:
-        if "稳健成长" in str(fill.get("stock_type") or ""):
+        st = str(fill.get("stock_type") or "")
+        if "稳健成长" in st:
             warns.append("dcf 字段未填：稳健成长分型 DCF 强制三行由 dcf 字段承载（v4.11.3 起；"
                          "value/fcf0/growth_5y/g_perp/wacc/net_cash/implied_g/verdict 八键，"
                          "现价比价脚本算，valuation_html 不再手写 DCF 表）")
+        elif ("稳定价值" in st
+              and not re.search(r"(?<!非)金融|银行|保险|券商", st)):
+            # v5.1.5（热核 P0-6，用户拍板补校验）：fill-schema/SKILL 承诺「稳定价值（非金融）
+            # 必填」此前零执行——与稳健成长同态（软告警）；金融类稳定价值股豁免
+            # （银行/保险走 PB-ROE/DDM，见 scoring.md）
+            warns.append("dcf 字段未填：稳定价值（非金融）分型 DCF 双卡由 dcf 字段承载"
+                         "（v5.1.5 起；金融类稳定价值股豁免）")
         return
     missing = [k for k in ("value", "fcf0", "growth_5y", "g_perp", "wacc", "net_cash",
                            "implied_g", "verdict") if not str(d.get(k) or "").strip()]
@@ -1647,7 +1668,6 @@ _PERIOD_NUM_KEYS = ("rev", "np", "np_dedt", "ocf", "sq_rev", "sq_np", "sq_prev_r
 _PERIOD_YOY_KEYS = ("rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy", "sq_rev_yoy", "sq_np_yoy",
                     "sq_dedt_yoy", "sq_ocf_yoy")
 _PERIOD_BAND_KEYS = ("band_np", "band_rev")
-_PERIOD_VERDICT_ENUM = ("超前", "正常", "滞后", "无法判定")
 
 
 def _period_time_pct(period: str):
@@ -1676,15 +1696,7 @@ def _check_period_track(fill: dict, warns: list) -> None:
     pt = fill.get("period_track")
     if pt is not None and not isinstance(pt, dict):
         raise ValueError(f"period_track 字段需为对象，实际: {type(pt).__name__}")
-    q = fill.get("quote") or {}
-    src = q.get("source_file") if isinstance(q, dict) else None
-    ref = None
-    if src:
-        try:
-            with open(src, encoding="utf-8") as f:
-                ref = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            ref = None   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
+    ref = _quote_ref(fill)   # 落盘读不到：_check_quote_consistency 已硬拒，这里降级跳过比对
     ref_pt = (ref or {}).get("period_track")
     if pt and ref is None:
         warns.append("period_track 已填但 quote.source_file 缺失或读不到：第 3 章数据无法交叉校验"
@@ -1810,12 +1822,12 @@ def _check_period_track(fill: dict, warns: list) -> None:
         for vk, ak in (("verdict_rev", "rev"), ("verdict_np", "np"), ("verdict_dedt", "np_dedt")):
             v = str(pt.get(vk) or "").strip()
             if v:
-                if v not in _PERIOD_VERDICT_ENUM:
+                if v not in _PERIOD_VERDICTS:
                     raise ValueError(f"period_track.{vk} 取值非法: {v!r}——判词四选一："
-                                     f"{'/'.join(_PERIOD_VERDICT_ENUM)}（模型按节奏带+完成度判定）")
+                                     f"{'/'.join(_PERIOD_VERDICTS)}（模型按节奏带+完成度判定）")
             elif not is_annual and _num(pt.get(ak)) is not None:
                 warns.append(f"period_track.{vk} 未填：章内该指标判词将显示「无法判定」（判词四选一 "
-                             f"{'/'.join(_PERIOD_VERDICT_ENUM)}，由模型按节奏带与完成度判定）")
+                             f"{'/'.join(_PERIOD_VERDICTS)}，由模型按节奏带与完成度判定）")
         # v5.1.2：判词与完成度机械对账（分母与子弹图同源：一致预期优先、缺则经营目标）
         t_pct = _period_time_pct(str(pt.get("period") or ""))
         if t_pct is not None and not is_annual:

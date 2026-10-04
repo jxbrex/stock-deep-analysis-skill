@@ -60,27 +60,22 @@ def _pick_latest_per_period(rows: list) -> list:
     return [seen[k] for k in sorted(seen, reverse=True)]
 
 
-def _ts_annual_fetch_3(code: str, rng: dict) -> tuple:
-    """拉取并本地过滤三表年报行（income/fina_indicator/cashflow），各自独立失败静默返回空。
-    income 额外要求 report_type="1"（防止与合并报表重复行）；ind/cf 沿用原口径不过滤。"""
-    ts = to_ts_code(code)
-    inc, ind, cf = [], [], []
+def _ts_stmt(code: str, api: str, annual: bool = False, rt1: bool = False) -> list:
+    """三表/指标 tushare 拉取的统一窗口+谓词+空返（v5.1.5 收编四处同构样板：年表/最新季度/
+    period_track/forensic）——_fin_rng() 统一窗口（年表/forensic/最新季度/period_track 共享
+    ts_call 缓存，每股每表只发 1 次请求）；annual=True 滤年报行（end_date 以 1231 结尾）；
+    rt1=True 滤 report_type=="1"（income/balancesheet 防合并报表重复行；cashflow/
+    fina_indicator 沿用原口径不滤）。失败或空序列返回 []——调用方自行决定空序列是报错
+    还是降级（语义与收编前四处逐点核对一致）。"""
     try:
-        inc = [r for r in _C.ts_call("income", {"ts_code": ts, **rng})
-               if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"]
+        rows = _C.ts_call(api, {"ts_code": to_ts_code(code), **_fin_rng()})
     except Exception:
-        pass
-    try:
-        ind = [r for r in _C.ts_call("fina_indicator", {"ts_code": ts, **rng})
-               if (r.get("end_date") or "").endswith("1231")]
-    except Exception:
-        pass
-    try:
-        cf = [r for r in _C.ts_call("cashflow", {"ts_code": ts, **rng})
-              if (r.get("end_date") or "").endswith("1231")]
-    except Exception:
-        pass
-    return inc, ind, cf
+        return []
+    if annual:
+        rows = [r for r in rows if (r.get("end_date") or "").endswith("1231")]
+    if rt1:
+        rows = [r for r in rows if str(r.get("report_type")) == "1"]
+    return rows
 
 
 def _ts_annual_em_map(secucode: str, n_years: int) -> dict:
@@ -143,8 +138,9 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
     """A股年报主要指标（新→旧），映射为东财 F10 同构键名，供年表与红旗共用。
     周转天数优先 tushare fina_indicator 换算；缺失期次用东财 F10 直接字段
     YSZKZZTS/CHZZTS 补齐（tushare 对部分个股该字段覆盖不全，中芯国际实证）。"""
-    rng = _fin_rng()  # 统一窗口：与 forensic/最新季度共享缓存（本地过滤，n_years 由切片控制）
-    inc, ind, cf = _ts_annual_fetch_3(code, rng)
+    inc, ind, cf = (_ts_stmt(code, "income", annual=True, rt1=True),
+                    _ts_stmt(code, "fina_indicator", annual=True),
+                    _ts_stmt(code, "cashflow", annual=True))
     if not inc:
         raise RuntimeError("tushare income 无年报数据")
     ind_map = {r["end_date"]: r for r in ind}
@@ -162,13 +158,15 @@ def _ts_annual_rows(code: str, n_years: int = 5, secucode: str = None) -> list:
     return rows
 
 
+_QTR_NAME = {"0331": "一季", "0630": "中报", "0930": "三季", "1231": "年报"}
+
+
 def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
     """A股最新报告期摘要（东财键名同构）：净利/同比/总股本/ROIC。
     ROIC/总股本缺失时用东财 F10 字段级补齐（tushare fina_indicator/daily_basic 覆盖不全）。"""
     ts = to_ts_code(code)
     rng = _fin_rng()  # 统一窗口：与 forensic/年表共享缓存（本地取最新报告期）
-    inc = [r for r in _C.ts_call("income", {"ts_code": ts, **rng})
-           if str(r.get("report_type")) == "1"]
+    inc = _ts_stmt(code, "income", rt1=True)
     if not inc:
         return {}
     inc = _pick_latest_per_period(inc)
@@ -206,7 +204,7 @@ def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
     if total_share is None:
         total_share = em.get("TOTAL_SHARE")
     ed = cur.get("end_date") or ""
-    qname = {"0331": "一季", "0630": "中报", "0930": "三季", "1231": "年报"}.get(ed[4:], ed)
+    qname = _QTR_NAME.get(ed[4:], ed)
     return {"REPORT_DATE_NAME": f"{ed[:4]}{qname}",
             "PARENTNETPROFIT": cur.get("n_income_attr_p"),
             "PARENTNETPROFITTZ": yoy,
@@ -308,7 +306,15 @@ def fetch_latest_quarter(code: str, secucode: str) -> dict:
 
 # ---------------- 最新报告期透视（v5.0 第 3 章数据源） ----------------
 
-_QTR_NAME = {"0331": "一季", "0630": "中报", "0930": "三季", "1231": "年报"}
+# fetch_period_track/_period_track_calc 产出键全集（v5.1.5 键集漂移守卫锚点：生产端/校验端
+# （validate 四组键）/落盘参照（conftest._PERIOD_REF_KEYS）三处加键忘同步即红——
+# test_render_gate.test_period_track_key_drift；end_date/gm 为生产端内部键，不入参照）
+_PERIOD_TRACK_KEYS = ("period", "end_date", "is_annual", "rev", "np", "np_dedt", "ocf", "gm",
+                      "rev_yoy", "np_yoy", "np_dedt_yoy", "ocf_yoy",
+                      "sq_label", "sq_rev", "sq_np", "sq_prev_label", "sq_prev_rev", "sq_prev_np",
+                      "sq_rev_yoy", "sq_np_yoy", "sq_dedt", "sq_ocf", "sq_prev_dedt",
+                      "sq_prev_ocf", "sq_dedt_yoy", "sq_ocf_yoy",
+                      "band_np", "band_rev", "band_years")
 
 
 def _period_row_norm(r: dict, ind: dict, cf: dict, ed: str) -> dict:
@@ -356,15 +362,10 @@ def _period_track_calc(rows: list) -> dict:
             c2 = by_ed.get(f"{yy}{mmdd}") or {}
             b2 = by_ed.get(f"{yy}{base_mmdd}") if base_mmdd else None
             b2 = b2 or {}
-            sq[f"{tag}rev"] = (c2.get("TOTALOPERATEREVE") if base_mmdd is None
-                               else _sub(c2.get("TOTALOPERATEREVE"), b2.get("TOTALOPERATEREVE")))
-            sq[f"{tag}np"] = (c2.get("PARENTNETPROFIT") if base_mmdd is None
-                              else _sub(c2.get("PARENTNETPROFIT"), b2.get("PARENTNETPROFIT")))
             # v5.0.1：扣非/经营现金流单季拆分（同款累计差分，第 3 章单季双联图数据源）
-            sq[f"{tag}dedt"] = (c2.get("KCFJCXSYJLR") if base_mmdd is None
-                                else _sub(c2.get("KCFJCXSYJLR"), b2.get("KCFJCXSYJLR")))
-            sq[f"{tag}ocf"] = (c2.get("NETCASH_OPERATE_PK") if base_mmdd is None
-                               else _sub(c2.get("NETCASH_OPERATE_PK"), b2.get("NETCASH_OPERATE_PK")))
+            for fld, key in (("rev", "TOTALOPERATEREVE"), ("np", "PARENTNETPROFIT"),
+                             ("dedt", "KCFJCXSYJLR"), ("ocf", "NETCASH_OPERATE_PK")):
+                sq[f"{tag}{fld}"] = c2.get(key) if base_mmdd is None else _sub(c2.get(key), b2.get(key))
     # 近三年同期占比带（年报期无带——整章消失，数据照常输出供其他消费方）
     band_np, band_rev, years = [], [], []
     if mmdd != "1231":
@@ -416,20 +417,11 @@ def fetch_period_track(code: str, secucode: str = None) -> dict:
     扣非/毛利率缺期次用东财 F10 最新行字段级补齐；tushare 空/失败 → 东财 F10 混合期行兜底。
     返回 {} 表示两链皆空。"""
     try:
-        ts = to_ts_code(code)
-        rng = _fin_rng()
-        inc = _pick_latest_per_period([r for r in _C.ts_call("income", {"ts_code": ts, **rng})
-                                       if str(r.get("report_type")) == "1"])
+        inc = _pick_latest_per_period(_ts_stmt(code, "income", rt1=True))
         if not inc:
             raise RuntimeError("tushare income 无数据")
-        try:
-            ind_map = {r["end_date"]: r for r in _C.ts_call("fina_indicator", {"ts_code": ts, **rng})}
-        except Exception:
-            ind_map = {}
-        try:
-            cf_map = {r["end_date"]: r for r in _C.ts_call("cashflow", {"ts_code": ts, **rng})}
-        except Exception:
-            cf_map = {}
+        ind_map = {r["end_date"]: r for r in _ts_stmt(code, "fina_indicator")}
+        cf_map = {r["end_date"]: r for r in _ts_stmt(code, "cashflow")}
         rows = [_period_row_norm(r, ind_map.get(r["end_date"]) or {},
                                  cf_map.get(r["end_date"]) or {}, r["end_date"]) for r in inc]
         t = _period_track_calc(rows)
@@ -484,8 +476,7 @@ def fetch_audit(code: str):
     try:
         rows = _C.ts_call("fina_audit", {"ts_code": to_ts_code(code)})
         if rows:
-            rows.sort(key=lambda x: x.get("end_date") or "", reverse=True)
-            return rows[0]
+            return max(rows, key=lambda x: x.get("end_date") or "")
     except (OSError, RuntimeError) as e:
         _ts_quiet("fetch_audit", e)
     return None
@@ -538,19 +529,83 @@ def fetch_div_yield(code: str, price: float):
 
 def fetch_debt(code: str):
     """最新报告期有息负债与货币资金（tushare balancesheet）。
-    返回 dict（st_borr/non_cur_liab_due_1y/lt_borr/bond_payable/money_cap，单位元）或 None。"""
+    返回 dict（原始键 st_borr/non_cur_liab_due_1y/lt_borr/bond_payable/money_cap（单位元）
+    + 组装键：st_debt=短债合计（短期借款+一年内到期非流动负债）、lt_debt=长债合计
+    （长期借款+应付债券）、cover=短债覆盖（货币资金÷短债；无短债 →"无短债"、货币资金
+    缺失 →"—"））或 None。组装口径 v5.1.5 自 em_fetch._sec_e3 下沉。"""
     try:
         rows = _C.ts_call("balancesheet", {"ts_code": to_ts_code(code), **_fin_rng()})
         rows = [r for r in rows if str(r.get("report_type")) == "1"]
         if not rows:
             return None
-        return _pick_latest_per_period(rows)[0]
+        d = _pick_latest_per_period(rows)[0]
+
+        def _f0(v):
+            try:
+                return float(v or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        st = _f0(d.get("st_borr")) + _f0(d.get("non_cur_liab_due_1y"))
+        lt = _f0(d.get("lt_borr")) + _f0(d.get("bond_payable"))
+        mc = d.get("money_cap")
+        cover = "无短债" if st <= 0 else ("—" if mc is None else f"{float(mc) / st:.2f}")
+        return {**d, "st_debt": st, "lt_debt": lt, "cover": cover}
     except (OSError, RuntimeError) as e:
         _ts_quiet("fetch_debt", e)
         return None
 
 
-# ---------------- 盈利质量红旗（forensic：7 年三表 + 审计意见） ----------------
+# ---------------- 盈利质量红旗（red_flags 四项 + forensic：7 年三表 + 审计意见） ----------------
+def _nco_bad(ratios: list, min_bad: int) -> bool:
+    """利润现金含量（经营现金流/净利润）恶化判定（red_flags 与 forensic 共用，v5.1.5 收编）：
+    ratios（新→旧的有效年份比率序列）中 <0.7 的年数 ≥ min_bad 即判恶化。
+    两调用点口径不同、由调用方组装序列承载——red_flags=近 3 年（仅净利>0 年份）≥2 年恶化；
+    forensic=最新 2 年双双 <0.7（ni≤0 年份上游已跳过）。本函数只承载判定，不统一口径。"""
+    return len(ratios) >= min_bad and sum(1 for v in ratios if v < 0.7) >= min_bad
+
+
+def red_flags(annual: list) -> list:
+    """盈利质量红旗四项检查（现金含量/应收/存货/毛利率；审计意见已挪出，单独一行输出）。
+    annual: 年报列表（新→旧，东财键名同构）。
+    三态输出：✓=真通过（有数据且未恶化）/ ✗=真恶化 / △=数据不足——数据缺失显示△，
+    绝不显示✓（"✓ API未触发"是虚假通过，芯原股份实证）。
+    （v5.1.5 自 em_fetch 挪入本块——纯财务判断函数，与 forensic 同族同文件）"""
+    flags = []
+    annual = annual[:3]
+
+    # 1. 利润现金含量（经营现金流/净利润 <0.7 视为不达标；数值为倍数如 1.48=148%；
+    #    口径：净利润为负的年份该比率无意义，上游已置 None 跳过，不计入连续年数）
+    vals = [r.get("NCO_NETPROFIT") for r in annual if r.get("NCO_NETPROFIT") is not None]
+    if len(vals) >= 2:
+        bad_n = sum(1 for v in vals if v < 0.7)
+        if _nco_bad(vals, 2):
+            flags.append(f"✗ 利润现金含量 连续{bad_n}年<0.7（仅计净利润>0年份）")
+        else:
+            flags.append(f"✓ 利润现金含量（最低{round(min(vals), 2)}，仅计净利润>0年份）")
+    else:
+        flags.append(f"△ 利润现金含量 数据不足({len(vals)}期有效)")
+
+    # 2/3. 应收/存货周转天数趋势（变长=恶化）
+    def worsening(key, name):
+        vals = [r.get(key) for r in annual if r.get(key) is not None]
+        if len(vals) >= 3:
+            if vals[0] > vals[-1] * 1.3:
+                return f"✗ {name} 恶化（{vals[-1]:.0f}→{vals[0]:.0f}天）"
+            return f"✓ {name}（{vals[0]:.0f}天，未恶化）"
+        return f"△ {name} 数据不足({len(vals)}期有效)"
+    flags.append(worsening("YSZKZZTS", "应收账款周转"))
+    flags.append(worsening("CHZZTS", "存货周转"))
+
+    # 4. 毛利率异常（需同业对照，此处仅列数值）
+    if annual and annual[0].get("XSMLL") is not None:
+        flags.append(f"△ 毛利率 {pct(annual[0].get('XSMLL'))}（待与同业对照）")
+    else:
+        flags.append("△ 毛利率 数据不足")
+
+    return flags
+
+
 def fetch_forensic(code: str) -> list:
     """财报可信度初判（A股，tushare）：应计比率 + Beneish M-Score + 审计意见 → A/B/C/D。
     金融股（comp_type 2/3/4）不适用 M-Score，输出说明。单项计算失败跳过不报错。
@@ -558,17 +613,12 @@ def fetch_forensic(code: str) -> list:
     try:
         ts = to_ts_code(code)
         rng = _fin_rng()
-        inc = _pick_latest_per_period(
-            [r for r in _C.ts_call("income", {"ts_code": ts, **rng})
-             if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"])[:2]
+        inc = _pick_latest_per_period(_ts_stmt(code, "income", annual=True, rt1=True))[:2]
         if len(inc) < 2:
             return []
-        bs = _pick_latest_per_period(
-            [r for r in _C.ts_call("balancesheet", {"ts_code": ts, **rng})
-             if (r.get("end_date") or "").endswith("1231") and str(r.get("report_type")) == "1"])
+        bs = _pick_latest_per_period(_ts_stmt(code, "balancesheet", annual=True, rt1=True))
         bs_map = {r["end_date"]: r for r in bs}
-        cf_map = {r["end_date"]: r for r in _C.ts_call("cashflow", {"ts_code": ts, **rng})
-                  if (r.get("end_date") or "").endswith("1231")}
+        cf_map = {r["end_date"]: r for r in _ts_stmt(code, "cashflow", annual=True)}
         t, t1 = inc[0], inc[1]
         b, b1 = bs_map.get(t["end_date"]) or {}, bs_map.get(t1["end_date"]) or {}
         c, c1 = cf_map.get(t["end_date"]) or {}, cf_map.get(t1["end_date"]) or {}
@@ -595,7 +645,7 @@ def fetch_forensic(code: str) -> list:
         # 净利润为负时 ocf/ni 无意义，ni≤0 的年份跳过判定，不计入连续 2 年计数）
         nco_bad = False
         if None not in (ni, ni1, ocf, ocf1) and ni > 0 and ni1 > 0:
-            nco_bad = (ocf / ni < 0.7) and (ocf1 / ni1 < 0.7)
+            nco_bad = _nco_bad([ocf / ni, ocf1 / ni1], 2)
         # M-Score（金融股不适用）
         m = None
         comp = str(t.get("comp_type") or "1")

@@ -21,12 +21,8 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract_review import parse_report_name  # 文件名解析唯一 owner（extract_review.py）
-
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+# debt: stdout/stderr UTF-8 reconfigure 靠 extract_review 的 import 副作用保障；
+# 若改为不 import 它，需自带 reconfigure 块
 
 DEFAULT_DIR = r"D:\个股深度分析"
 DUE_SOON_DAYS = 7   # 未来 7 天内到期算「临近」
@@ -125,7 +121,6 @@ def main():
         # tushare disclosure_date 拉财报披露计划，复用 em_fetch.fetch_disclosure
         # （E1 同款口径：to_ts_code 市场映射 6 位→.SH/.SZ、北交所 43/83/87/88/92→.BJ；
         # 按报告期倒序，优先取未实际披露且有计划日期的最近报告期）
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         try:
             import em_fetch as em
             print("\n■ 财报披露计划（到期/临近标的）")

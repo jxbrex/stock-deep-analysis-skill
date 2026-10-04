@@ -339,7 +339,7 @@ def test_09_pe_band_timing():
         rows_db = [{"trade_date": f"2025{(i // 28) + 1:02d}{(i % 28) + 1:02d}", "pe_ttm": float(i + 1),
                     "pb": 1.5} for i in range(100)]
         em_core.ts_call = lambda api, params=None, fields="": rows_db if api == "daily_basic" else []
-        band = em.fetch_pe_pb_band("600989", years=5)
+        band = em.fetch_pe_pb_band("600989")
         assert band["pe_p25"] == 25.0 and band["pe_p75"] == 75.0, \
             f"P25/P75 应为 25/75，实际 {band['pe_p25']}/{band['pe_p75']}"
         assert band["pe_min"] == 1.0 and band["pe_max"] == 100.0
@@ -727,23 +727,8 @@ def test_18_period_track_f10_fallback():
 
 
 if __name__ == "__main__":
-    import traceback
-    test_01_market_map()
-    test_02_leap_day()
-    test_03_yoy_text()
-    test_04_rate_limit_hardstop()
-    test_05_stale_code_guard()
-    test_06_token_alarm()
-    test_07_disk_cache()
-    test_08_mainbz_gross_profit()
-    test_09_pe_band_timing()
-    test_10_hk_daily_reversed()
-    test_11_monthly_pe_backfill()
-    test_12_fields_third_param()
-    test_13_holders_quarterly()
-    test_14_monthly_ohlc()
-    test_15_e4_empty_hints()
-    test_16_consensus_detail()
-    test_17_period_track()
-    test_18_period_track_f10_fallback()
-    print("全部断言通过")
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    for t in tests:
+        t()
+        print(f"OK {t.__name__}")
+    print(f"全部 {len(tests)} 项测试通过")

@@ -123,7 +123,7 @@ def parse_stage_period(period: str):
 
 def _period_ratio(pt: dict, amt_k: str, goal_k: str = None, cons_k: str = None):
     """报告期完成度（v5.1.2，子弹图与判词对账同源）：分母=一致预期优先、缺则经营目标
-    （与 charts_misc.build_period_bullets 同一选取规则）；返回 累计÷分母，
+    （与 charts_period.build_period_bullets 同一选取规则）；返回 累计÷分母，
     任一缺失或分母 ≤0 → None。"""
     v = _num(pt.get(amt_k))
     goal = _num(pt.get(goal_k)) if goal_k else None
@@ -133,6 +133,11 @@ def _period_ratio(pt: dict, amt_k: str, goal_k: str = None, cons_k: str = None):
     if v is None or v <= 0 or not d or d <= 0:
         return None
     return v / d
+
+
+# 报告期判词四元组（v5.1.5 单源化：charts_period._period_verdict 渲染兜底与
+# validate._check_period_track 四选一校验同源——此前 charts_misc 与 validate 各存一份）
+_PERIOD_VERDICTS = ("超前", "正常", "滞后", "无法判定")
 
 
 
@@ -244,6 +249,26 @@ def _hgrid_ticks(parts: list, Y, vals: list, x1, x2, tx, suffix: str = "", fs: i
             parts.append(f'<text x="{tx}" y="{gy + dy:.1f}" text-anchor="end" font-size="{fs}" fill="{_C_LABEL}">{_fmt(v)}{suffix}</text>')
 
 
+def _arrow_dumbbell(xo, xn, cy, color, fmt, dash="", hollow=False) -> str:
+    """哑铃连线+箭头+两端点（13 章回测哑铃与 9 章 B 档偏离哑铃共用几何，v5.1.5 收敛）：
+    两点距 <26 不画箭头（防叠）；连线末端回缩 19*s、箭头尖贴到新点圆缘（r=7.5+描边 2）、
+    翼展 9*s/±5.5；端点：旧值/零轴=沙灰 r=6，新值/本文=r=7.5 钢蓝白描边（hollow=空心，
+    偏离超定域的截断记号）。fmt=坐标格式化函数（调用方各持 .1f / _px 去尾零口径）。"""
+    s = 1 if xn >= xo else -1
+    far = abs(xn - xo) >= 26
+    out = [f'<line x1="{fmt(xo)}" y1="{fmt(cy)}" x2="{fmt(xn - 19 * s) if far else fmt(xn)}" '
+           f'y2="{fmt(cy)}" stroke="{color}" stroke-width="3"{dash}/>']
+    if far:
+        tip = xn - 10 * s
+        out.append(f'<polygon points="{fmt(tip)},{fmt(cy)} {fmt(tip - 9 * s)},{fmt(cy - 5.5)} '
+                   f'{fmt(tip - 9 * s)},{fmt(cy + 5.5)}" fill="{color}"/>')
+    out.append(f'<circle cx="{fmt(xo)}" cy="{fmt(cy)}" r="6" fill="{_C_SAND}"/>')
+    fill_c, stroke_c = (_C_PAPER, color) if hollow else (_C_BLUE, _C_PAPER)
+    out.append(f'<circle cx="{fmt(xn)}" cy="{fmt(cy)}" r="7.5" fill="{fill_c}" '
+               f'stroke="{stroke_c}" stroke-width="2"/>')
+    return "".join(out)
+
+
 def _legend_row(parts: list, items: list, x, y: int = 8, fs: int = 11, sw: int = 13, sh: int = 9,
                 rx: float = 2.5, dx: int = 18, gap: int = 22, tcolor: str = _C_LABEL):
     """图例横排单行：逐项画「矩形色块 + 标签文字」并水平推进，返回行末 x（下一项起点）。
@@ -302,7 +327,7 @@ __all__ = [
     "_C_GOOD_LINE", "_C_YEAR_GRID", "_C_GREEN", "_C_RED", "_C_ORANGE", "_C_BADGE_DEEP",
     "_fmt_px", "_fmt_amt", "_SCENARIO_COLORS", "_prev_track_rows",
     "_var_key", "_sensitivity_items", "_first_var_name", "_gap_dim_ok", "_period_ratio",
-    "parse_stage_period",
+    "parse_stage_period", "_PERIOD_VERDICTS", "_arrow_dumbbell",
     "_pad_domain", "_lin_map", "_text_w", "_wrap_label", "_ticks",
     "_SVG_STYLE", "_svg_open", "_svg_close", "_vgrid_ticks", "_hgrid_ticks", "_legend_row",
     "_inject_chart_anchors", "_anchor_fit", "_anchor_clamp",

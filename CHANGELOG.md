@@ -162,6 +162,77 @@
 
 ## 版本历史
 
+### V5.1.5（2026-10-03）— ponytail 全树审计二度执行：卫生债清偿 −270 行（结转 D 三条销账）
+
+> 立项：ponytail-audit 全树审计（四路只读子代理分块：数据层/图表层/评分渲染层/测试层），
+> 确认 24 条过度工程；用户拍板「大中小型全修」，按风险分三批执行（A 零风险删除 / B 测试
+> 基建改写 / C 契约连带），每批后全量回归。2026-09-18 首次审计的结转 D Top 3 本版全部销账。
+
+- 批次 A（净 −74 行，纯删除与等价收缩，19 文件）：scoring `rows_html` 死产出（零消费方）；
+  gate/charts/e2e 三文件**文件中部** `__main__` 直跑块删除（globals() 执行点快照致其后
+  34+9 个用例静默漏跑还报「全部通过」——v4.10.1「58 绿=全绿」事故同形态；README 本就约定
+  此三文件 pytest 唯一入口）；score_calibration/monthly_checkup 与 import 链重复的 UTF-8
+  reconfigure 块；em_cache 5 个死 tier 条目；em_market 三函数从未覆盖的默认参内联；
+  em_core `get(retries)`/`pct(digits)` 死参；em_fetch `_amt` 双份提升模块级；em_finance
+  单季拆分 8 字段循环化 / fetch_audit max() / `_QTR_NAME` 合并；charts_misc `_gap_axis`
+  数学不可达兜底 / `round()` 替 format 往返 / 列表当布尔；charts_cycle 图例双写消除；
+  charts_scenario `row()` 死参；validate `warns` 死可选参等 24 处。
+- 批次 B（净 −172 行，测试基建）：**test_mcap_mode 159→64 行**——自造 60 行夹具 +
+  render/expect 复刻全删，收编 conftest `minimal_fill`/`mcap_fill`/`render_fill`/
+  `expect_valueerror`，断言点 11/11 对号销账（结转 D3）；**test_em_fetch /
+  test_extract_review 的 `__main__` 手工点名清单 → `sorted(globals())` 自动收集**
+  （手工清单=新用例忘登记即静默漏跑，v5.0 test_17/18 险漏；结转 D2）；test_render_charts
+  两处十参私有签名直调 → `render_fill` 全量渲染；test_golden `_render_norm` →
+  `render_fill` 一行；gate 内嵌 `expect_reject` → conftest `expect_valueerror`
+  （补 kw 文案钉防误拒假绿）；conftest `render_workspace` 零增量包装删除（7 调用点
+  直用 `tempfile.TemporaryDirectory()`）；**charts:628 断言 `A and B or A` 运算符
+  优先级吞掉空心蓝点检查 → 实证 `fill="#fffdf9"` 真实存在，改严格 `A and B`（断言变严）**。
+- 批次 C（净 −27 行，契约连带）：**em_fetch 门面 24 个死 re-export 名收窄**
+  （em_core 21 + em_finance 3，逐名重验 grep 零消费——v4.10.3 收窄后长回，本版再收，
+  结转 D1）；`search_e7` 删从未被传的 `types`/`page_size` 参 + data-sources.md「换 type」
+  指引改如实描述；`build_scenario_spectrum` 删手写 scenarios 兼容回退（fill-schema 自述
+  「仅为兼容保留」、render 恒传 `compute_valuation(fill)`），`calc` 收必填，fill-schema:68
+  与 render_report:537 文案同步；`build_peers_plot` 删裸数组分支，fill-schema:74 同步。
+- 测试 157→165（mcap 单冒烟拆三 + peers_plot 数组硬拒 / 52 周高低对账 / IF 护栏 /
+  标量转义 / dcf 稳定价值 / period_track 键集漂移各一用例）；直跑六文件计数与 pytest
+  收集数一致；golden 七份零重建（全部改动不改渲染输出，快照逐字节比对全程绿色背书）；
+  注入抽查：`mcap_fill` pe_ttm 改坏 0.55→0.66，`test_mcap_mode` 精确变红抓点后还原。
+- 热核二审（三路只读子代理：等价性逐 hunk/测试变异思维/结构 judo）抓出并修复：peers_plot
+  数组分支删除后 validate 仍放行、docstring 仍宣传、渲染裸崩的三处口径打架（改 validate
+  硬拒 ValueError「数组简写已废止」+ 新测试钉死）；三测试文件 docstring「直接 python
+  运行」假绿声明删除（__main__ 已删、静默 exit 0 撞神华纪律）；test_golden 孤儿 import、
+  em_fetch/conftest 失真注释、expect_valueerror 三处同串双写收缩（msg 缺省取 kw）、
+  search_e7 单元素列表仪式内联；批次 A 漏执行的 A12/A13 两处补刀。等价性审查 11 项高危
+  hunk 全部判定等价（四项经 2 万~65 万随机输入实证）。
+- 热核全树审计 P0 修复（四路审计，用户拍板）：**52 周高低校验缺失的文档虚言闭合**——
+  时机小表技术面信号比对补 high_52w/low_52w（「52周高低 高/低」合并写法与分拆写法同口径
+  >1% 告警，fill-schema/SKILL 承诺的四件套此前只查三键）；**IF 条件块双护栏**——模板 IF
+  键不在 repl map _stderr 点名（此前整块静默删除零告警）、替换后残留 `<!--IF:/<!--ENDIF-->`
+  拒渲染（嵌套非贪婪错配与 fill 字面注入都拦）；**15 个标量占位键统一 `_esc`**（PRICE/
+  MCAP/PE_TTM/HORIZON/GAP_TIER/PEERS_META/CYCLE_META/NEXT_REVIEW/GEN_TIME/CALIB_NOTE/
+  VALUATION_METHOD/STOCK_TYPE/MCAP_SUB/PE_SUB/PREV_DATE，夹具无特殊字符故 golden 零漂移）；
+  **落盘 JSON 读盘收敛**——`_quote_ref` 改双态返回（读不到/未声明 → None），
+  `_check_consensus_np`/`_check_period_track` 换用（`_check_quote_consistency` 硬拒语义
+  专属保留自读）；**`_check_odds_floor` 公式双写收敛**——calc 非 None 直取 pess 行 low
+  （与 compute_valuation 同源），纯 --check 路径保留复算兜底；**dcf 稳定价值（非金融）
+  分型必填校验**（用户拍板补校验方向；与稳健成长同态软告警，含「金融」豁免——银行/保险
+  走 PB-ROE/DDM）。
+- 热核 P1/P2 收编（两工单，纯移动/提取/同名收敛，golden 七份逐字节零漂移背书）：
+  **charts_misc 拆三刀**——gap 族 → charts_gap.py（368 行）、报告期族 → charts_period.py
+  （395 行）、杂货留守 440 行，引用点逐点同步（render_report/两测试文件/charts_base
+  docstring）；**哑铃箭头几何收敛** `_arrow_dumbbell`（回测哑铃与 B 档偏离哑铃同一套
+  魔法数，fmt 参数承载两边坐标格式化差异）；**判词四元组单源化** `_PERIOD_VERDICTS`
+  挪 charts_base（charts_period 渲染兜底与 validate 四选一校验同源）；
+  **red_flags 错层挪 em_finance**（与 forensic 同族）+ `_nco_bad` 共享 helper（近 3 年
+  ≥2 年 vs 最新 2 年两口径参数承载、不统一）；**三表拉取收编 `_ts_stmt`**（统一窗口+
+  谓词+空返，净 −25 行）；**有息负债组装下沉 fetch_debt**（st_debt/lt_debt/cover，
+  _sec_e3 只格式化）；**【】占位符正则单源化** `_cn_placeholders`（validate 前置与渲染后
+  _check_leftover 同口径）；**validate 三处 print 旁路收编 warns**（quote 偏差/L4 降级
+  两条，输出时机改统一 flush、文案不变）；**period_track 键集漂移测试**（生产端常量=
+  实际产出=校验端=落盘参照四方对齐，加键忘同步即红）；**fetch_forecast_express 裸吞
+  异常改 _ts_quiet 纪律**；**`_em_kline_url`→`kline_url`**（跨模块消费的公开契约去
+  下划线）与 **`_E1_CAPTURE`→`_CAPTURE`**（已捕获 E3/E5，名不副实）。
+
 ### V5.1.2（2026-09-21）— 全 skill 一致性彻查修复（影石矛盾同类 22 项）
 
 > 立项：影石创新矛盾修复（v5.1.1）后用户要求彻查整个 skill 的同类问题。三路探查

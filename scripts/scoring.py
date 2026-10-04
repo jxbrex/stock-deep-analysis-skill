@@ -126,6 +126,18 @@ def _plain_text(frag: str) -> str:
     return re.sub(r"<[^>]+>", "", frag or "").strip()
 
 
+_CN_PLACEHOLDER_RE = r"【[^】]{0,40}】"
+_CN_PLACEHOLDER_EXEMPT_RE = r"【[a-dA-D][ 、\s]"
+
+
+def _cn_placeholders(text: str) -> list:
+    """中文【】占位符命中（黄灯类别标注【b 行业与政策环境】这类 a-d 字母开头的是合法引用，
+    豁免）——validate._check_cn_placeholder（fill 前置）与 render_report._check_leftover
+    （渲染后）同一口径的唯一权威（v5.1.5 单源化）。"""
+    return [x for x in re.findall(_CN_PLACEHOLDER_RE, text or "")
+            if not re.match(_CN_PLACEHOLDER_EXEMPT_RE, x)]
+
+
 def _scenario_numbers(s: dict):
     """单情景 profit/pe/mcap 三组数值的机械解析（compute_valuation 与内容校验共用同一口径）：
     返回 (profit, pe_lo, pe_hi, mc_lo, mc_hi)，缺失/不可解析/列表不足时为 None。
@@ -335,7 +347,7 @@ def compute_valuation_score(calc: dict, inputs: dict, gap_tier=None):
 
 def compute_scores(fill: dict):
     """v4.0 三轨：质量分（L1 六维 + L3 三维，不含估值）+ 估值分（独立）+ 时机分（微调）。
-    返回 dict：rows_html（质量层明细）/ layer_scores / layer_share / pre_risk_quality /
+    返回 dict：layer_scores / layer_share / pre_risk_quality /
     yellow_total / quality（质量分）/ valuation（估值分）/ timing（时机分）/ red_flag。
     校验：L1 六维层内权重和=100；L3 三维层内权重和=100；layer_share 两值和=100；
     时机层权重和=100。"""
@@ -376,28 +388,10 @@ def compute_scores(fill: dict):
         raise ValueError(f"layer_share 之和 = {sum(ls.values())}，必须为 100")
 
     layer_scores = {}
-    rows = []
     for layer in ("L1", "L3"):
         dims = [d for d in DIMS if d[1] == layer]
         layer_s = sum(float(scores[d[0]]) * weights[d[0]] for d in dims) / 100.0
         layer_scores[layer] = layer_s
-        for j, (key, _l, name, _dw) in enumerate(dims):
-            s = float(scores[key])
-            w = weights[key]
-            wtd = s * w / 100.0
-            badge = badge_class(s)
-            # 1D 红旗注解：红旗已先行扣入 1D 得分，单元格显示「原始分 − 红旗扣分 = 扣后分」
-            # （footer 算式不再列红旗项，避免与已扣分的 layer_scores 重复计算）
-            score_txt = (f"{s + red_total:.1f} − {red_total:.1f} 红旗 = {s:.1f}"
-                         if key == "1D" and red_total else f"{s:.1f}")
-            first = (f'<td rowspan="{len(dims)}"><strong>{LAYER_NAMES[layer]}</strong>'
-                     f'（占质量分 {ls[layer]:.0f}%）</td>') if j == 0 else ""
-            rows.append(
-                f'<tr>{first}<td>{name}</td>'
-                f'<td class="center score-cell"><span class="badge {badge}">{score_txt}</span></td>'
-                f'<td class="center">{_dim_verdict(s)}</td>'
-                f'<td class="num">{w:g}%</td><td class="num">{wtd:.2f}</td></tr>'
-            )
 
     # 不考虑风险质量分 = L1 层分×L1占比 + L3 层分×L3占比
     pre_risk = sum(layer_scores[l] * ls[l] for l in ("L1", "L3")) / 100.0
@@ -458,7 +452,7 @@ def compute_scores(fill: dict):
 
     red_flag = (fill.get("red_flag") or "").strip()
     return {
-        "rows_html": "\n".join(rows), "layer_scores": layer_scores,
+        "layer_scores": layer_scores,
         "layer_share": ls, "pre_risk_quality": pre_risk,
         "yellow_total": yellow_total, "quality": quality,
         "red_total": red_total, "red_deductions": red_deductions,

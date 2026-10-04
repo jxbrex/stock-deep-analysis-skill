@@ -22,11 +22,9 @@ import time
 _TTL_QUOTE = 2 * 3600    # 行情（日线收盘级，2h 内唯一风险是盘中跑+收盘后 1h 内重跑，可识别）
 _TTL_FIN = 12 * 3600     # 财务（季度更新）
 _TTL_GOV = 24 * 3600     # 治理（公告/事件级更新）
-_TS_TIER_QUOTE = {"daily", "daily_basic", "adj_factor", "hk_daily", "weekly", "monthly",
-                  "index_daily", "stk_factor"}
+_TS_TIER_QUOTE = {"daily", "daily_basic", "adj_factor", "hk_daily", "monthly", "index_daily"}
 _TS_TIER_GOV = {"pledge_stat", "stk_holdertrade", "repurchase", "fina_audit", "stock_basic",
-                "disclosure_date", "namechange", "stk_holdernumber",
-                "top10_holders", "top10_floatholders"}
+                "disclosure_date", "stk_holdernumber"}
 
 
 def dc_path(cache_dir: str, tag: str, key: str) -> str:

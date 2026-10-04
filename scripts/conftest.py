@@ -4,10 +4,12 @@
 
 收编三份重复样板：
 - minimal_fill / _dim / _calc / expect_valueerror：合法 fill 构造与拒渲染断言
-- write_fill / render_workspace / render_fill：临时 fill 落盘 → render → 读回 HTML
+- write_fill / render_fill：临时 fill 落盘 → render → 读回 HTML
 - capture_stderr / validate_stderr：stdout/stderr 捕获（告警路径断言）
 - period_fill（v5.0）：第 3 章「最新报告期透视」fill（minimal_fill + period_track +
   quote.source_file 会话级临时落盘参照，h1/q1/q3/annual 四态）
+- full_fill / mcap_fill：golden 全功能 / 市值口径夹具；_dim / _L1_GOV_BLOCK / _LONG_TEXT /
+  _period_ref_file：维度块与治理块常量、period_track 落盘参照生成
 
 拆分自 test_render_core.py（v4.10.2），逻辑逐字沿用，仅作共享化。
 """
@@ -309,9 +311,12 @@ def _calc(dispersion=0.55, odds=1.2, floor_type=None):
     return c
 
 
-def expect_valueerror(fill, msg, kw=None):
+def expect_valueerror(fill, msg=None, kw=None):
     """compute_scores + validate_content 均未抛 ValueError → AssertionError。
-    kw 给定时锁定报错文案（v5.1.2 热核审计加固：防止「被无关规则误拒」的假绿）。"""
+    kw 给定时锁定报错文案（v5.1.2 热核审计加固：防止「被无关规则误拒」的假绿）；
+    msg 缺省时取 kw（同串双写收缩，v5.1.5）。"""
+    if msg is None:
+        msg = kw
     try:
         R.compute_scores(fill)
         R.validate_content(fill, R.compute_valuation(fill))
@@ -328,13 +333,6 @@ def write_fill(fill, d, name="_fill_t.json", encoding="utf-8"):
     with open(p, "w", encoding=encoding) as fp:
         json.dump(fill, fp, ensure_ascii=False)
     return p
-
-
-@contextlib.contextmanager
-def render_workspace():
-    """临时工作目录（需多次渲染 / 自行落盘文件的用例在其内操作，退出即清理）。"""
-    with tempfile.TemporaryDirectory() as d:
-        yield d
 
 
 def render_fill(fill, name="_fill_t.json"):

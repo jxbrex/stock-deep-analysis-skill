@@ -25,13 +25,13 @@ _HK_DAILY_CACHE = {}
 _A_DAILY_CACHE = {}  # A股日线序列缓存：fetch_quote(单日涨跌) 与 fetch_timing_material(430天MA) 共用一次拉取
 
 
-def _hk_daily_series(ts_code: str, years: int = 6) -> list:
+def _hk_daily_series(ts_code: str) -> list:
     """港股日线序列（按 trade_date 升序）。hk_daily 限流实测 1次/小时（会员级，2026-09-06 复测），单次拉全量缓存复用：
     E1 取最新价、E2 聚合月线共用同一次调用，避免同脚本内二次调用被限流。
     tushare 返回倒序（新→旧），缓存前统一升序——timing 的 MA/52 周窗口依赖尾部切片。
     失败写空哨兵：1次/小时限流下同进程重试必撞墙，消费方命中哨兵即走各自降级。"""
     def _load():
-        beg, end = _win_years(years)
+        beg, end = _win_years(6)
         try:
             rows = _C.ts_call("hk_daily", {"ts_code": ts_code, "start_date": beg, "end_date": end})
         except Exception:
@@ -43,12 +43,12 @@ def _hk_daily_series(ts_code: str, years: int = 6) -> list:
     return rows
 
 
-def _a_daily_series(ts_code: str, days: int = 430) -> list:
-    """A股日线序列（近 days 天）。fetch_quote 单日 pct_chg 与 fetch_timing_material 的
+def _a_daily_series(ts_code: str) -> list:
+    """A股日线序列（近 430 天）。fetch_quote 单日 pct_chg 与 fetch_timing_material 的
     MA60/MA120/52周高低都出自本序列：E1 内 quote 先于 timing 执行，由 quote 首拉、timing 复用，
     原单日+430天两次请求合一。默认字段拉取（daily 全字段含 pct_chg，不传 fields）。"""
     def _load():
-        beg, end = _win_days(days)
+        beg, end = _win_days(430)
         rows = _C.ts_call("daily", {"ts_code": ts_code, "start_date": beg, "end_date": end})
         if not rows:
             raise RuntimeError("daily 空返回")
@@ -84,10 +84,10 @@ def _em_quote(secid: str, is_hk: bool = False) -> dict:
     }
 
 
-def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
+def fetch_pe_pb_band(code: str) -> dict:
     """A股 PE(TTM)/PB 历史分位（tushare daily_basic）。失败返回 None。"""
     try:
-        beg, end = _win_years(years)
+        beg, end = _win_years(5)
         # fields 必须走第三参（塞 params 会被键归一化剔除→缓存键与 E2 月末PE回填不一致、
         # 且请求全字段拉 5 年，v4.8.3 修复实证）
         rows = _C.ts_call("daily_basic", {"ts_code": to_ts_code(code),
@@ -119,7 +119,7 @@ def fetch_pe_pb_band(code: str, years: int = 5) -> dict:
         # 分位点（v4.8：供 pe_history 图 P25-P75 分位区；索引取 (n-1)*q 整部位）
         n = len(pes)
         pe_p25, pe_p75 = pes[int((n - 1) * 0.25)], pes[int((n - 1) * 0.75)]
-        return {"n": n, "years": years,
+        return {"n": n, "years": 5,
                 "pe_min": pes[0], "pe_max": pes[-1], "pe_cur": latest_pe, "pe_pct": pctile(pes, latest_pe),
                 "pe_p25": pe_p25, "pe_p75": pe_p75,
                 "pb_min": pbs[0], "pb_max": pbs[-1], "pb_cur": latest_pb, "pb_pct": pctile(pbs, latest_pb)}
@@ -178,16 +178,17 @@ def fetch_quote(secid: str, is_hk: bool = False) -> dict:
 
 
 # ---------------- E2 月线 ----------------
-def _em_kline_url(secid: str, klt: int, beg: str, end: str) -> str:
+def kline_url(secid: str, klt: int, beg: str, end: str) -> str:
     """push2his K线 URL 拼装（klt=周期：101 日 / 103 月；fqt=1 前复权）——
-    _em_kline_monthly 与 score_calibration._em_kline_daily 共用，口径唯一。"""
+    _em_kline_monthly 与 score_calibration._em_kline_daily 共用，口径唯一
+    （跨模块消费，v5.1.5 起去下划线改公开名）。"""
     return (f"https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}"
             f"&fields1=f1,f2,f3&fields2=f51,f53&klt={klt}&fqt=1&beg={beg}&end={end}")
 
 
 def _em_kline_monthly(secid: str, years: int, is_hk: bool = False) -> list:
     beg, end = _win_years(years, "20991231")
-    url = _em_kline_url(secid, 103, beg, end)
+    url = kline_url(secid, 103, beg, end)
     d = _C.get(url).get("data") or {}
     out = []
     # 换算差异（实测）：A股K线 ×100（2331=23.31）；港股K线为真实价（53.600），无需换算
@@ -307,7 +308,7 @@ def fetch_timing_material(code: str, is_hk: bool = False):
         else:
             # 与 fetch_quote 同源，统一走 _a_daily_series（v4.10.3 Step 5）：命中即省一发，
             # miss 则现拉并回填 _A_DAILY_CACHE——同进程再读不再重拉（旧实现只读不回填）
-            rows = _a_daily_series(to_ts_code(code), 430)
+            rows = _a_daily_series(to_ts_code(code))
             rows = sorted((r for r in rows if r.get("trade_date") and r.get("close") is not None),
                           key=lambda x: x["trade_date"])
             closes = [float(r["close"]) for r in rows]

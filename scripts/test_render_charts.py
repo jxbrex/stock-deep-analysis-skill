@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""test_render_charts.py — render_report 图表生成回归（无网络，直接 python 运行）
+"""test_render_charts.py — render_report 图表生成回归（无网络；pytest 唯一入口，无 __main__ 直跑契约）
 
 覆盖各 build_* 图（业务构成 / 产业链 / 财务趋势图墙 / 利润增长 / 散点 / 龙卷风 / 走廊 /
 PE 历史带 / 触发条 / 三情景卡）与对齐机 fix_table_alignment。
@@ -145,24 +145,12 @@ def test_segments_chain_charts():
     # 锚点缺失但字段已填 → 追加第 4 章末尾 + stderr 告警
     l1_no_anchor = "".join(f'<div class="dim-block"><p>{long_text}</p></div>' for _ in range(6))
     fill2 = minimal_fill(l1_html=l1_no_anchor, **extra)
-    html2, err2 = capture_stderr_value(lambda: R._fill_template(R._build_repl_map(
-        fill2, "元", R.compute_valuation(fill2), R.compute_scores(fill2), 5.5,
-        R.compute_valuation_score(R.compute_valuation(fill2), fill2["valuation_inputs"]),
-        None, "", fill2["date"], fill2["subtitle"], "10-12", fill2["peers_html"],
-        R.build_scenario_spectrum(fill2, R.compute_valuation(fill2)),
-        R.build_scenario_block(R.compute_valuation(fill2), "元"),
-        R.build_peers_plot(fill2))))
+    html2, err2 = capture_stderr_value(lambda: render_fill(fill2))
     assert "缺 <!--SEGMENTS--> 锚点" in err2, "锚点缺失应告警"
     assert 'aria-label="业务构成"' in html2, "锚点缺失时图应追加第 4 章末尾"
     # 字段缺失但锚点在 → 锚点静默清除、图不生成
     fill3 = minimal_fill(l1_html="".join(dims))  # dims 带锚点，但无 segments/industry_chain
-    html3 = R._fill_template(R._build_repl_map(
-        fill3, "元", R.compute_valuation(fill3), R.compute_scores(fill3), 5.5,
-        R.compute_valuation_score(R.compute_valuation(fill3), fill3["valuation_inputs"]),
-        None, "", fill3["date"], fill3["subtitle"], "10-12", fill3["peers_html"],
-        R.build_scenario_spectrum(fill3, R.compute_valuation(fill3)),
-        R.build_scenario_block(R.compute_valuation(fill3), "元"),
-        R.build_peers_plot(fill3)))
+    html3 = render_fill(fill3)
     assert 'aria-label="业务构成"' not in html3, "字段未填图不应生成"
     assert "<!--SEGMENTS-->" not in html3 and "<!--CHAIN-->" not in html3, "空锚点应静默清除"
     # 占比和偏离 100% → 告警
@@ -523,7 +511,7 @@ def test_gap_plot():
     """gap_plot 第 9 章预期差图（demo v3 定稿数据）：A 档=逐机构横向分布（灰/橙/蓝/◆ 计数 +
     偏离右列 + ◆标签落位阶梯 + pct_pt 一位小数），B 档=零轴偏离哑铃（tag/行注/反推口径），
     consensus ≤0 行剔除、有效维度 <2 空串、防叠错位确定性（同输入两跑一致）。"""
-    from charts_misc import build_gap_plot, _inject_gap_chart
+    from charts_gap import build_gap_plot, _inject_gap_chart
     fill_a = {"gap_plot": {"dims": _GAP_DIMS_A,
                            "text_dims": ["<b>⑤ 竞争格局：</b>文本维度附注。"]}}
     # ── A 档全元素计数（12+9+8+8=37 灰点、7 major 橙点+图例 1、4 本文蓝点、4 ◆+图例 1）
@@ -625,8 +613,7 @@ def test_gap_plot():
     hc = build_gap_plot({"gap_plot": {"dims": [
         {"name": "A", "ours": 300, "consensus": 100},     # +200% 超域
         {"name": "B", "ours": 100, "consensus": 100}]}})
-    assert 'stroke-dasharray="4 3"' in hc and 'fill="#fffdf9"' in hc.replace(" ", "") \
-        or 'stroke-dasharray="4 3"' in hc, "超域行应有虚线棒"
+    assert 'stroke-dasharray="4 3"' in hc and 'fill="#fffdf9"' in hc, "超域行应有虚线棒+空心蓝点（截断记号）"
     assert "超出 -10%~+15% 定域" in hc, "source 应注明截断记号"
     assert "+200.0%" in hc, "右列数值仍真实"
     # P1-1/P1-2：多 major 碰撞 → 升档入册 + 两档皆撞降级仅机构名（点不删）
@@ -666,7 +653,7 @@ def test_gap_plot():
 def test_gap_notes_renumber():
     """v5.1.2：gap 附注与图同源——行过滤一致（cons≤0 剔除、取前 6、<2 不生成），
     圈号前缀按过滤后行序脚本改写（剔除行后图①注①不错位）；text_dims 续行号。"""
-    from charts_misc import _gap_notes_html, build_gap_plot
+    from charts_gap import _gap_notes_html, build_gap_plot
     gp = {"dims": [
         {"name": "出货量", "ours": 5, "consensus": -1, "note": "<b>① 出货量：</b>该行被剔除"},
         {"name": "净利", "ours": 930, "consensus": 905, "note": "<b>② 净利：</b>分歧根源在周期"},
@@ -690,14 +677,6 @@ def test_gap_notes_renumber():
         {"name": "A", "ours": 1, "consensus": 1, "note": "<i>② 斜体：</i>注"},
         {"name": "B", "ours": 2, "consensus": 2, "note": '<b style="color:red">③ 带样式：</b>注'}]})
     assert "<i>① 斜体：</i>" in n3 and '<b style="color:red">② 带样式：</b>' in n3
-
-
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    for t in tests:
-        t()
-        print(f"OK {t.__name__}")
-    print(f"全部 {len(tests)} 项测试通过")
 
 
 def test_driver_cards():

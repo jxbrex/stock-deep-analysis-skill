@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""test_render_gate.py — render_report 门禁/校验回归（无网络，直接 python 运行）
+"""test_render_gate.py — render_report 门禁/校验回归（无网络；pytest 唯一入口，无 __main__ 直跑契约）
 
 覆盖：拒渲染（负扣分 / PE 倒挂 / timing 缺维 / 黄灯缺键 / date 非法）、quote 四件套防伪、
 写作纪律与内容告警、L4 形态硬门禁、仓位决策链（_position_steps）纯函数分支。
@@ -8,6 +8,7 @@
 """
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report as R
@@ -15,7 +16,8 @@ from scoring import (_position_steps, _quality_verdict, _valuation_verdict,
                      _edge_info, build_edge_upgrade_rows)
 from conftest import (
     minimal_fill, full_fill, _dim, _calc, expect_valueerror,
-    capture_stderr, validate_stderr, render_workspace, write_fill, render_fill, period_fill,
+    capture_stderr, validate_stderr, write_fill, render_fill, period_fill,
+    _L1_GOV_BLOCK, _LONG_TEXT, _period_ref_file, _PERIOD_REF_KEYS,
 )
 
 
@@ -103,7 +105,7 @@ def test_rejections():
 
 def test_quote_consistency():
     """quote 防伪（神华事故修复）：一致过 / 偏差>1% 拒 / 源文件读不到拒 / 缺 quote 仅告警不拒。"""
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         ref = write_fill({"price": 10.0, "pe_ttm": 11.0}, d, name="_em_quote.json")
         f = minimal_fill(quote={"source_file": ref, "date": "2026-08-27"})
         R.validate_content(f, R.compute_valuation(f))  # 一致 → 过
@@ -167,7 +169,7 @@ def test_writing_discipline_warns():
 def test_quote_four_piece():
     """v4.8 防伪链四件套扩展：valuation_inputs.pe_ttm 偏差>1% 拒；pe_band 完全越界历史带拒；
     risk_free 偏差>0.3pct 告警不拒；港股 div_yield 不比对。"""
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         ref = write_fill({"price": 10.0, "pe_ttm": 11.0, "pe_band": [8.0, 20.0],
                           "risk_free": 1.7, "div_yield": 2.0, "market": "A股"},
                          d, name="_em_quote.json")
@@ -491,19 +493,25 @@ def test_peers_bestworst_warn():
     print("OK peers 最优/最差标注缺失告警（零标注告警 / 逐列裸奔告警 / 自带放行）")
 
 
+def test_peers_plot_array_form_rejected():
+    """peers_plot 数组简写废止（v5.1.5，与 fill-schema「直接给数组亦可」删除同步）：
+    传裸数组 → 拒渲染。"""
+    expect_valueerror(minimal_fill(peers_plot=[{"name": "同业甲", "roe": 15, "pe": 18}]),
+                      kw="数组简写已废止")
+
+
 def test_governance_deduct_row_warn():
     """v4.11.0：4.5 治理块评分段含扣分项时，trig 行必须有 miss「扣分」状态行
     （天齐 09-13 实证：评分段写「折价配售摊薄 −0.3」，四个方块却无一扣分档，结论断层）。"""
-    import conftest as C
-    gov = C._L1_GOV_BLOCK
+    gov = _L1_GOV_BLOCK
     deducted = gov.replace("关联交易关注项不扣分但列入 14 章跟踪",
                            "扣分项（H 股折价配售摊薄 −0.3）")
-    l1 = "".join(C._dim(C._LONG_TEXT) for _ in range(5)) + deducted
+    l1 = "".join(_dim(_LONG_TEXT) for _ in range(5)) + deducted
     err = validate_stderr(minimal_fill(l1_html=l1))
     assert "无「扣分」状态" in err, "评分段有扣分项、块内无扣分行 → 应告警"
     fixed = deducted.replace('<span class="trig-status miss">关注</span>',
                              '<span class="trig-status miss">扣分</span>')
-    err2 = validate_stderr(minimal_fill(l1_html="".join(C._dim(C._LONG_TEXT) for _ in range(5)) + fixed))
+    err2 = validate_stderr(minimal_fill(l1_html="".join(_dim(_LONG_TEXT) for _ in range(5)) + fixed))
     assert "无「扣分」状态" not in err2, "块内有扣分行后应放行"
     assert "无「扣分」状态" not in validate_stderr(minimal_fill()), "fixture 无扣分项不应告警"
     print("OK 治理块扣分项-扣分行一致性校验")
@@ -541,19 +549,10 @@ def test_price_history_pe_warn():
 def test_l4_form_gates():
     """v4.10：L4 固定形态硬门禁——缺 pm-grid 三联卡拒渲染（旧 danger-card 单段形态打回）；
     黄灯扣分明细表行数 ≠ yellow_deductions 条数拒渲染（工行 09-11 照抄旧形态实证）。"""
-
-    def expect_reject(fill, needle):
-        try:
-            R.validate_content(fill, R.compute_valuation(fill))
-        except ValueError as e:
-            assert needle in str(e), f"拒绝理由应含「{needle}」，实际：{e}"
-            return
-        raise AssertionError(f"应拒渲染但未拒（期待理由含「{needle}」）")
-
     f = minimal_fill()
     f["l4_html"] = ('<div class="danger-card"><strong>损失预演：</strong>单段长文旧形态，'
                     '故事与重合度与清单外风险糊在一个段落里。</div>')
-    expect_reject(f, "损失预演三联卡")
+    expect_valueerror(f, kw="损失预演三联卡")
     f2 = minimal_fill(yellow_deductions=[{"label": "x", "points": 0.5},
                                          {"label": "y", "points": 0.5}])
     f2["l4_html"] = (f2["l4_html"] + '<div class="table-scroll"><table><tbody>'
@@ -562,7 +561,7 @@ def test_l4_form_gates():
                      '<tr><td>c 盈利与财务质量</td><td>y</td><td class="num">0.5</td></tr>'
                      '<tr><td>d 经营与公司治理</td><td>无</td><td>0</td></tr>'
                      '</tbody></table></div><span class="source">数据来源：测试</span>')
-    expect_reject(f2, "只列 points>0")
+    expect_valueerror(f2, kw="只列 points>0")
     f3 = minimal_fill(yellow_deductions=[{"label": "x", "points": 0.5}])
     f3["l4_html"] = (f3["l4_html"] + '<div class="table-scroll"><table><tbody>'
                      '<tr><td>b 行业与政策环境</td><td>x</td><td class="num">0.5</td></tr>'
@@ -662,13 +661,6 @@ def test_gap_plot_validate():
     assert "≤0" in err, "consensus ≤0 行剔除应告警"
 
 
-if __name__ == "__main__":
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    for t in tests:
-        t()
-        print(f"OK {t.__name__}")
-    print(f"全部 {len(tests)} 项测试通过")
-
 
 def test_driver_cards_validate():
     """v4.11.3 驱动卡校验：缺失告警；chips 非三情景档告警；p0_html 手写「为什么…」info-card
@@ -742,8 +734,7 @@ def test_hero_cross_validate():
 def test_gap_growth_consensus_validate():
     """v5.1.2：gap_plot 净利维度（consensus 对落盘 np_avg、ours 对 base.profit）与
     growth_plot 换算对账（np_consensus 对落盘换算增速、base.profit 换算增速越界）。"""
-    import conftest as C
-    ref = C._period_ref_file("v512_gap", {"consensus_np": 905})
+    ref = _period_ref_file("v512_gap", {"consensus_np": 905})
     warns = validate_stderr(minimal_fill(
         quote={"source_file": ref},
         gap_plot={"dims": [
@@ -761,7 +752,7 @@ def test_gap_growth_consensus_validate():
     # growth_plot：np_avg=120 ÷ 上年归母净利 100 − 1 = 20% vs np_consensus 15% → 差 5pct 告警；
     # base.profit=100 → 换算 0% 越出本文区间 [5,10]（容差 ±2pct）→ 告警
     warns = validate_stderr(minimal_fill(
-        quote={"source_file": C._period_ref_file("v512_g", {"consensus_np": 120})},
+        quote={"source_file": _period_ref_file("v512_g", {"consensus_np": 120})},
         fin_trend={"years": ["2023", "2024", "2025"], "panels": [
             {"title": "盈利", "bars": [{"name": "归母净利", "unit": "亿", "values": [80.0, 90.0, 100.0]}]},
             {"title": "营收", "bars": [{"name": "营收", "unit": "亿", "values": [800.0, 900.0, 1000.0]}]},
@@ -846,7 +837,7 @@ def test_timing_table_validate():
            '筹码面数据：E4 股东户数，均取自 em_fetch 落盘输出。</span>'
            '<div class="info-card"><strong>决策逻辑：</strong>质量分好公司但估值无安全边际，'
            '时机微调不足以升档，维持观察池，等估值回到合理带下沿再评估。</div>')
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         ref = write_fill({"price": 10.0, "pe_ttm": 11.0,
                           "timing": {"price": 10.0, "ma60": 9.9, "ma120": 9.5,
                                      "high_52w": 12.0, "low_52w": 8.0}}, d, "_ref_t.json")
@@ -864,30 +855,60 @@ def test_timing_table_validate():
         assert "上方/站上" in warns
 
 
+def test_timing_table_52w_cross_validate():
+    """P0-1 文档虚言闭合：时机小表 52 周高低信号 vs 落盘 timing（fill-schema/SKILL 承诺
+    技术面信号取自落盘，此前只比对现价/MA60/MA120）——合并写法「52周高低 高/低」与
+    分拆写法「52周低 X」同口径 >1% 告警。"""
+    tbl = ('<p>时机判定：筹码面改善、技术面偏弱，仓位维持观察池不变，决策逻辑见下表与正文。</p>'
+           '<table><thead><tr><th>维度</th><th>得分</th><th>命中信号与加减</th></tr></thead>'
+           '<tbody><tr><td>筹码面</td><td>5.0</td><td>户数下降 +1</td></tr>'
+           '<tr><td>技术面</td><td>5.0</td><td>现价 10.0 站上 MA60 9.9；52周高低 12.0/8.0</td></tr>'
+           '<tr><td>合计</td><td>5.0</td><td>微调 ±1 档</td></tr></tbody></table>'
+           '<span class="source">时机信号：quote 落盘 timing（现价/MA60/MA120/52 周高低）。</span>'
+           '<div class="info-card"><strong>决策逻辑：</strong>质量分好公司但估值无安全边际，'
+           '时机微调不足以升档，维持观察池，等估值回到合理带下沿再评估。</div>')
+    with tempfile.TemporaryDirectory() as d:
+        ref = write_fill({"price": 10.0, "pe_ttm": 11.0,
+                          "timing": {"price": 10.0, "ma60": 9.9, "ma120": 9.5,
+                                     "high_52w": 12.0, "low_52w": 8.0}}, d, "_ref_52w.json")
+        warns = validate_stderr(minimal_fill(quote={"source_file": ref}, position_html=tbl))
+        assert "52周高" not in warns and "52周低" not in warns, "一致不应告警"
+        # 合并写法高值偏差：12.0 vs 落盘 15.0 → 告警
+        ref2 = write_fill({"price": 10.0, "pe_ttm": 11.0,
+                           "timing": {"price": 10.0, "ma60": 9.9, "ma120": 9.5,
+                                      "high_52w": 15.0, "low_52w": 8.0}}, d, "_ref_52w2.json")
+        warns = validate_stderr(minimal_fill(quote={"source_file": ref2}, position_html=tbl))
+        assert "52周高=12.0" in warns and "禁手估" in warns, "合并写法高值偏差应告警"
+        # 分拆写法低值偏差：「52周低 7.0」vs 落盘 8.0 → 告警
+        tbl2 = tbl.replace("52周高低 12.0/8.0", "52周低 7.0")
+        warns = validate_stderr(minimal_fill(quote={"source_file": ref}, position_html=tbl2))
+        assert "52周低=7.0" in warns, "分拆写法低值偏差应告警"
+    print("OK 时机小表 52 周高低对账（一致放行 / 合并写法高值告警 / 分拆写法低值告警）")
+
+
 def test_period_verdict_cross_validate():
     """v5.1.2：period_track 判词 vs 完成度机械对账（分母=一致预期优先、时间进度按报告期）。"""
-    import conftest as C
     pt = {"period": "2026中报", "is_annual": False, "np": 30, "consensus_np": 100,
           "verdict_np": "超前"}
     warns = validate_stderr(minimal_fill(
-        quote={"source_file": C._period_ref_file("v512_pv", pt)}, period_track=dict(pt)))
+        quote={"source_file": _period_ref_file("v512_pv", pt)}, period_track=dict(pt)))
     assert "超前 但完成度" in warns
     pt2 = {"period": "2026中报", "is_annual": False, "np": 60, "consensus_np": 100,
            "verdict_np": "超前"}
     warns = validate_stderr(minimal_fill(
-        quote={"source_file": C._period_ref_file("v512_pv2", pt2)}, period_track=dict(pt2)))
+        quote={"source_file": _period_ref_file("v512_pv2", pt2)}, period_track=dict(pt2)))
     assert "超前 但完成度" not in warns
     # 一季/三季标签同样生效（热核 P1-2：此前认不出项目自家标签）
     pt3 = {"period": "2026一季", "is_annual": False, "np": 5, "consensus_np": 100,
            "verdict_np": "超前"}
     warns = validate_stderr(minimal_fill(
-        quote={"source_file": C._period_ref_file("v512_pv3", pt3)}, period_track=dict(pt3)))
+        quote={"source_file": _period_ref_file("v512_pv3", pt3)}, period_track=dict(pt3)))
     assert "超前 但完成度" in warns
     # 亏损期累计 ≤0 → 完成度无意义静默跳过（热核 P1，_period_ratio 返回 None）
     pt4 = {"period": "2026中报", "is_annual": False, "np": -5, "consensus_np": 100,
            "verdict_np": "超前"}
     warns = validate_stderr(minimal_fill(
-        quote={"source_file": C._period_ref_file("v512_pv4", pt4)}, period_track=dict(pt4)))
+        quote={"source_file": _period_ref_file("v512_pv4", pt4)}, period_track=dict(pt4)))
     assert "超前 但完成度" not in warns
 
 
@@ -1016,6 +1037,16 @@ def test_dcf_validate():
     assert "手写 DCF 表" in warns
 
 
+def test_dcf_stable_value_required_warn():
+    """P0-6（用户拍板补校验）：稳定价值（非金融）缺 dcf → 告警（fill-schema/SKILL 承诺的
+    零执行闭合）；stock_type 含「金融」（银行/保险走 PB-ROE/DDM，scoring.md）→ 豁免。"""
+    warns = validate_stderr(minimal_fill(stock_type="稳定价值（非金融）"))
+    assert "dcf 字段未填" in warns and "稳定价值" in warns, "非金融稳定价值缺 dcf 应告警"
+    warns = validate_stderr(minimal_fill(stock_type="稳定价值（金融）"))
+    assert "dcf 字段未填" not in warns, "金融类稳定价值股应豁免"
+    print("OK dcf 稳定价值分型校验（非金融告警 / 金融豁免）")
+
+
 # ---------------- v5.0 第 3 章「最新报告期透视」校验与渲染 ----------------
 
 def test_period_track_cross_check():
@@ -1036,7 +1067,7 @@ def test_period_track_cross_check():
     f = period_fill()
     f["period_track"]["consensus_np"] = 150.0
     expect_valueerror(f, "consensus_np 与落盘 np_avg 不一致应拒")
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         # 落盘无 period_track 键 → 拒（禁手估，神华同款）
         ref = write_fill({"price": 10.0, "pe_ttm": 11.0}, d, name="em_ref.json")
         f = period_fill(quote={"source_file": ref, "date": "2026-08-27"})
@@ -1150,7 +1181,7 @@ def test_period_charts_shapes():
     """v5.0.1 图函数形态：小结条徽章合成与 summary_html 直通 / 一览卡四卡与全缺空串 /
     子弹图仅画有参照行（无分母行跳过并图注点名、扣非永不入图）/ 刻度带完成度 /
     缺判词兜底无法判定 / 单季双联四组与 Q1 退化单柱 / 缺 sq_label 或四组全 None 返回空串。"""
-    from charts_misc import (build_period_summary, build_period_kpi,
+    from charts_period import (build_period_summary, build_period_kpi,
                              build_period_bullets, build_period_sqplot)
     h1 = period_fill("h1")["period_track"]
     # 小结条：徽章合成 + 无参照点名 + summary_html 手填句直通
@@ -1196,6 +1227,26 @@ def test_period_charts_shapes():
                                 "sq_prev_ocf": 4.0})
     assert ">收入与经营现金流</text>" in svg2 and ">归母与扣非</text>" not in svg2
     print("OK 第 3 章图函数形态（小结条/一览卡/子弹图有参照才画/单季双联/Q1 退化/空串门禁）")
+
+
+def test_period_track_key_drift():
+    """period_track 键集漂移守卫（v5.1.5）：生产端（em_finance._PERIOD_TRACK_KEYS 常量与
+    _period_track_calc 实际产出）、校验端（validate 四组键 + is_annual/band_years）、落盘参照
+    （conftest._PERIOD_REF_KEYS）三处必须对齐——任一处加键忘同步即红
+    （end_date/gm 为生产端内部键，不入参照）。"""
+    import em_finance
+    import validate as V
+    ref = set(_PERIOD_REF_KEYS)
+    assert set(em_finance._PERIOD_TRACK_KEYS) - {"end_date", "gm"} == ref, \
+        "生产端常量 vs 落盘参照键集漂移"
+    vkeys = (set(V._PERIOD_LABEL_KEYS) | set(V._PERIOD_NUM_KEYS) | set(V._PERIOD_YOY_KEYS)
+             | set(V._PERIOD_BAND_KEYS) | {"is_annual", "band_years"})
+    assert vkeys == ref, "校验端四组键 vs 落盘参照键集漂移"
+    rows = [{"ED": "20260630", "TOTALOPERATEREVE": 1e8, "PARENTNETPROFIT": 1e7,
+             "KCFJCXSYJLR": None, "NETCASH_OPERATE_PK": None, "XSMLL": None}]
+    assert set(em_finance._period_track_calc(rows)) == set(em_finance._PERIOD_TRACK_KEYS), \
+        "常量与 _period_track_calc 实际产出键集漂移"
+    print("OK period_track 键集三方对齐（生产端常量=实际产出=校验端=落盘参照）")
 
 
 # ---------------- v5.0 决策层三机制（临界档透明化 / 乐观税门禁 / 赔率∞地板分级） ----------------
@@ -1391,7 +1442,7 @@ def test_consensus_np_cross_check():
     """v5.0 机制二（校验侧 _check_consensus_np）：valuation_inputs.consensus_np 照抄落盘
     consensus_np.np_avg——一致过 / 偏差 >1% 拒 / fill 有值落盘无键拒（手估嫌疑）/
     落盘有 fill 无软告警（漏抄，乐观税未检）/ 双向皆缺过。"""
-    with render_workspace() as d:
+    with tempfile.TemporaryDirectory() as d:
         ref = write_fill({"price": 10.0, "pe_ttm": 11.0,
                           "consensus_np": {"year": 2026, "np_avg": 100.0, "orgs": 12}},
                          d, name="em_ref.json")
@@ -1471,7 +1522,7 @@ def test_period_charts_negative_domain():
     累计或分母 ≤0 不标完成度）；单季双联——双负（减亏/增亏季）/单负（最新季负）不炸、
     柱体在 viewBox 内。"""
     import re as _re
-    from charts_misc import build_period_bullets, build_period_sqplot
+    from charts_period import build_period_bullets, build_period_sqplot
     # ① 归母亏损（np<0，有经营目标参照）：不炸；负值条标签存在；正值分母刻度与节奏带照常
     pt = {"np": -2.0, "np_yoy": "转亏", "goal_np": 100.0, "consensus_np": 165.0,
           "band_np": [39.9, 52.1], "verdict_np": "滞后"}

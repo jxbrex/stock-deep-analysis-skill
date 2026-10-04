@@ -32,7 +32,7 @@ for _stream in (sys.stdout, sys.stderr):
 # 依赖方向单向：scoring（共享基座）← charts_base / 各图族模块 / validate ← 本模块，无循环。
 from scoring import (
     REQUIRED_SCALAR, valuation_badge_class,
-    _esc, compute_scores,
+    _esc, _cn_placeholders, compute_scores,
     build_score_summary, build_valuation_process_card, build_position_card,
     _quality_verdict, _valuation_verdict,
     compute_valuation, compute_valuation_score, build_dcf_cards, build_regime_note,
@@ -47,7 +47,10 @@ from charts_l1 import _inject_l1_charts
 from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
-    _inject_gap_chart, build_driver_cards, build_cycle_stages, build_anchor_ledger,
+    build_driver_cards, build_cycle_stages, build_anchor_ledger,
+)
+from charts_gap import _inject_gap_chart
+from charts_period import (
     build_period_summary, build_period_kpi, build_period_bullets, build_period_sqplot,
 )
 from align_fix import fix_table_alignment, _tag_timing_table
@@ -56,7 +59,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v5.1.4"
+RENDERER_VERSION = "v5.1.5"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -323,13 +326,13 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "SUBTITLE": _esc(subtitle),
         "CUR": _esc(cur),
         "THESIS_HTML": fill.get("thesis_html", ""),
-        "PRICE": str(fill.get("price", "—")),
+        "PRICE": _esc(str(fill.get("price", "—"))),
         "PRICE_SUB_HTML": fill.get("price_sub_html", ""),
-        "MCAP": _fmt_thousands(_strip_unit(fill.get("mcap"), "亿万")),
-        "MCAP_SUB": fill.get("mcap_sub", ""),
-        "PE_TTM": _strip_unit(fill.get("pe_ttm"), "xX倍"),
-        "PE_SUB": fill.get("pe_sub", ""),
-        "HORIZON": fill.get("horizon", "12个月"),
+        "MCAP": _esc(_fmt_thousands(_strip_unit(fill.get("mcap"), "亿万"))),
+        "MCAP_SUB": _esc(fill.get("mcap_sub", "")),
+        "PE_TTM": _esc(_strip_unit(fill.get("pe_ttm"), "xX倍")),
+        "PE_SUB": _esc(fill.get("pe_sub", "")),
+        "HORIZON": _esc(fill.get("horizon", "12个月")),
         "TARGET_RANGE": str(target_range),
         "TARGET_SUB_HTML": fill.get("target_sub_html", ""),
         "CONCLUSION_HTML": fill.get("conclusion_html", ""),
@@ -353,22 +356,22 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "L1_HTML": _inject_l1_charts(fill.get("l1_html", ""), fill),
         "L3_HTML": _inject_l3_charts(fill.get("l3_html", ""), fill),
         "L4_HTML": fill.get("l4_html", ""),
-        "VALUATION_METHOD": fill.get("valuation_method", ""),
-        "STOCK_TYPE": fill.get("stock_type", ""),
+        "VALUATION_METHOD": _esc(fill.get("valuation_method", "")),
+        "STOCK_TYPE": _esc(fill.get("stock_type", "")),
         "VALUATION_HTML": fill.get("valuation_html", ""),
-        "GAP_TIER": fill.get("gap_tier", "—"),
+        "GAP_TIER": _esc(fill.get("gap_tier", "—")),
         # 9 章预期差图：<!--GAP--> 锚点注入 gap_html（图 + gap-notes 附注；缺失垫章首 + 告警）
         "GAP_HTML": _inject_gap_chart(fill.get("gap_html", ""), fill),
-        "PEERS_META": fill.get("peers_meta", ""),
+        "PEERS_META": _esc(fill.get("peers_meta", "")),
         "PEERS_HTML": peers_html,
         "SCENARIO_SPECTRUM_HTML": spectrum_html,
         "SCENARIO_BLOCK_HTML": scenario_block_html,
         "PEERS_PLOT_HTML": peers_plot_html,
-        "CYCLE_META": fill.get("cycle_meta", ""),
+        "CYCLE_META": _esc(fill.get("cycle_meta", "")),
         # v4.11.3：周期阶段卡（cycle_stages 字段，垫在手写 cycle_html 前；空串替换）
         "CYCLE_STAGES_HTML": build_cycle_stages(fill),
         "CYCLE_HTML": fill.get("cycle_html", ""),
-        "NEXT_REVIEW": fill.get("next_review", "—"),
+        "NEXT_REVIEW": _esc(fill.get("next_review", "—")),
         # v4.9：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）
         # v5.0 机制一：档位临界升档路径行拼接在后（edge_crit 见函数头部注释）
         "TRIGGERS_HTML": build_triggers_strip(fill) + build_edge_upgrade_rows(edge_crit),
@@ -401,10 +404,10 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
 
         # 回测模式（prev 存在时生效，否则条件块自动删除）
         "PREV_HTML": build_prev_strip(prev, quality, valuation, timing, target_range),
-        "PREV_DATE": str((prev or {}).get("date", "—")),
+        "PREV_DATE": _esc(str((prev or {}).get("date", "—"))),
         "REVIEW_HTML": review_html,
-        "GEN_TIME": fill.get("gen_time", date),
-        "CALIB_NOTE": fill.get("calib_note", ""),
+        "GEN_TIME": _esc(fill.get("gen_time", date)),
+        "CALIB_NOTE": _esc(fill.get("calib_note", "")),
         # 质量分（扣黄灯 → 最终质量分）
         "YELLOW_TOTAL": f"{yellow_total:.1f}",
         "QUALITY_SCORE": f"{quality:.2f}",
@@ -440,9 +443,20 @@ def _fill_template(repl: dict) -> str:
         key = m.group(1)
         block = m.group(2)
         return block if repl.get(key) else ""
+    # v5.1.5（热核 P0-2 护栏）：IF 键不在 repl map → 此前整块静默删除零告警，先点名
+    if_keys = set(re.findall(r"<!--IF:([A-Z_]+)-->", html))
+    missing_if = sorted(if_keys - set(repl))
+    if missing_if:
+        print(f"⚠️ 模板 IF 键 {missing_if} 不在 repl map——对应条件块被静默删除，"
+              f"请核对键名或在 _build_repl_map 补键", file=sys.stderr)
     html = re.sub(r"<!--IF:([A-Z_]+)-->(.*?)<!--ENDIF-->", handle_conditional, html, flags=re.S)
 
     html = re.sub(r"\{\{([A-Z_0-9]+)\}\}", lambda m: repl.get(m.group(1), m.group(0)), html)
+    # 嵌套条件块会让非贪婪正则错配（外层吞内层 ENDIF）、fill 片段也可能含字面条件块标记——
+    # 替换后残留即结构非法，拒渲染（与 _check_leftover 同级）
+    if "<!--IF:" in html or "<!--ENDIF-->" in html:
+        raise ValueError("条件块（<!--IF:-->/<!--ENDIF-->）替换后仍有残留：模板嵌套条件块"
+                         "非贪婪匹配会错配（请展开为平铺块），或 fill 片段含字面条件块标记")
 
     # 表格对齐自动修正（fragment 手写表头类不齐的兜底，matrix-table 跳过）
     html = fix_table_alignment(html)
@@ -455,9 +469,7 @@ def _check_leftover(html: str) -> None:
     leftover_double = re.findall(r"\{\{[A-Za-z_0-9]+\}\}", html)
     if leftover_double:
         raise ValueError(f"残留未替换占位符: {sorted(set(leftover_double))}")
-    leftover_cn = re.findall(r"【[^】]{0,40}】", html)
-    # 黄灯类别标注（【b 行业与政策环境】这类以单个 a-d 字母开头的）是合法引用，不算占位符
-    leftover_cn = [x for x in leftover_cn if not re.match(r"【[a-dA-D][ 、\s]", x)]
+    leftover_cn = _cn_placeholders(html)
     if leftover_cn:
         raise ValueError(f"残留中文占位符: {sorted(set(leftover_cn))}")
 
@@ -534,7 +546,7 @@ def _post_render_checks(repl: dict, fill: dict, out_path: str, quality: float, p
             missing_plots.append("valuation 已填但情景数据不足（profit/pe/shares 缺失或非法），"
                                  "08 图未生成——请检查 valuation.scenarios 完整性")
         else:
-            missing_plots.append("valuation（或手写 scenarios）（08 目标价走廊+情景表+三指标卡未生成）")
+            missing_plots.append("valuation（08 目标价走廊+情景表+三指标卡未生成）")
     if not repl["PEERS_PLOT_HTML"]:
         # 合规省略：peers_html 已手写 matrix-table 九宫格时不误报
         if "matrix-table" not in (fill.get("peers_html") or ""):

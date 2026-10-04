@@ -24,12 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import extract_review as E
 from extract_review import parse_report_name, norm_code  # 文件名解析/代码归一唯一 owner（合并口径）
 import em_fetch as em
-
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+# debt: stdout/stderr UTF-8 reconfigure 靠 extract_review/em_fetch 的 import 副作用保障；
+# 若改为不 import 它们，需自带 reconfigure 块
 
 DEFAULT_DIR = r"D:\个股深度分析"
 SHORT_WINDOW = 20  # 交易日
@@ -108,7 +104,7 @@ def _ts(api_name: str, params: dict) -> list:
 def _em_kline_daily(secid: str, start: str, end: str) -> list:
     """东财日 K（klt=101, fqt=1 前复权）→ [{trade_date, adj_close}]。
     港股日线走此通道（tushare hk_daily 限 1次/小时，批量校准不可用）。"""
-    url = em._em_kline_url(secid, 101, start, end)
+    url = em.kline_url(secid, 101, start, end)
     d = em.get(url).get("data") or {}
     return [{"trade_date": k.split(",")[0].replace("-", ""), "adj_close": float(k.split(",")[1])}
             for k in (d.get("klines") or [])]
@@ -160,7 +156,6 @@ def fetch_index_return(market: str, start_td: str, end_td: str) -> float:
     key = (market, start_td, end_td)
     if key in _INDEX_CACHE:
         return _INDEX_CACHE[key]
-    rows = None
     if market == "HK":
         # 恒生指数走东财日 K（指数无复权，fqt=0；tushare index_global 频次同样受限）
         rows = _em_kline_daily("100.HSI", start_td, end_td)
@@ -172,7 +167,6 @@ def fetch_index_return(market: str, start_td: str, end_td: str) -> float:
         raise RuntimeError("指数数据空返回")
     rows = sorted(rows, key=lambda r: r["trade_date"])
     base = rows[0]["close"]
-    ret = None
     for r in rows:
         if r["trade_date"] <= start_td:
             base = r["close"]  # ≤报告日最后一个交易日收盘

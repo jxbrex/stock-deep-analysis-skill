@@ -4,36 +4,20 @@
 
 import math
 
-from scoring import _num, _fmt, _esc, _SCENARIO_NAMES
+from scoring import _num, _fmt, _esc
 from charts_base import *
 
-def build_scenario_spectrum(fill: dict, calc: dict = None) -> str:
+def build_scenario_spectrum(fill: dict, calc: dict) -> str:
     """05 目标价走廊（横版区间条）：x 轴=价格（nice 刻度+单位），每情景一条横向实心区间条
     （悲观→乐观 从上到下，与三情景表列序一致），白条刻=区间中枢，条上方=中枢值与较现价
     涨跌幅，竖虚线=现价（全部脚本计算）。横版取代旧竖版：窄区间不再退化成幽灵胶囊。
-    calc（compute_valuation 结果）存在时用其算出的目标价区间；
-    否则回退到 fill["scenarios"] 手写区间。缺数据 → 返回空串（模板条件块整块删除）。"""
+    calc=compute_valuation 结果；缺数据 → 返回空串（模板条件块整块删除）。"""
     price = _num(fill.get("price"))
     cur = str(fill.get("currency") or "元")
-    if calc:
-        cols = [{"label": r["label"], "low": r["low"], "high": r["high"], "mid": r["mid"],
-                 "color": _SCENARIO_COLORS.get(r["key"], _C_LABEL)} for r in calc["rows"]]
-    else:
-        cols = []
-        for s in fill.get("scenarios") or []:
-            lo, hi = _num(s.get("low")), _num(s.get("high"))
-            if lo is None or hi is None or hi <= lo:
-                continue
-            key = str(s.get("key") or "").lower()
-            cols.append({"key": key,
-                         "label": s.get("label") or _SCENARIO_NAMES.get(key, "情景"),
-                         "low": lo, "high": hi, "mid": (lo + hi) / 2,
-                         "color": _SCENARIO_COLORS.get(key, _C_LABEL)})
-    if not cols or not price:
+    if not calc or not price:
         return ""
-    if not calc:
-        order = {"pess": 0, "base": 1, "opt": 2}
-        cols.sort(key=lambda r: order.get(r.get("key", ""), 1))  # 悲观/基础/乐观 从上到下
+    cols = [{"label": r["label"], "low": r["low"], "high": r["high"], "mid": r["mid"],
+             "color": _SCENARIO_COLORS.get(r["key"], _C_LABEL)} for r in calc["rows"]]
 
     W = 1000
     L, R, T = 128, 24, 34           # 左列=情景名+区间；上=现价标签
@@ -111,9 +95,7 @@ def build_scenario_block(calc: dict, cur: str = "元") -> str:
     head = ('<tr><th>指标</th>' + "".join(
         f'<th class="num">{_esc(r["label"])}情景</th>' for r in rows) + "</tr>")
 
-    def row(name, fmt, cls="num"):
-        cells = "".join(f'<td class="{cls}">{fmt(r)}</td>' if cls else f"<td>{fmt(r)}</td>" for r in rows)
-        return f"<tr><td>{name}</td>{cells}</tr>"
+    def row(name, fmt): return f"<tr><td>{name}</td>" + "".join(f'<td class="num">{fmt(r)}</td>' for r in rows) + "</tr>"
 
     if calc.get("mode") == "mcap":
         # 市值口径（NAV/rNPV/SOTP 行业附录）：无净利/EPS/PE 行，改显示目标市值区间
@@ -169,17 +151,14 @@ def build_peers_plot(fill: dict) -> str:
     """07 估值-质量散点图：直角坐标系精确点位（x=PE, y=ROE），3×3 分带背景，
     目标公司钢蓝大点 + 白色描边。输入 fill["peers_plot"]：
     {"points":[{"name":"宁德时代","roe":24.7,"pe":21.3,"target":true}, ...],
-     "pe_bands":[15,25], "roe_bands":[8,15]}（bands 可省，数组形式亦可）。
+     "pe_bands":[15,25], "roe_bands":[8,15]}（bands 可省）。
     缺数据 → 返回空串（peers_html 里的 matrix-table 兜底）。"""
     pp = fill.get("peers_plot")
     if not pp:
         return ""
-    if isinstance(pp, list):
-        points, pe_bands, roe_bands = pp, [15.0, 25.0], [8.0, 15.0]
-    else:
-        points = pp.get("points") or []
-        pe_bands = pp.get("pe_bands") or [15.0, 25.0]
-        roe_bands = pp.get("roe_bands") or [8.0, 15.0]
+    points = pp.get("points") or []
+    pe_bands = pp.get("pe_bands") or [15.0, 25.0]
+    roe_bands = pp.get("roe_bands") or [8.0, 15.0]
     pts = []
     for p in points:
         roe, pe = _num(p.get("roe")), _num(p.get("pe"))

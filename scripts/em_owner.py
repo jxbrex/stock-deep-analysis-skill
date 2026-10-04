@@ -63,8 +63,7 @@ def fetch_holders_quarterly(code: str) -> list:
                  if "".join(ch for ch in r["end_date"] if ch.isdigit())[4:8] in _QEND]
         # 同截止日多行（上游偶发近似重复，天齐 20240930/20260630 双行且户数略不同实证）→
         # 去重保留后写行且先于截断（窗口按干净序列取近 12 个季末）；变动比在干净序列上重算
-        qrows = [r for i, r in enumerate(qrows)
-                 if i == len(qrows) - 1 or qrows[i + 1]["end_date"] != r["end_date"]]
+        qrows = list({r["end_date"]: r for r in qrows}.values())
         q = qrows[-12:]
         latest = rows[-1]
         if not q or latest["end_date"] > q[-1]["end_date"]:

@@ -288,7 +288,7 @@ def _get_via_urllib(url: str) -> bytes:
         raise HttpStatusError(f"HTTP {e.code}: {url[:80]}") from e
 
 
-def get(url: str, retries: int = 1, raw: bool = False):
+def get(url: str, raw: bool = False):
     """curl 优先、urllib 兜底（TLS 指纹规避），失败重试 1 次。
     raw=False（缺省）返回解析后的 JSON dict；raw=True 返回解码后的原始文本（str），供 jsonp
     等非纯 JSON 端点（E7 站内搜索）共用同一条管线——重试、429/5xx 硬停、_stat 统计与磁盘
@@ -304,7 +304,7 @@ def get(url: str, retries: int = 1, raw: bool = False):
             _stat("em_disk")
             return cached
     last_err = None
-    for attempt in range(retries + 1):
+    for attempt in range(2):
         for transport in (_get_via_curl, _get_via_urllib):
             try:
                 text = transport(url).decode("utf-8")
@@ -317,7 +317,7 @@ def get(url: str, retries: int = 1, raw: bool = False):
                 raise  # HTTP 错误响应：原样抛出，不重试
             except Exception as e:
                 last_err = e
-        if attempt < retries:
+        if attempt == 0:
             _stat("wait")
             time.sleep(1.5)
     raise last_err
@@ -353,11 +353,11 @@ def _r2(x):
     return round(x, 2) if isinstance(x, (int, float)) else None
 
 
-def pct(x, digits=1):
+def pct(x):
     if x is None:
         return "—"
     try:
-        return f"{float(x):.{digits}f}%"
+        return f"{float(x):.1f}%"
     except (TypeError, ValueError):
         return "—"
 

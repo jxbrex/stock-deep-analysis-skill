@@ -29,10 +29,7 @@ def fetch_forecast_express(code: str) -> list:
                    if all(v is not None and abs(v) < 10000 for v in chg_raw) else None)  # 源数据异常值（如 1e9%）直接丢弃
             # 摘要只留原因短语（change_reason）；净利区间已单独列示，不再重复原文长句
             reason = (r.get("change_reason") or "").strip()
-            if reason:
-                summ = reason[:50]
-            else:
-                summ = ""  # 净利区间已列示，不再重复原文长句
+            summ = reason[:50]
             out.append({"类型": "预告", "报告期": r.get("end_date"), "披露": r.get("ann_date"),
                         "预告类型": r.get("type"), "净利区间": rng, "变动幅度": chg,
                         "摘要": summ})
@@ -48,7 +45,8 @@ def fetch_forecast_express(code: str) -> list:
         for r in out:
             dedup.setdefault(r.get("报告期"), r)
         return [dedup[k] for k in sorted(dedup, reverse=True)][:4]
-    except Exception:
+    except (OSError, RuntimeError) as e:
+        _ts_quiet("fetch_forecast_express", e)
         return []
 
 

@@ -296,19 +296,8 @@ def test_find_prev_report_legacy_naming():
 
 
 if __name__ == "__main__":
-    test_parse_report_name()
-    test_find_prev_report()
-    test_find_prev_report_legacy_naming()
-    test_find_include_unmarked()
-    test_extract_anchors()
-    test_extract_date_no_topbar()
-    test_find_tail_sniff_large_file()
-    test_norm_code_and_find_variants()
-    test_find_sentinel_status()
-    test_find_recursive_subdir()
-    test_find_prunes_ignored_dirs()
-    test_parse_failure_only_is_no_candidates()
-    test_parse_failure_hint()
-    test_cli_find_dir_and_messages()
-    test_cli_dir_missing_value_errors()
-    print("全部 15 项测试通过")
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    for t in tests:
+        t()
+        print(f"OK {t.__name__}")
+    print(f"全部 {len(tests)} 项测试通过")

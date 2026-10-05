@@ -14,7 +14,7 @@ import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
                      _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev,
-                     _cn_placeholders)
+                     _cn_placeholders, growth_sigma)
 from charts_base import (_C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio,
                          parse_stage_period, _PERIOD_VERDICTS)
 
@@ -1377,6 +1377,8 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_threshold_coverage(fill, warns)  # v5.1.2：4.3 阈值 14 章承载
     _check_cycle_stages(fill, warns)      # v4.11.3：周期阶段卡字段（cycle_stages）
     _check_dcf(fill, warns)               # v4.11.3：DCF 双卡字段（dcf）
+    _check_cycle_position(fill, warns)    # v5.2.0：当前周期位置刻度条（cycle_position，首版软告警）
+    _check_earnings_stability(fill, warns)  # v5.2.0：盈利波动性软锚（sigma 照抄比对，软告警）
     _check_period_track(fill, warns)      # v5.0：3 章 period_track（照抄落盘交叉校验/判词四选一/年报期整章消失）
 
 
@@ -1622,6 +1624,70 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
                      "整章不渲染则卡无处显示（同 pe_history/price_history 绑定规则）")
     if hand_table:
         warns.append("cycle_html 手写阶段表与 cycle_stages 字段并存（内容重复）：请删除手写表格")
+
+
+def _check_cycle_position(fill: dict, warns: list) -> None:
+    """v5.2.0：当前周期位置刻度条（cycle_position，首版软告警——观察一轮后再升拒渲染）。
+    周期股（stock_type 含「周期」）且 cycle_html 存在 → 字段必答且五键齐全
+    （stage/price_pctile/capacity/stock_spread/implication——「上行期」无刻度的云铝实证）；
+    stage 与 cycle_stages 本轮项不一致 → 告警（当前阶段只许一个说法）。"""
+    cp = fill.get("cycle_position")
+    is_cyc = "周期" in str(fill.get("stock_type") or "")
+    has_cycle_html = bool(str(fill.get("cycle_html") or "").strip())
+    if not isinstance(cp, dict) or not cp:
+        if is_cyc and has_cycle_html:
+            warns.append("cycle_position 未填：周期股当前位置刻度条为必答（v5.2.0）——五键："
+                         "stage/price_pctile/capacity/stock_spread/implication；"
+                         "首版软约束，下轮升拒渲染")
+        return
+    for k in ("stage", "price_pctile", "capacity", "stock_spread", "implication"):
+        if not str(cp.get(k) or "").strip():
+            warns.append(f"cycle_position.{k} 缺失：阶段名 + 三件套刻度 + 位置含义句须五键齐全")
+    curs = [s for s in (fill.get("cycle_stages") or [])
+            if isinstance(s, dict) and s.get("current")
+            # 与 _check_cycle_stages/渲染同源：缺 name/period 的项不落图，不参与本轮比对
+            and str(s.get("name") or "").strip() and str(s.get("period") or "").strip()]
+    stage = str(cp.get("stage") or "").strip()
+    if curs and stage:
+        cur_name = _plain_text(str(curs[0].get("name") or "")).strip()
+        if cur_name and cur_name not in stage and stage not in cur_name:
+            warns.append(f"cycle_position.stage「{stage[:12]}」与 cycle_stages 本轮「{cur_name[:12]}」"
+                         "不一致：当前阶段只许一个说法")
+
+
+def _check_earnings_stability(fill: dict, warns: list) -> None:
+    """v5.2.0：盈利波动性软锚（earnings_stability，软告警——本轮只展示不进定档）。
+    sigma 照抄 E3「扣非增速波动」行（禁手算）：按 fin_trend 扣非柱（与 E3 同源）复算比对，
+    偏差 >0.15pct 告警（照抄纪律的落盘比对同款）；verdict 缺失 → 告警；
+    peer_median 可空（角标只显 σ，不告警）。
+    找不到扣非柱或复算不可用（增速点 <3/亏损基数跳过）→ 补「无法复算」软告警——
+    与渲染层「无扣非面板兜底挂 section-tag，不静默丢」对称，照抄纪律不做免检通道。
+    debt: 比对口径天花板——E3 行用 API 全精度值，fin_trend 柱为展示舍入值，扣非仅个位数
+    亿的小市值公司舍入可使 σ 偏移 >0.15pct，正确照抄也会误报；误报增多再放宽容差。"""
+    es = fill.get("earnings_stability")
+    if not isinstance(es, dict) or not es:
+        return
+    sig = _num(es.get("sigma"))
+    if sig is None:
+        warns.append("earnings_stability.sigma 缺失或非数字：照抄 E3「扣非增速波动」行"
+                     "（E3 行标「不适用/数据不足」时整字段勿填）")
+        return
+    if not str(es.get("verdict") or "").strip():
+        warns.append("earnings_stability.verdict 缺失：4.6 判词引用处须有一句定性结论")
+    ft = fill.get("fin_trend") or {}
+    dedt_bar = next((b for p in ft.get("panels") or [] if isinstance(p, dict)
+                     for b in p.get("bars") or []
+                     if isinstance(b, dict) and "扣非" in str(b.get("name") or "")), None)
+    if dedt_bar is None:
+        warns.append("earnings_stability 已填但 fin_trend 无扣非柱可复算：请人工核对 E3 行照抄值")
+        return
+    ref, n_g, _drop = growth_sigma(dedt_bar.get("values"))
+    if ref is None:
+        warns.append("earnings_stability 已填但 fin_trend 扣非柱复算不可用（增速点 <3 或亏损基数）："
+                     "请人工核对 E3 行照抄值")
+    elif abs(ref - sig) > 0.15:
+        warns.append(f"earnings_stability.sigma（{sig:g}）与 fin_trend 扣非柱复算 σ"
+                     f"（{ref:g}，{n_g} 个增速点）偏差 >0.15pct：照抄 E3 行，禁手算")
 
 
 def _check_dcf(fill: dict, warns: list) -> None:

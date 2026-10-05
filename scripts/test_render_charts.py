@@ -731,6 +731,38 @@ def test_cycle_stages():
     assert build_cycle_stages(minimal_fill()) == ""
 
 
+def test_cycle_position_bar():
+    """v5.2.0 当前周期位置刻度条：五键齐 → 横条含阶段名/三刻度/含义句；
+    字段缺失或不足两件 → 空串（首版软约束，渲染不炸）。"""
+    from charts_misc import build_cycle_position
+    cp = {"stage": "上行期后段", "price_pctile": "铝价分位 ~70%", "capacity": "投放低峰",
+          "stock_spread": "价差分位 90%", "implication": "距顶更近——PE 给折价"}
+    html = build_cycle_position(minimal_fill(cycle_position=cp))
+    assert 'layer-summary' in html and '当前位置：上行期后段' in html
+    assert '铝价分位 ~70%' in html and '→ 距顶更近——PE 给折价' in html
+    # 非周期分型可填路径（渲染无 stock_type 门控，有意宽松——钉住）
+    assert '当前位置' in build_cycle_position(minimal_fill(stock_type="稳健成长股",
+                                                        cycle_position=cp))
+    assert build_cycle_position(minimal_fill()) == ""
+    assert build_cycle_position(minimal_fill(cycle_position={"stage": "x"})) == ""
+
+
+def test_fin_trend_stability_badge():
+    """v5.2.0 盈利波动性软锚角标：earnings_stability.sigma 落在扣非面板 m-head（含同业中位）；
+    字段缺失 → 无角标；无扣非面板 → 兜底挂 section-tag 行，不静默丢。"""
+    from charts_l1 import build_fin_trend
+    es = {"sigma": 1.4, "peer_median": 21.0, "verdict": "增速波动低"}
+    html = build_fin_trend(minimal_fill(earnings_stability=es))
+    assert 'm-yoy">增速波动 σ=1.4pct｜同业中位 21pct' in html
+    assert "增速波动" not in build_fin_trend(minimal_fill())
+    ft = {"years": ["2021", "2022", "2023", "2024"], "panels": [
+        {"title": "营收", "bars": [{"name": "营收", "unit": "亿", "values": [1, 2, 3, 4]}]},
+        {"title": "现金流", "bars": [{"name": "经营现金流", "unit": "亿", "values": [1, 2, 3, 4]}]},
+        {"title": "ROE", "lines": [{"name": "ROE", "pct": True, "values": [1, 2, 3, 4]}]}]}
+    html2 = build_fin_trend(minimal_fill(fin_trend=ft, earnings_stability=es))
+    assert "增速波动" in html2 and "section-tag" in html2
+
+
 def test_dcf_cards():
     """v4.11.3 DCF 双卡：双 metric-card + 判词；现价比价脚本算（12.5 vs price 10 → 较现价高
     25.0%）；value/implied_g/verdict 缺一返回空串。"""

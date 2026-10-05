@@ -1023,6 +1023,73 @@ def test_cycle_stages_validate():
     assert "不落图" in warns and "> 48" in warns and "cycle_html 缺失" in warns
 
 
+def test_cycle_position_validate():
+    """v5.2.0 周期位置刻度条校验（首版软告警）：周期股+cycle_html 缺 cycle_position → 告警；
+    缺键 → 逐键告警；stage 与 cycle_stages 本轮不一致 → 告警；无 cycle_html 不告警。"""
+    warns = validate_stderr(minimal_fill(cycle_html="<p>周期分析。</p>"))
+    assert "cycle_position 未填" in warns
+    warns = validate_stderr(minimal_fill(
+        cycle_html="<p>x</p>",
+        cycle_position={"stage": "上行期后段", "price_pctile": "铝价分位 70%"}))
+    assert "cycle_position.capacity" in warns and "cycle_position.implication" in warns
+    warns = validate_stderr(minimal_fill(
+        cycle_html="<p>x</p>",
+        cycle_stages=[{"name": "出清", "period": "2022", "current": True},
+                      {"name": "复苏", "period": "2023"},
+                      {"name": "上行", "period": "2024"}],
+        cycle_position={"stage": "下行末段", "price_pctile": "a", "capacity": "b",
+                        "stock_spread": "c", "implication": "d"}))
+    assert "不一致" in warns
+    warns = validate_stderr(minimal_fill(
+        cycle_html="<p>x</p>",
+        cycle_stages=[{"name": "出清", "period": "2022", "current": True},
+                      {"name": "复苏", "period": "2023"},
+                      {"name": "上行", "period": "2024"}],
+        cycle_position={"stage": "出清末段", "price_pctile": "a", "capacity": "b",
+                        "stock_spread": "c", "implication": "d"}))
+    assert "不一致" not in warns
+    assert "cycle_position" not in validate_stderr(minimal_fill())
+
+
+def test_earnings_stability_validate():
+    """v5.2.0 盈利波动性软锚校验（软告警）：sigma 与 fin_trend 扣非柱复算（夹具 σ=1.4）
+    偏差 >0.15pct → 告警；verdict 缺失 → 告警；一致且键齐 → 不告警。
+    热核修复补齐边界：sigma 缺失分支 / 无扣非柱 / 复算不可用（亏损基数致增速点不足）
+    均不得静默放过；字符串 sigma 经 _num 归一不误报。"""
+    warns = validate_stderr(minimal_fill(earnings_stability={"sigma": 15, "verdict": "x"}))
+    assert "偏差 >0.15pct" in warns
+    warns = validate_stderr(minimal_fill(earnings_stability={"sigma": 1.4}))
+    assert "verdict 缺失" in warns
+    warns = validate_stderr(minimal_fill(
+        earnings_stability={"sigma": 1.4, "peer_median": None, "verdict": "波动低"}))
+    assert "earnings_stability" not in warns
+    # sigma 缺失分支
+    warns = validate_stderr(minimal_fill(earnings_stability={"verdict": "x"}))
+    assert "sigma 缺失" in warns
+    # 字符串 sigma（"1.4" 经 _num 归一）不误报
+    warns = validate_stderr(minimal_fill(
+        earnings_stability={"sigma": "1.4", "verdict": "波动低"}))
+    assert "偏差 >0.15pct" not in warns and "sigma 缺失" not in warns
+    # 无扣非柱 → 「无法复算」告警（不静默放过）
+    f0 = minimal_fill()
+    ft = f0["fin_trend"]
+    ft["panels"] = [p for p in ft["panels"]
+                    if not any("扣非" in b.get("name", "") for b in p.get("bars", []))]
+    warns = validate_stderr(minimal_fill(
+        fin_trend=ft, earnings_stability={"sigma": 1.4, "verdict": "波动低"}))
+    assert "无扣非柱可复算" in warns
+    # 亏损基数致增速点 <3 → 复算不可用告警
+    f1 = minimal_fill()
+    ft1 = f1["fin_trend"]
+    for p in ft1["panels"]:
+        for b in p.get("bars", []):
+            if "扣非" in b.get("name", ""):
+                b["values"] = [10, -5, -8, 12, 13]
+    warns = validate_stderr(minimal_fill(
+        fin_trend=ft1, earnings_stability={"sigma": 9.9, "verdict": "波动低"}))
+    assert "复算不可用" in warns
+
+
 def test_dcf_validate():
     """v4.11.3 DCF 校验：稳健成长缺 dcf 告警；缺键告警；valuation_html 手写 DCF 表重复告警。"""
     warns = validate_stderr(minimal_fill(stock_type="稳健成长股"))

@@ -230,6 +230,14 @@ def parse_report_name(path: str):
     return None
 
 
+def prune_scan_dirs(dirs: list) -> None:
+    """报告目录扫描的就地剪枝（唯一口径，v5.2.0 自 find_prev_report 抽提、score_drift 复用）：
+    不扫点/下划线开头目录（.venv/_archive）与 artifacts/__pycache__/node_modules——
+    artifacts/ 排除源自 v4.10.3「CWD=仓库根时测试夹具误进回测模式」事故，属政策非随意。"""
+    dirs[:] = [d for d in dirs if not d.startswith((".", "_"))
+               and d not in {"artifacts", "__pycache__", "node_modules"}]
+
+
 def find_prev_report(code: str, directory: str = ".", include_unmarked: bool = False) -> PrevFind:
     """回测模式触发的机械判定：在 directory（**递归子目录**，v4.10.3 起剪枝——不扫
     artifacts/ 与点/下划线开头目录（.venv/_archive）及 __pycache__/node_modules，
@@ -251,8 +259,7 @@ def find_prev_report(code: str, directory: str = ".", include_unmarked: bool = F
     for root, dirs, files in os.walk(directory):
         # 剪枝（v4.10.3 审计）：CWD=仓库根时 artifacts/ 里的测试夹具会命中同名报告、误进回测模式；
         # 点/下划线开头（.venv/_archive）与依赖目录同样不扫。剪枝在 sort 之前，二者不改匹配语义。
-        dirs[:] = [d for d in dirs if not d.startswith((".", "_"))
-                   and d not in {"artifacts", "__pycache__", "node_modules"}]
+        prune_scan_dirs(dirs)
         dirs.sort()  # os.walk 顺序未定义：排序保证「同日期同标记」时的取用稳定
         for fn in sorted(files):
             info = parse_report_name(fn)

@@ -47,7 +47,7 @@ from charts_l1 import _inject_l1_charts
 from charts_cycle import build_pe_band, build_price_history
 from charts_misc import (
     build_holders_plot, build_review_dumbbell, _inject_l3_charts, build_triggers_strip,
-    build_driver_cards, build_cycle_stages, build_anchor_ledger,
+    build_driver_cards, build_cycle_stages, build_anchor_ledger, build_cycle_position,
 )
 from charts_gap import _inject_gap_chart
 from charts_period import (
@@ -59,7 +59,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v5.1.5"
+RENDERER_VERSION = "v5.2.0"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -370,6 +370,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "CYCLE_META": _esc(fill.get("cycle_meta", "")),
         # v4.11.3：周期阶段卡（cycle_stages 字段，垫在手写 cycle_html 前；空串替换）
         "CYCLE_STAGES_HTML": build_cycle_stages(fill),
+        # v5.2.0：当前周期位置刻度条（cycle_position 字段，垫在阶段卡与手写 cycle_html 之间）
+        "CYCLE_POSITION_HTML": build_cycle_position(fill),
         "CYCLE_HTML": fill.get("cycle_html", ""),
         "NEXT_REVIEW": _esc(fill.get("next_review", "—")),
         # v4.9：触发条件状态条（triggers 可选字段，脚本生成，垫在手写仪表盘前）

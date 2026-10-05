@@ -726,6 +726,18 @@ def test_18_period_track_f10_fallback():
     print("18. F10 兜底/字段级补齐期次校验/band_years 收录口径 通过")
 
 
+def test_19_growth_sigma_parity():
+    """19. v5.2.0：scoring.growth_sigma 与 em_finance._growth_sigma 双副本 parity 钉住
+    （数值/None/亏损基数路径等价；归一宽严差异是刻意的——docstring 互指，
+    脏字符串路径不纳入本用例）。"""
+    from scoring import growth_sigma
+    from em_finance import _growth_sigma
+    for vals in ([75, 79, 83, 86, 88], [10, -5, 8, 12, 15], [55.27, 74.46, 91.65],
+                 [None, 100, 110, 121, 133], [1, 2, 3], []):
+        assert growth_sigma(vals) == _growth_sigma(vals), f"parity 漂移: {vals}"
+    print("19. growth_sigma 双副本 parity 通过")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

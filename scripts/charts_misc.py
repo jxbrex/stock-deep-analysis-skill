@@ -429,3 +429,31 @@ def build_cycle_stages(fill: dict) -> str:
     return '<div class="stage-strip">' + "".join(cards) + '</div>'
 
 
+def build_cycle_position(fill: dict) -> str:
+    """11 周期规律·当前位置刻度条（fill["cycle_position"]，v5.2.0）：「上行期」类无刻度标签
+    的云铝半年报实证立项——当前位置必须带刻度：阶段名 + 三件套（商品价格历史分位 /
+    产能投放轨迹 / 库存或价差分位）+ 位置含义句（距顶/底哪边更近 → 对应估值纪律）。
+    cycle_position: {"stage":"上行期后段","price_pctile":"铝价历史分位 ~70%（2015 至今）",
+                     "capacity":"产能天花板下投放低峰","stock_spread":"氧化铝价差处历史 90% 分位",
+                     "implication":"利润距顶比距底更近——PE 按周期股铁律给折价"}
+    （字段缺失/空 → 返回空串：首版软约束，周期股缺填由 validate 层告警；复用 layer-summary
+    判词横条视觉，垫在阶段卡与手写 cycle_html 之间）"""
+    cp = fill.get("cycle_position")
+    if not isinstance(cp, dict) or not cp:
+        return ""
+    parts = []
+    stage = str(cp.get("stage") or "").strip()
+    if stage:
+        parts.append(f"<strong>当前位置：{_esc(stage)}</strong>")
+    for v in (cp.get("price_pctile"), cp.get("capacity"), cp.get("stock_spread")):
+        t = str(v or "").strip()
+        if t:
+            parts.append(_esc(t))
+    impl = str(cp.get("implication") or "").strip()
+    if impl:
+        parts.append(f"→ {_esc(impl)}")
+    if len(parts) < 2:
+        return ""
+    return '<div class="layer-summary">' + " ｜ ".join(parts) + "</div>"
+
+

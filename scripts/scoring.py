@@ -7,6 +7,7 @@ compute_scores（三轨评分）、7/8/12 章卡片族（质量分汇总、估�
 依赖方向：最底层共享层，被 charts/validate/render_report 导入；自身仅依赖标准库。
 """
 import re
+import statistics
 import sys
 
 
@@ -124,6 +125,28 @@ def _esc(s) -> str:
 def _plain_text(frag: str) -> str:
     """剥掉 HTML 标签后的纯文本（内容地板字数校验与对齐机的共用口径）。"""
     return re.sub(r"<[^>]+>", "", frag or "").strip()
+
+
+def growth_sigma(vals):
+    """扣非净利同比增速的波动 σ（v5.2.0 盈利波动性软锚，MSCI 增速波动口径——
+    增速的标准差而非利润水平波动，稳定增长公司不被误伤）。
+    vals = 扣非序列（旧→新，可含 None/脏值，内部经 _num 归一）。
+    返回 (sigma_pct 或 None, 增速点数, 跳过对数)：
+    相邻对基数 ≤0（亏损/零）时该增速无定义 → 跳过并计入「跳过对数」；
+    有效增速点 <3 → sigma=None（调用方按「数据不足/不适用」降级标注，禁编造）。
+    σ 用样本标准差（statistics.stdev，n-1：5 年 4 点是抽样而非总体）。
+    数据层 em_finance._growth_sigma 是同口径副本——归一路径有意不同
+    （数据层严格 float 遇脏值即弃；本侧 _num 容忍字符串/逗号/千分位），
+    数值/None/亏损基数路径两副本等价且由 test_em_fetch 的 parity 用例钉住，
+    其余改动须两处同步。
+    debt: 近零正基数（如 0.01 亿）不跳过，单年万级增速可引爆 σ——MSCI 原口径
+    亦不处理；若判词被此类异常带偏的实例增多，再加基数下限或 winsorize ±300%。"""
+    xs = [v for v in (_num(v) for v in (vals or [])) if v is not None]
+    gs = [(v / p - 1) * 100 for p, v in zip(xs, xs[1:]) if p > 0]
+    dropped = max(len(xs) - 1, 0) - len(gs)
+    if len(gs) < 3:
+        return None, len(gs), dropped
+    return round(statistics.stdev(gs), 1), len(gs), dropped
 
 
 _CN_PLACEHOLDER_RE = r"【[^】]{0,40}】"

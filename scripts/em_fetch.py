@@ -73,7 +73,7 @@ from em_market import (  # noqa: E402,F401
     fetch_pe_pb_band, fetch_quote, fetch_kline_monthly, fetch_timing_material,
 )
 from em_finance import (  # noqa: E402,F401
-    _ts_hk_annual_rows,
+    _ts_hk_annual_rows, _growth_sigma,
     fetch_annual_rows, fetch_latest_quarter, fetch_period_track, fetch_hk_period_track,
     fetch_forensic, fetch_audit, fetch_risk_free, fetch_div_yield, fetch_debt, red_flags,
 )
@@ -331,6 +331,20 @@ def _sec_e3(pure: str, secucode: str) -> tuple:
     if turnover_bits:
         out.append("周转天数（应收/存货，天；旧→新，fin_trend 周转天数面板照抄本行）: "
                    + " ｜ ".join(turnover_bits) + "\n")
+    # 扣非增速波动行（v5.2.0 盈利波动性软锚数据源；earnings_stability.sigma 照抄本行，禁手算；
+    # 口径=近 5 年扣非同比增速标准差——增速的波动而非利润水平波动，稳定增长公司不被误伤）
+    if annual:
+        dedt_vals = [r.get("KCFJCXSYJLR") for r in reversed(annual[:5])]
+        sig, n_g, dropped = _growth_sigma(dedt_vals)
+        if sig is not None:
+            drop_note = f"，{dropped} 对亏损/零基数已跳过" if dropped else ""
+            out.append(f"扣非增速波动（earnings_stability.sigma 照抄本行，禁手算；口径=扣非同比增速"
+                       f"标准差 σ，MSCI 增速波动口径——增速的波动非利润水平波动）: "
+                       f"σ={sig}pct（{n_g} 个增速点{drop_note}）\n")
+        else:
+            why = "存在亏损/零基数年致部分增速无定义、" if dropped else ""
+            out.append(f"扣非增速波动: 不适用（{why}有效增速点 {n_g} <3）"
+                       "——fill 的 earnings_stability 字段勿填\n")
     # 有息负债（tushare balancesheet 最新报告期；组装口径在 fetch_debt，v5.1.5 下沉）
     debt = fetch_debt(pure)
     if debt:

@@ -236,8 +236,25 @@ def build_fin_trend(fill: dict) -> str:
     if len(years) < 3 or len(panels) < 3:
         return ""
 
+    # v5.2.0 盈利波动性软锚角标：earnings_stability.sigma 展示在扣非面板 m-head（禁手写；
+    # sigma 照抄 E3「扣非增速波动」行，validate 层按本图扣非柱复算比对；无扣非面板时
+    # 兜底挂 section-tag 行，不静默丢）。面板定位 = 纯索引预计算（无循环内状态突变）
+    es = fill.get("earnings_stability") or {}
+    es_sig = _num(es.get("sigma"))
+    es_peer = _num(es.get("peer_median"))
+    es_badge = ""
+    if es_sig is not None:
+        es_badge = (f' <span class="m-yoy">增速波动 σ={_fmt(es_sig)}pct'
+                    + (f'｜同业中位 {_fmt(es_peer)}pct' if es_peer is not None else "")
+                    + "</span>")
+    np_idx = (next((i for i, p in enumerate(panels)
+                    if any("扣非" in b["name"] for b in p["bars"])), None)
+              if es_badge else None)
+
     cells = []
-    for p in panels:
+    # 外层面板索引必须用独立名 pi——循环体内的柱/线/年标内层循环复用 i 会遮蔽外层计数
+    # （热核审计后实证：i 被覆写为末年下标导致角标恒不落位）
+    for pi, p in enumerate(panels):
         n = len(years)
         W, H, T, B, L, R = 480, 158, 26, 18, 38, 38
         slot = (W - L - R) / n
@@ -338,11 +355,13 @@ def build_fin_trend(fill: dict) -> str:
                                 for ln in p["lines"])
         if line_lasts:
             head_parts.append(line_lasts)
+        np_badge = es_badge if pi == np_idx else ""
         cells.append(f'<div class="mini-cell"><div class="m-head"><span class="m-name">{_esc(p["title"])}</span>'
-                     f'<span class="m-val">{" ｜ ".join(head_parts)}</span></div>{"".join(svg)}</div>')
+                     f'<span class="m-val">{" ｜ ".join(head_parts)}</span>{np_badge}</div>{"".join(svg)}</div>')
 
-    return (f'<span class="section-tag">财务五年趋势（{_esc(years[0])}–{_esc(years[-1])}）</span>'
-            '<div class="mini-grid">' + "".join(cells) + '</div>'
+    es_tag = es_badge if np_idx is None else ""
+    return (f'<span class="section-tag">财务五年趋势（{_esc(years[0])}–{_esc(years[-1])}）{es_tag}</span>'
+            + '<div class="mini-grid">' + "".join(cells) + '</div>'
             '<span class="source">财务五年趋势（脚本按 fin_trend 字段生成，数据照抄 em_fetch E3 年表）：'
             '组合图双轴——柱=金额（左轴 亿；沙=第一系列/钢蓝=第二系列），'
             '线=比率（右轴 %/倍，钢蓝实线=第一条、灰虚线=第二条），红虚线=阈值（如现金含量 0.7 盈利质量线）；'

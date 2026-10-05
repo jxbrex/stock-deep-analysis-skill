@@ -232,6 +232,14 @@ def full_fill(**over):
              "driver": "价格暴跌+估值先杀", "current": False},
             {"name": "修复重估", "period": "2024/02–2026/08", "pe": "10–16x", "price": "8–11",
              "driver": "业绩兑现重估", "current": True}],
+        # v5.2.0：盈利波动性角标 + 当前周期位置刻度条进 golden（罩住两处新渲染路径；
+        # sigma=1.4 与 minimal_fill 扣非柱 [75,79,83,86,88] 复算一致，不触发比对告警）
+        earnings_stability={"sigma": 1.4, "peer_median": 21.0,
+                            "verdict": "增速波动显著低于同业，回报可预测性高。"},
+        cycle_position={"stage": "修复重估中段", "price_pctile": "商品价格历史分位 ~35%",
+                        "capacity": "在建产能年底投产、投放低峰",
+                        "stock_spread": "库存低位、价差分位 ~40%",
+                        "implication": "距底已远、距顶尚早——PE 仍按修复逻辑给"},
         dcf={"value": 12.5, "fcf0": "95亿", "growth_5y": "5%", "g_perp": "2.5%", "wacc": "8.5%",
              "net_cash": "120亿", "implied_g": "0.5",
              "implied_note": "g=WACC−FCF₁/EV（EV=市值−净现金）",

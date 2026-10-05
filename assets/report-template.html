@@ -165,6 +165,8 @@ td.cell-worst { color: var(--ink); font-weight: 700; }
 .mini-cell .m-name { color: var(--text-soft); font-weight: 600; }
 .mini-cell .m-val { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 .mini-cell .m-yoy { font-size: 11px; font-weight: 400; color: var(--muted); }
+/* v5.2.0 盈利波动性角标的兜底落位（无扣非面板时挂 section-tag）：与 mini-cell 内同式 */
+.section-tag .m-yoy { font-size: 11px; font-weight: 400; color: var(--muted); }
 /* v4.9 触发条件状态条（triggers 字段，垫 14 章手写仪表盘前）；hit/miss/pending 走评价色 */
 /* v4.9.1 补充修订四 卡片化重排：HTML 结构（dot/cond/mt/status 四 span）不变，纯 CSS order 重排——
    标题居中独占行（允许两行）、dot+状态居中徽章行、论据独占行左对齐；
@@ -568,7 +570,7 @@ html { scroll-behavior: smooth; }
   </div>
   <div class="section-body">
     {{PE_BAND_HTML}}{{PRICE_HIST_HTML}}
-    {{CYCLE_STAGES_HTML}}{{CYCLE_HTML}}
+    {{CYCLE_STAGES_HTML}}{{CYCLE_POSITION_HTML}}{{CYCLE_HTML}}
   </div>
 </div>
 <!--ENDIF-->

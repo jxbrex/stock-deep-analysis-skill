@@ -51,14 +51,6 @@ def build_scenario_spectrum(fill: dict, calc: dict) -> str:
         c_anchor, c_tx = _anchor_clamp(cx_c, cw, L, W - 4)
         parts.append(f'<text x="{c_tx:.1f}" y="{axis_y + 32}" text-anchor="{c_anchor}" '
                      f'font-size="10.5" fill="{_C_LABEL}">{clabel}</text>')
-    # 现价竖虚线 + 顶部标签（近边缘时改对齐防溢出）
-    px = X(price)
-    parts.append(f'<line x1="{px:.1f}" y1="{T - 12}" x2="{px:.1f}" y2="{axis_y}" '
-                 f'stroke="{_C_BLUE}" stroke-width="1.5" stroke-dasharray="5 4"/>')
-    price_label = f"现价 {_fmt(price)}"
-    anchor, tx = _anchor_fit(px, _text_w(price_label, 12), L, W - R, 2)
-    parts.append(f'<text x="{tx:.1f}" y="{T - 18}" text-anchor="{anchor}" font-size="12" '
-                 f'font-weight="700" fill="{_C_BLUE}">{price_label}</text>')
     # 情景区间条
     for i, c in enumerate(cols):
         cy = T + i * ROW_H + (ROW_H - BAR_H) / 2
@@ -79,6 +71,16 @@ def build_scenario_spectrum(fill: dict, calc: dict) -> str:
         anchor, tx = _anchor_clamp(cx_mid, vw, L, W - 4)
         parts.append(f'<text x="{tx:.1f}" y="{cy - 6:.1f}" text-anchor="{anchor}" font-size="12.5" '
                      f'font-weight="700" fill="{c["color"]}">{vlabel}</text>')
+    # 现价竖虚线 + 顶部标签（近边缘时改对齐防溢出）
+    # （v5.2.1：移到情景条之后绘制——先画会被实心区间条整段遮住，现价落在区间内时
+    # 只剩条上方一截悬在条外，看似"现价落到区块外"，小米 01810 实证）
+    px = X(price)
+    parts.append(f'<line x1="{px:.1f}" y1="{T - 12}" x2="{px:.1f}" y2="{axis_y}" '
+                 f'stroke="{_C_BLUE}" stroke-width="1.5" stroke-dasharray="5 4"/>')
+    price_label = f"现价 {_fmt(price)}"
+    anchor, tx = _anchor_fit(px, _text_w(price_label, 12), L, W - R, 2)
+    parts.append(f'<text x="{tx:.1f}" y="{T - 18}" text-anchor="{anchor}" font-size="12" '
+                 f'font-weight="700" fill="{_C_BLUE}">{price_label}</text>')
     parts.append(_svg_close())
     parts.append('<span class="source">目标价走廊（脚本按 valuation/scenarios 字段生成）：横条=情景目标价区间，'
                  '白条刻=区间中枢，竖虚线=现价；条上方=中枢值与较现价涨跌幅'

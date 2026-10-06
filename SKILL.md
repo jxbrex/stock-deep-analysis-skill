@@ -186,6 +186,9 @@ peers 批量取数互不依赖——委派发出后主会话立即并行推进�
 一句话骨架：三情景由 Phase 0 的 1-2 个关键驱动定义；估值分由脚本按 `valuation_inputs` 四件套
 强制计算（权重公式唯一权威见 `scoring.md` 估值分节），模型只填输入不手算；
 预期差必须拆到具体假设层面（无预期差 = 无超额收益）。
+**A+H 两地上市标的**：估值章必须含 A/H 比价小节并给出买哪边的明确建议——
+触发条件、三步计算流程（同币种折算→表观溢价率→红利税调整）与输出要求
+见 `scoring.md`「A/H 双重上市比价」节。
 
 ### Phase 4: 构建同业对比
 
@@ -325,6 +328,7 @@ if 命中红灯项（财务造假/ST/立案调查/主营不可逆衰退/审计�
 - [ ] `peers_html` 含 `<table>`；**每张数据表下方都有 `.source` 标注**（表格数 ≤ source 数）
 - [ ] `valuation_inputs` 四键齐全（pe_ttm / pe_band / div_yield / risk_free），均有取数来源或标估算
 - [ ] `valuation` 三情景完整（pess/base/opt，每情景 profit + pe 区间 + horizon，horizon 含"年/月"单位；行业附录市值口径用 mcap 区间替代 profit+pe，三情景须同口径）
+- [ ] A+H 两地上市标的：估值章已含 A/H 比价小节——表观溢价率（汇率日期）+ 税后股息率差（持股主体/税率假设）+ 明确选边建议（口径见 `scoring.md`「A/H 双重上市比价」节；非 A+H 标的跳过）
 - [ ] `period_track`（v5.0）：最新报告期非年报时已填、最新期=年报时勿填；照抄键与 em_fetch「报告期进度」照抄行/落盘 JSON 一致（渲染器交叉校验会拦；v5.0.1 起含单季扣非 sq_dedt 与经营现金流 sq_ocf 拆分键）；判词三键（verdict_rev/verdict_np/verdict_dedt）取值合法（超前/正常/滞后/无法判定）；完成度双分母缺一标「未披露」；summary_html 只写进度事实 ≤2 句；forecast_html 仅写本期预告兑现
 - [ ] 悲观情景下限 ≥现价（赔率 ∞）时 `floor` 子键三键齐全（type/value/evidence）；无地板证据则下修悲观情景或补证据
 - [ ] `valuation_inputs.consensus_np` 已照抄落盘 `consensus_np.np_avg` 回填（有卖方覆盖时；无覆盖不填，过程卡自动标注「乐观税未检」）

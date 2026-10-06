@@ -207,20 +207,26 @@ def full_fill(**over):
              "gross_profit": 13.0, "gp_pct": 14.2}]},
         industry_chain={"upstream": ["煤炭开采", "电力"], "self_note": "煤制烯烃一体化",
                         "downstream": ["聚烯烃加工", "包装", "家电"]},
-        sensitivity=[{"name": "金价", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
-                     {"name": "产量", "impact": 13}],
+        sensitivity=[{"name": "烯烃价差", "impact": 20, "delta": "±10%", "amount": "净利约±9-10亿元"},
+                     {"name": "焦化价差", "impact": 13}],
+        # v5.5.0 B4：大分部（gp_pct ≥15）逐条覆盖，且与 segments/sensitivity/drivers 同一世界
+        # （烯烃 62% 挂烯烃价差；焦化 23.8% 写数字排除理由）
+        sensitivity_meta={"coverage": [
+            {"segment": "烯烃产品", "var": "烯烃价差"},
+            {"segment": "焦化产品",
+             "excluded": "焦炭价差 ±10% → 净利 ±3%，不足以改变情景结论"}]},
         # v4.11.3：P0 驱动卡 + 周期阶段卡 + DCF 双卡进 golden
-        # （v5.1.1：第一变量由脚本按 sensitivity impact 降序加冕——金价 20 > 产量 13，手标一致不告警）
-        drivers=[{"name": "金价", "first_var": True,
-                  "elastic": "±10% → 净利 ±20%", "elastic_sub": "±10%，金价 900 元/g 基数",
-                  "note": "当前约 900 元/g，被三重力量撕扯：美元实际利率、央行购金、地缘溢价。",
+        # （v5.1.1：第一变量由脚本按 sensitivity impact 降序加冕——烯烃价差 20 > 焦化价差 13，手标一致不告警）
+        drivers=[{"name": "烯烃价差", "first_var": True,
+                  "elastic": "±10% → 净利 ±20%", "elastic_sub": "±10%，烯烃价差 900 元/吨基数",
+                  "note": "当前约 900 元/吨，被三重力量撕扯：煤价成本、新增产能投放、下游需求。",
                   "chips": [{"label": "悲观", "value": "800"}, {"label": "基础", "value": "900"},
-                            {"label": "乐观", "value": "1,000"}, {"label": "元/g", "unit": True}]},
-                 {"name": "产量", "elastic": "±10% → 净利 ±13%",
-                  "note": "2026E 约 50 吨，可见度高（在建矿山年底投产）。",
+                            {"label": "乐观", "value": "1,000"}, {"label": "元/吨", "unit": True}]},
+                 {"name": "焦化价差", "elastic": "±10% → 净利 ±13%",
+                  "note": "2026E 价差约 50 元/吨，可见度高（在产产能满负荷）。",
                   "chips": [{"label": "悲观", "value": "45"}, {"label": "基础", "value": "50"},
-                            {"label": "乐观", "value": "55"}, {"label": "吨", "unit": True}]}],
-        driver_verdict="弹性（±20%）大于产量（±13%），且不确定性不对称——三情景围绕金价定义。",
+                            {"label": "乐观", "value": "55"}, {"label": "元/吨", "unit": True}]}],
+        driver_verdict="弹性（±20%）大于焦化价差（±13%），且不确定性不对称——三情景围绕烯烃价差定义。",
         pe_history={"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年",
                     "milestones": [{"label": "2021H1", "pe": 46.9}, {"label": "2023Q2", "pe": 13.7}]},
         price_history={"label": "近3年", "series": months},

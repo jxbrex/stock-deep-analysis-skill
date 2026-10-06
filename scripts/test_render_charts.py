@@ -119,6 +119,14 @@ def test_segments_chain_charts():
     """v4.8 业务构成图（4.1 锚点 <!--SEGMENTS-->）与产业链图（4.2 锚点 <!--CHAIN-->）：
     锚点在位→原位替换；锚点缺失→追加章末+告警；字段缺失→锚点静默清除；占比和偏离→告警。"""
     extra = {
+        # v5.5.0 B4：大分部（gp_pct ≥15）要求 sensitivity + sensitivity_meta 覆盖
+        "sensitivity": [{"name": "烯烃价差", "impact": 18, "delta": "±10%"}],
+        "drivers": [{"name": "烯烃价差", "elastic": "±10% → 净利 ±18%",
+                     "chips": [{"label": "悲观", "value": "8"}, {"label": "基础", "value": "9"},
+                               {"label": "乐观", "value": "10"}]}],
+        "sensitivity_meta": {"coverage": [
+            {"segment": "烯烃产品", "var": "烯烃价差"},
+            {"segment": "焦化产品", "excluded": "焦炭价差 ±10% → 净利 ±3%，不足以改变情景结论"}]},
         "segments": {"period": "2025年报", "by": "按产品", "items": [
             {"name": "烯烃产品", "revenue": 156.2, "rev_pct": 48.1, "gross_margin": 36.4,
              "gross_profit": 56.8, "gp_pct": 62.0},

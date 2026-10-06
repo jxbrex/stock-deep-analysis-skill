@@ -29,11 +29,20 @@ _HTML_TABLE_FIELDS = _HTML_FIELDS[1:]
 # v4.11.1（审核 D8）：dim-block 切块正则容忍附加类（class="dim-block extra"），
 # 三处消费方（内容地板/维度块校验/治理条）收敛同一 helper，口径唯一
 _DIM_BLOCK_RE = r'<div class="dim-block(?:\s[^"]*)?">'
+# v5.5.0 B5：dim-block 正文体 = 剥「标题行（含编号与分值徽章）」+「评分末拍」，同样容忍附加类/属性
+# （两者都自带数字，不剥则「正文有无数字」的判定恒为真——合规报告上永不触发，B5 曾空转）
+_DIM_HEADER_RE = re.compile(r'<div\b[^>]*class="[^"]*\bdim-header\b[^"]*"[^>]*>.*?</div>\s*', re.S)
+_SCORE_BEAT_RE = re.compile(r'<p\b[^>]*>\s*<strong\b[^>]*>\s*评分\s*[：:]\s*</strong>.*?</p>\s*', re.S)
 
 
 def _split_dim_blocks(frag: str) -> list:
     """切出全部 dim-block 片段（不含首段前导部分）。附加类形态（dim-block xxx）一并识别。"""
     return re.split(_DIM_BLOCK_RE, frag or "")[1:]
+
+
+def _dim_body_text(blk: str) -> str:
+    """dim-block 正文体纯文本（剥标题行与评分末拍）——B5 数字义务判定的取数口径。"""
+    return _plain_text(_SCORE_BEAT_RE.sub("", _DIM_HEADER_RE.sub("", blk or "")))
 
 
 def _check_price_date(fill: dict) -> None:
@@ -1233,6 +1242,18 @@ def _check_dim_blocks(fill: dict, warns: list) -> None:
             if (sv >= 8 or sv <= 3) and blen < 50:
                 warns.append(f"{name} 得分 {sv:g}（极端分）但 dim-block 纯文本仅 {blen} 字 < 50："
                              f"≥8 或 ≤3 必须配具体量化依据")
+            # v5.5.0 B5：无项目型 3B 高分（≥6.5）要求可见度证据带数字（指标+数值）——
+            # 无项目型实测塌缩（86% 落 6.0-7.0），纯叙事给高分是档位失效的入口。
+            # 取数口径=正文体（剥标题/徽章/评分末拍，见 _dim_body_text）：三者都自带数字，
+            # 不剥则判定恒为真、门禁空转（v5.5.0 热核审计 P0）
+            if key == "3B" and sv >= 6.5:
+                btxt = _dim_body_text(blk)
+                if re.search(r"无项目型|无重资产|存量扩张", btxt) and not re.search(r"\d", btxt):
+                    warns.append(f"{name} 得分 {sv:g}（无项目型 ≥6.5）但 5.2 块正文"
+                                 "（剥标题/徽章/评分末拍）无任何数字：可见度打分须带数字——"
+                                 "合约级=已签约/在手订单额/合同负债，存量扩张=两融余额/保有客户/"
+                                 "会员/ARR/订单 backlog 的指标值；纯叙事只能落 <5.0 档"
+                                 "（scoring.md 3B 无项目型四档，v5.5.0 B5）")
         if fallback:
             warns.append(f"{field} 有 {fallback} 个 dim-block 未从 dim-name 提取到有效编号，"
                          f"已按位置兜底匹配——dim-name 请写「编号+名称」规范形态（如 4.1 赛道与宏观），"
@@ -1744,6 +1765,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_optional_charts(fill, warns)
     _check_driver_cards(fill, warns)      # v4.11.3：P0 驱动卡字段（drivers/driver_verdict）
     _check_sensitivity_units(fill, warns)  # v5.1.1：sensitivity.delta 量纲规范
+    _check_sensitivity_coverage(fill, warns)  # v5.5.0 B4：大分部（gp_pct ≥15）覆盖硬闸
     _check_slot_widths(fill, warns)       # v5.1.2：槽位契约补闸（trigger/chips 长度）
     _check_handwritten_dupes(fill, warns)  # v5.1.2：手写表与脚本生成并存检测
     _check_threshold_coverage(fill, warns)  # v5.1.2：4.3 阈值 14 章承载
@@ -1938,6 +1960,93 @@ def _check_sensitivity_units(fill: dict, warns: list) -> None:
         if d and not re.fullmatch(r"±?\d+(\.\d+)?([~–-]\d+(\.\d+)?)?(pct|%)", d.replace(" ", "")):
             warns.append(f"sensitivity[{s['name'][:8]}] delta「{d}」量纲不规范：变动幅度须带单位——"
                          "比例写 ±10%、百分点写 ±1pct（条端/坐标轴的净利影响 % 由脚本按 impact 生成）")
+
+
+def _big_segments(fill: dict) -> list:
+    """segments 大分部（v5.5.0 B4）：gp_pct 可解析且 ≥15 的项 → [(分部名, gp_pct)]。
+    gp_pct 缺失/不可解析的项跳过（口径=毛利占比，与 segments 利润口径同源）——
+    缺行名单由 _check_sensitivity_coverage 单独软告警（摘除 gp_pct 等于绕过覆盖闸）。"""
+    out = []
+    for it in (fill.get("segments") or {}).get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        nm = str(it.get("name") or "").strip()
+        gp = _num(it.get("gp_pct"))
+        if nm and gp is not None and gp >= 15:
+            out.append((nm, gp))
+    return out
+
+
+def _check_sensitivity_coverage(fill: dict, warns: list) -> None:
+    """v5.5.0 B4：sensitivity 业务线覆盖硬闸（拒渲染）——利润池里的大分部（gp_pct ≥15）
+    必须逐条落 `sensitivity_meta.coverage`：补变量（`var`，须与 sensitivity 变量名同源）
+    或写好带数字的排除理由（`excluded`）。
+    漏圈实证：小米 61% 毛利池（互联网服务+IoT）无变量、三花汽零 37.5% 被一句话打包、
+    格林美第三大利润源无变量（27 份存量 fill 平均只圈 3 个变量）。
+    跳过口径：segments 缺失/无大分部 → 硬闸整条跳过；gp_pct 缺失的分部不参与——但**只要
+    segments.items 非空就有行缺 gp_pct，一律软告警**（摘 gp_pct = 绕过覆盖闸，缺行不得静默）。"""
+    seg_items = [it for it in (fill.get("segments") or {}).get("items") or [] if isinstance(it, dict)]
+    no_gp = [str(it.get("name") or "").strip() or "（未命名）" for it in seg_items
+             if _num(it.get("gp_pct")) is None]
+    if no_gp:
+        head = "、".join(no_gp[:5]) + ("…" if len(no_gp) > 5 else "")
+        warns.append(f"segments 有 {len(no_gp)} 行缺 gp_pct（{head}）：覆盖闸只对 gp_pct 可解析且 "
+                     "≥15 的分部生效——缺 gp_pct 的行等于绕过覆盖闸，请补毛利占比（E6 回填）"
+                     "或删该行（v5.5.0 B4）")
+    big = _big_segments(fill)
+    if not big:
+        return
+    meta = fill.get("sensitivity_meta")
+    cov_raw = meta.get("coverage") if isinstance(meta, dict) else None
+    cov = [c for c in (cov_raw or []) if isinstance(c, dict)] if isinstance(cov_raw, list) else []
+    sens = {_var_key(s["name"]): s["name"] for s in _sensitivity_items(fill)}
+    if not sens:
+        # sensitivity 全缺 → coverage 的 var 无从映射（有大分部就必须有 sensitivity+coverage）
+        raise ValueError("sensitivity 字段缺失或无可解析行，但 segments 存在大分部（"
+                         + "、".join(f"{n} gp {g:g}%" for n, g in big)
+                         + "）：估值敏感性与业务线覆盖是同一件事的两面——大分部必须落到 sensitivity"
+                           "（≥1 个变量）并在 sensitivity_meta.coverage 逐条登记"
+                           "（var 补变量 / excluded 写带数字的排除理由），否则利润池的最大块没有敏感性读数"
+                           "（v5.5.0 B4）")
+    cov_by_seg = {}
+    for c in cov:
+        cov_by_seg.setdefault(_var_key(c.get("segment")), c)
+    # ① 大分部未登记 → 拒
+    missing = [(n, g) for n, g in big if _var_key(n) not in cov_by_seg]
+    if missing:
+        detail = "、".join(f"{n}（毛利占比 {g:g}%）" for n, g in missing)
+        raise ValueError(f"sensitivity_meta.coverage 未覆盖大分部：{detail}——利润池 ≥15% 的分部"
+                         f"必须逐条登记：补变量 `{{\"segment\":\"…\",\"var\":\"…\"}}`（var 须与 "
+                         f"sensitivity 的 name 一致）或写带数字的排除理由 "
+                         f"`{{\"segment\":\"…\",\"excluded\":\"±X% → 净利 ±Y%，不足以改变情景结论\"}}`"
+                         f"（v5.5.0 B4 拒渲染；若该分部口径不该拆，请修 segments 后再渲）")
+    # ② 条目本身：var/excluded 恰居其一 + var 非瞎指 + excluded 带数字
+    for c in cov:
+        seg_nm = str(c.get("segment") or "").strip() or "（未命名分部）"
+        has_var = bool(str(c.get("var") or "").strip())
+        has_ex = bool(str(c.get("excluded") or "").strip())
+        if has_var == has_ex:
+            raise ValueError(f"sensitivity_meta.coverage[{seg_nm}] 的 var 与 excluded "
+                             f"{'双填' if has_var else '双缺'}：二者恰居其一——补变量用 var，"
+                             f"排除用 excluded（写带数字的理由）（v5.5.0 B4 拒渲染）")
+        if has_var and _var_key(c.get("var")) not in sens:
+            raise ValueError(f"sensitivity_meta.coverage[{seg_nm}].var「{c.get('var')}」"
+                             f"不在 sensitivity 变量集合（现有："
+                             f"{'/'.join(sens.values()) or '空'}）：coverage 只能指向已入图的变量，"
+                             f"瞎指等于把分部挂到不存在的读数上（v5.5.0 B4 拒渲染）")
+        if has_ex and not re.search(r"\d", str(c.get("excluded"))):
+            raise ValueError(f"sensitivity_meta.coverage[{seg_nm}].excluded 无数字："
+                             f"排除理由必须带量级（如「±10% 收入 → 净利 ±3%，不足以改变情景结论」）"
+                             f"——「影响不大」类定性说法等于没排除（v5.5.0 B4 拒渲染）")
+    # ③ 引用了不存在的分部名 → 软告警（登记方向错误）
+    seg_names = {_var_key(it.get("name")) for it in (fill.get("segments") or {}).get("items") or []
+                 if isinstance(it, dict)}
+    ghosts = [str(c.get("segment") or "").strip() for c in cov
+              if _var_key(c.get("segment")) and _var_key(c.get("segment")) not in seg_names]
+    if ghosts:
+        warns.append(f"sensitivity_meta.coverage 引用了 segments 中不存在的分部：{'、'.join(ghosts)}"
+                     f"——coverage 的 segment 名须与 segments.items[].name 同源（v5.5.0 B4）")
+
 
 def _parse_pe_range(text):
     """cycle_stages.pe 声明区间解析：「60–216x」/「10-16」/「12x」→ (低, 高)（容 en dash/
@@ -2141,12 +2250,54 @@ def _check_earnings_stability(fill: dict, warns: list) -> None:
                      f"（{ref:g}，{n_g} 个增速点）偏差 >0.15pct：照抄 E3 行，禁手算")
 
 
+def _fin_subclass(st: str) -> str:
+    """稳定价值金融子类判定（v5.5.0 单源）："银行" / "高贝塔"（保险·券商·证券）/
+    "金融"（泛称金融但非上述子类）/ ""（非金融或无法识别）。
+    B6 参考带（_discount_premium_cap）与 DCF 强制豁免（_check_dcf）共用本判定——
+    此前两处各写词表，B6 认「证券」、豁免词表不认，同型两套口径（热核审计 P1）。"""
+    st = str(st or "")
+    if "银行" in st:
+        return "银行"
+    if re.search(r"保险|券商|证券", st):
+        return "高贝塔"
+    if re.search(r"(?<!非)金融", st):
+        return "金融"
+    return ""
+
+
+def _discount_premium_cap(fill: dict):
+    """**股权成本 r** 的加点参考带上限（v5.5.0 B6，scoring.md DDM 节）→ (带名, 上限%)。
+    定义域是股权成本 r（DDM/合理 PB 用），不是 WACC——本函数只给 validate 侧对 `dcf.wacc`
+    做 sanity 粗筛用（WACC 是加权口径，天然低于 r，拿 r 带当硬尺不成立）。
+    未盈利·管线 / 困境反转返回 None（无股权成本锚，跳过）；稳定价值子类走 _fin_subclass 单源。"""
+    st = str(fill.get("stock_type") or "")
+    std, legacy_tier, _legacy = _normalize_stock_type(st)
+    if std == "周期股":
+        return ("周期股 5.5-7%", 7.0)
+    if std == "成熟/停滞":
+        return ("成熟/停滞 3.5-4.5%", 4.5)
+    if std == "成长型":
+        return ("成长型 4.5-6%", 6.0)
+    if std == "稳定价值":
+        sub = _fin_subclass(st)
+        if sub == "银行":
+            return ("金融·银行 4.5-5.5%", 5.5)
+        if sub == "高贝塔":
+            return ("金融·保险/券商 6-7.3%", 7.3)
+        return ("稳定价值/红利（非金融）3.5-4.5%", 4.5)
+    return None
+
+
 def _check_dcf(fill: dict, warns: list) -> None:
     """v4.11.3：DCF 双卡字段校验（dcf，软告警迁移期——缺失不拒）。
     强制分型（v5.4.1 归一判定）：**成长型·中速层/未声明 high**（含旧名「稳健成长股」）与
     **稳定价值（非金融）**缺 dcf → 告警；成长型·高速层（含旧名「快速成长」）走远期 PE 折现、
-    金融类稳定价值走 PB-ROE/DDM，均不强制。填了 → 八键齐全性 + verdict ≥40 字；
-    valuation_html 仍手写 DCF 表 → 重复告警。"""
+    金融类稳定价值走 PB-ROE/DDM，均不强制（子类判定走 _fin_subclass 单源）。填了 →
+    八键齐全性 + value/implied_g/wacc/growth_5y/g_perp 可解析性 + verdict ≥40 字；
+    valuation_html 仍手写 DCF 表 → 重复告警。
+    v5.5.0 B6：`dcf.wacc` 与国债距离超参考带 +2pct → 软告警——**WACC sanity 粗筛**，不是
+    股权成本 r 带的执法（真正的 r 带是写作侧人工口径：DDM 的 r 无落盘字段，机器无可核；
+    同报告多个折现率的口径说明也只能人工写；见 scoring.md DDM 节）。"""
     d = fill.get("dcf")
     if not isinstance(d, dict) or not d:
         st = str(fill.get("stock_type") or "")
@@ -2158,13 +2309,24 @@ def _check_dcf(fill: dict, warns: list) -> None:
                          "承载（v4.11.3 起；原「稳健成长」改名后于 v5.4.1 重新对齐；"
                          "value/fcf0/growth_5y/g_perp/wacc/net_cash/implied_g/verdict 八键，"
                          "现价比价脚本算，valuation_html 不再手写 DCF 表）")
-        elif std == "稳定价值" and not re.search(r"(?<!非)金融|银行|保险|券商", st):
+        elif std == "稳定价值" and not _fin_subclass(st):
             # v5.1.5（热核 P0-6，用户拍板补校验）：fill-schema/SKILL 承诺「稳定价值（非金融）
             # 必填」此前零执行——与成长型·中速层同态（软告警）；金融类稳定价值股豁免
-            # （银行/保险走 PB-ROE/DDM，见 scoring.md）
+            # （银行/保险走 PB-ROE/DDM，见 scoring.md）——子类判定与 B6 参考带共用 _fin_subclass
             warns.append("dcf 字段未填：稳定价值（非金融）分型 DCF 双卡由 dcf 字段承载"
                          "（v5.1.5 起；金融类稳定价值股豁免）")
         return
+    # v5.5.0 B6：WACC sanity 粗筛（与国债距离超参考带 +2pct 才告警；非股权成本 r 带执法）
+    wacc = _num(d.get("wacc"))
+    rf = _num((fill.get("valuation_inputs") or {}).get("risk_free"))
+    cap = _discount_premium_cap(fill)
+    if wacc is not None and rf is not None and cap:
+        if wacc > rf + cap[1] + 2:
+            warns.append(f"dcf.wacc {wacc:g}% 与国债 {rf:g}% 的距离（{wacc - rf:.1f}pct）超"
+                         f"{cap[0]} 参考带 +2pct 容差（上限 {cap[1] + 2 + rf:.2f}%）："
+                         f"WACC 与国债距离超参考带（sanity 粗筛）——WACC 是加权口径、天然低于股权成本 r，"
+                         f"离国债这么远请核对折现率口径与假设；股权成本 r 的参考带须写作侧自查"
+                         f"（scoring.md DDM 节；同报告多个折现率的口径说明为人工义务，非机械校验）")
     missing = [k for k in ("value", "fcf0", "growth_5y", "g_perp", "wacc", "net_cash",
                            "implied_g", "verdict") if not str(d.get(k) or "").strip()]
     if missing:
@@ -2174,6 +2336,16 @@ def _check_dcf(fill: dict, warns: list) -> None:
         if raw and _num(raw) is None:
             warns.append(f"dcf.{k}「{raw}」非空但不可解析为数值：渲染要求数值，"
                          "否则双卡整体不生成（v5.1.2——此前校验只查非空，整卡静默消失）")
+    # v5.5.0 P1：参数型三键的非空不可解析同样告警（对齐 value/implied_g 的 v5.1.2 先例）；
+    # 「—」占位（口径注/数据不可得）仍跳过，不打扰
+    for k in ("wacc", "growth_5y", "g_perp"):
+        raw = str(d.get(k) or "").strip()
+        if raw and raw != "—" and _num(raw) is None:
+            warns.append(f"dcf.{k}「{raw}」非空但不可解析为数值：卡面参数与复核都依赖数值，"
+                         "请照抄参数字面值（如 wacc 写 8.5%）（v5.1.2 先例，v5.5.0 扩到三键）")
+    if wacc is not None and 0 < wacc < 1:
+        warns.append(f"dcf.wacc {wacc:g} < 1：疑为小数口径（WACC 应写百分数，如 8.5% 而非 0.085）"
+                     "——卡面原样显示，请核对口径后重渲")
     verdict_len = len(_plain_text(str(d.get("verdict") or "")).strip())
     if 0 < verdict_len < 40:
         warns.append(f"dcf.verdict {verdict_len} 字 < 40：判词须含隐含 g 对照与互证结论"

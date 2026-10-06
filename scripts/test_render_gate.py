@@ -1128,7 +1128,10 @@ def test_dcf_stable_value_required_warn():
     assert "dcf 字段未填" in warns and "稳定价值" in warns, "非金融稳定价值缺 dcf 应告警"
     warns = validate_stderr(minimal_fill(stock_type="稳定价值（金融）"))
     assert "dcf 字段未填" not in warns, "金融类稳定价值股应豁免"
-    print("OK dcf 稳定价值分型校验（非金融告警 / 金融豁免）")
+    # v5.5.0 P1：子类词表单源（_fin_subclass）——证券与银行/保险同豁免，与 B6 参考带同口径
+    for st in ("稳定价值（证券）", "稳定价值/金融（券商）", "稳定价值/金融（保险）"):
+        assert "dcf 字段未填" not in validate_stderr(minimal_fill(stock_type=st)), f"{st} 应豁免"
+    print("OK dcf 稳定价值分型校验（非金融告警 / 金融豁免 / 证券券商同源）")
 
 
 def test_pe_history_banned_types():
@@ -1150,6 +1153,207 @@ def test_pe_history_banned_types():
     assert "pe_history 已填但本分型" not in validate_stderr(
         minimal_fill(stock_type="成长型", growth_tier="high"))
     print("OK pe_history 禁填（高速层/旧名快速成长/未盈利告警，其余分型放行）")
+
+
+# ---------------- v5.5.0 B4 sensitivity 业务线覆盖硬闸 ----------------
+
+_SEG_ITEMS = [{"name": "手机", "rev_pct": 60.0, "gp_pct": 55.0},
+              {"name": "互联网服务", "rev_pct": 25.0, "gp_pct": 30.0},
+              {"name": "其他", "rev_pct": 15.0, "gp_pct": 8.0}]   # 8% < 15 → 不参与覆盖
+
+
+def _cov_fill(**over):
+    """B4 夹具：两个大分部（手机 55% / 互联网服务 30%）+ 一条 sensitivity 变量。"""
+    base = minimal_fill(
+        segments={"period": "2025年报", "by": "产品", "items": _SEG_ITEMS},
+        sensitivity=[{"name": "手机毛利率", "impact": 12, "delta": "±1pct"}],
+        drivers=[{"name": "手机毛利率", "elastic": "±1pct → 净利 ±12%",
+                  "chips": [{"label": "悲观", "value": "30"}, {"label": "基础", "value": "33"},
+                            {"label": "乐观", "value": "35"}]}],
+        sensitivity_meta={"coverage": [
+            {"segment": "手机", "var": "手机毛利率"},
+            {"segment": "互联网服务", "excluded": "ARPU 稳定，±10% 收入 → 净利 ±3%，不足以改变情景结论"}]},
+    )
+    base.update(over)
+    return base
+
+
+def test_sensitivity_coverage_gate():
+    """v5.5.0 B4：sensitivity_meta.coverage 覆盖硬闸（拒渲染）——gp_pct ≥15 的大分部必须
+    逐条登记（var 或带数字的 excluded）；双填/双缺、var 瞎指、excluded 无数字均拒；
+    合规放行；segments 缺失/无大分部整条跳过。"""
+    R.validate_content(_cov_fill(), R.compute_valuation(_cov_fill()))   # 合规 → 过
+    # 大分部未登记 → 拒（报错列出分部名与 gp_pct）
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [{"segment": "手机", "var": "手机毛利率"}]}
+    try:
+        R.validate_content(f, R.compute_valuation(f))
+        raise AssertionError("大分部未覆盖应拒")
+    except ValueError as e:
+        assert "未覆盖大分部" in str(e), f"拒渲染来源不符：{e}"
+        assert "互联网服务（毛利占比 30%）" in str(e), "报错须列出未覆盖分部及其 gp_pct"
+    # var + excluded 双填 → 拒
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [
+        {"segment": "手机", "var": "手机毛利率", "excluded": "±10% → 净利 ±3%"},
+        {"segment": "互联网服务", "excluded": "±10% → 净利 ±3%"}]}
+    expect_valueerror(f, "双填应拒", kw="双填")
+    # 双缺 → 拒
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [{"segment": "手机"},
+                                          {"segment": "互联网服务", "excluded": "±10% → 净利 ±3%"}]}
+    expect_valueerror(f, "双缺应拒", kw="双缺")
+    # var 瞎指（不在 sensitivity 集合）→ 拒
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [
+        {"segment": "手机", "var": "不存在的变量"},
+        {"segment": "互联网服务", "excluded": "±10% → 净利 ±3%"}]}
+    expect_valueerror(f, "var 瞎指应拒", kw="不在 sensitivity 变量集合")
+    # excluded 无数字 → 拒
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [
+        {"segment": "手机", "var": "手机毛利率"},
+        {"segment": "互联网服务", "excluded": "影响不大，不单独入图"}]}
+    expect_valueerror(f, "排除理由无数字应拒", kw="excluded 无数字")
+    # sensitivity 全缺 + 有大分部 → 拒
+    f = _cov_fill()
+    f.pop("sensitivity")
+    expect_valueerror(f, "sensitivity 全缺应拒", kw="sensitivity 字段缺失")
+    # coverage 引用不存在的分部 → 软告警
+    f = _cov_fill()
+    f["sensitivity_meta"] = {"coverage": [
+        {"segment": "手机", "var": "手机毛利率"},
+        {"segment": "互联网服务", "excluded": "±10% → 净利 ±3%"},
+        {"segment": "不存在的分部", "excluded": "±10% → 净利 ±2%"}]}
+    assert "引用了 segments 中不存在的分部" in validate_stderr(f)
+    # segments 缺失 / 大分部全无（gp_pct 均 <15）→ 整条跳过
+    R.validate_content(minimal_fill(), R.compute_valuation(minimal_fill()))
+    small = minimal_fill(segments={"items": [{"name": "A", "rev_pct": 60, "gp_pct": 12},
+                                             {"name": "B", "rev_pct": 40, "gp_pct": 9}]})
+    R.validate_content(small, R.compute_valuation(small))
+    # v5.5.0 P1：有行缺 gp_pct（摘除 gp_pct 绕行）→ 软告警；不阻断渲染
+    f = _cov_fill()
+    f["segments"]["items"][0].pop("gp_pct")
+    out = validate_stderr(f)
+    assert "行缺 gp_pct" in out and "绕过覆盖闸" in out, "缺 gp_pct 应软告警"
+    R.validate_content(f, R.compute_valuation(f))
+    # 全部行都缺 gp_pct（硬闸无从生效）→ 同样告警、仍不拒
+    allno = minimal_fill(segments={"items": [{"name": "A", "rev_pct": 60},
+                                             {"name": "B", "rev_pct": 40}]})
+    out2 = validate_stderr(allno)
+    assert "行缺 gp_pct" in out2, "全行缺 gp_pct 也应告警"
+    R.validate_content(allno, R.compute_valuation(allno))
+    print("OK B4 覆盖硬闸（未覆盖/双填/双缺/瞎指/无数字拒，合规放行，无大分部跳过，缺 gp_pct 告警）")
+
+
+# ---------------- v5.5.0 B5 3B 无项目型数字义务 / B6 折现率参考带 ----------------
+
+_L3_BLOCK = ('<div class="dim-block"><div class="dim-header">'
+             '<span class="dim-name">5.2 项目确定性</span><span class="dim-weight">35%</span>'
+             '<span class="score-line" style="margin-left:auto;margin-bottom:0;">'
+             '<span class="badge badge-green">7.0</span></span></div>'
+             '<p>{t}</p>'
+             '<p><strong>评分：</strong>7.0——基准 6.5，按利润贡献加权后 +0.5。</p></div>')
+
+
+def _l3_fill(text, **over):
+    """B5 夹具：l3_html 首块写 5.2 项目确定性文本（其余块用通用长文本凑地板）。"""
+    l3 = _L3_BLOCK.format(t=text) + "".join(_dim(_LONG_TEXT) for _ in range(2))
+    return minimal_fill(l3_html=l3, **over)
+
+
+def test_readthrough_3b_narrative_warn():
+    """v5.5.0 B5：无项目型 3B ≥6.5 且 5.2 块**正文**（剥标题/徽章/评分末拍）无数字 → 软告警；
+    正文带数字放行；非无项目型（无关键词）不查；3B <6.5 不查。
+    热核审计 P0：评分末拍是 schema 强制段且必含分值数字——不剥则门禁在合规报告上恒不触发。"""
+    narrative = ("无项目型的存量扩张逻辑：公司为行业龙头，客户粘性强、转换成本高，"
+                 "收入结构持续优化，渠道壁垒稳固，可见度长期偏高。")
+    f = _l3_fill(narrative)
+    f["scores"]["3B"] = 7.0
+    assert "无项目型 ≥6.5" in validate_stderr(f), "schema 形态（带评分末拍）论据无数字应告警"
+    # 正文带指标 + 数值 → 放行
+    f2 = _l3_fill("无项目型的存量扩张：两融余额 1,240 亿、环比 +6%，保有客户 3,120 万，"
+                  "续约率 92%，存量指标趋势向上且口径可复核。")
+    f2["scores"]["3B"] = 7.0
+    assert "无项目型 ≥6.5" not in validate_stderr(f2), "带指标+数值应放行"
+    # 有项目型（无关键词）→ 不查
+    f3 = _l3_fill("在建产能：计划 2026Q2 投产，资金到位、审批齐全，滑期风险小于一年，"
+                  "投产即为利润贡献主体。")
+    f3["scores"]["3B"] = 7.5
+    assert "无项目型 ≥6.5" not in validate_stderr(f3), "有项目型（无关键词）不查"
+    # 3B < 6.5 → 不查
+    f4 = _l3_fill(narrative)
+    f4["scores"]["3B"] = 6.0
+    assert "无项目型 ≥6.5" not in validate_stderr(f4), "3B <6.5 不查"
+    # 剥段口径自证：dim-header 带附加类 / 评分末拍带属性时仍能正确剥净
+    f5 = _l3_fill(narrative)
+    f5["scores"]["3B"] = 7.0
+    f5["l3_html"] = f5["l3_html"].replace('<div class="dim-header">',
+                                          '<div class="dim-header extra" data-x="1">')
+    f5["l3_html"] = f5["l3_html"].replace('<p><strong>评分：</strong>',
+                                          '<p class="score-beat"><strong>评分：</strong>')
+    assert "无项目型 ≥6.5" in validate_stderr(f5), "容忍型剥离：附加类/属性下仍应告警"
+    print("OK B5 无项目型 3B 数字义务（正文无数字告警 / 有数字放行 / 有项目型与低分不查）")
+
+
+def test_discount_rate_band_warn():
+    """v5.5.0 B6：`dcf.wacc` 与国债距离超参考带 +2pct → 软告警（**WACC sanity 粗筛**，非 r 带执法）；
+    各分型带内/恰等号线放行、超带告警；未盈利·管线/困境反转跳过；不可解析跳过。
+    热核审计 P1：银行带 9%（非金融带 8.2 会告警、银行带 9.2 放行）——能判别银行行确实生效。"""
+    KW = "与国债距离超参考带"
+    dcf0 = {"value": 12.5, "fcf0": "95亿", "growth_5y": "5%", "g_perp": "2.5%", "wacc": "8.5%",
+            "net_cash": "120亿", "implied_g": "0.5", "verdict": "长" * 45}
+
+    def w(st, pct, **over):
+        return minimal_fill(stock_type=st, dcf=dict(dcf0, wacc=pct), **over)
+
+    # 稳定价值（非金融）线上限 4.5+2+1.7 = 8.2%
+    assert KW in validate_stderr(w("稳定价值（非金融）", "10%")), "超带应告警"
+    assert KW not in validate_stderr(w("稳定价值（非金融）", "8.2%")), "恰等号线应放行"
+    assert KW in validate_stderr(w("稳定价值（非金融）", "8.3%")), "越线一线应告警"
+    # 银行带 5.5+2+1.7 = 9.2%
+    assert KW not in validate_stderr(w("稳定价值/金融（银行）", "9%")), "银行 9% 应放行（非金融带会误告）"
+    assert KW in validate_stderr(w("稳定价值/金融（银行）", "10%")), "银行 10% 超带应告警"
+    # 保险/券商带 7.3+2+1.7 = 11.0%
+    for st in ("稳定价值/金融（保险）", "稳定价值/金融（券商）", "稳定价值（证券）"):
+        assert KW not in validate_stderr(w(st, "10%")), f"{st} 10% 沿高贝塔带放行"
+        assert KW in validate_stderr(w(st, "12%")), f"{st} 12% 超带应告警"
+    # 成长型 6+2+1.7 = 9.7%｜周期股 7+2+1.7 = 10.7%｜成熟·停滞 4.5+2+1.7 = 8.2%
+    assert KW not in validate_stderr(w("成长型", "9.5%"))
+    assert KW in validate_stderr(w("成长型", "10%"))
+    assert KW not in validate_stderr(w("周期股", "10%")), "周期股 10% 边缘放行（云铝实证）"
+    assert KW in validate_stderr(w("周期股", "11%"))
+    assert KW not in validate_stderr(w("成熟/停滞", "8.2%"))
+    assert KW in validate_stderr(w("成熟/停滞", "9%"))
+    # 跳过面：未盈利·管线 / 困境反转（无股权成本锚）、wacc 不可解析、risk_free 不可解析
+    for st in ("未盈利/管线", "困境反转"):
+        assert KW not in validate_stderr(w(st, "30%")), f"{st} 跳过"
+    assert KW not in validate_stderr(w("稳定价值（非金融）", "—")), "wacc 占位跳过"
+    f = w("稳定价值（非金融）", "12%",
+          valuation_inputs={"pe_ttm": 11, "pe_band": [10, 12], "div_yield": 2, "risk_free": "—"})
+    assert KW not in validate_stderr(f), "risk_free 不可解析跳过"
+    print("OK B6 WACC sanity 粗筛（各带内/等号线放行、超带告警、银行行可判别、跳过面齐）")
+
+
+def test_dcf_param_parse_warn():
+    """v5.5.0 P1：dcf 参数型三键（wacc/growth_5y/g_perp）非空但不可解析 → 告警
+    （对齐 value/implied_g 的 v5.1.2 先例）；「—」占位跳过；wacc <1 提示疑为小数口径。"""
+    dcf0 = {"value": 12.5, "fcf0": "95亿", "growth_5y": "5%", "g_perp": "2.5%", "wacc": "8.5%",
+            "net_cash": "120亿", "implied_g": "0.5", "verdict": "长" * 45}
+    f = minimal_fill(dcf=dict(dcf0, wacc="八五"))
+    assert "dcf.wacc「八五」非空但不可解析为数值" in validate_stderr(f)
+    f2 = minimal_fill(dcf=dict(dcf0, growth_5y="未定"))
+    assert "dcf.growth_5y「未定」非空但不可解析为数值" in validate_stderr(f2)
+    f3 = minimal_fill(dcf=dict(dcf0, g_perp="待定"))
+    assert "dcf.g_perp「待定」非空但不可解析为数值" in validate_stderr(f3)
+    f4 = minimal_fill(dcf=dict(dcf0, wacc="—", growth_5y="—", g_perp="—"))
+    out4 = validate_stderr(f4)
+    assert "不可解析为数值" not in out4, "「—」占位应跳过"
+    f5 = minimal_fill(dcf=dict(dcf0, wacc="0.085"))
+    assert "疑为小数口径" in validate_stderr(f5), "wacc <1 应提示小数口径"
+    f6 = minimal_fill(dcf=dict(dcf0, wacc="8.5%"))
+    assert "疑似为小数口径" not in validate_stderr(f6) and "疑为小数口径" not in validate_stderr(f6)
+    print("OK dcf 参数可解析性（三键不可解析告警 / 占位跳过 / wacc<1 提示）")
 
 
 # ---------------- v5.0 第 3 章「最新报告期透视」校验与渲染 ----------------

@@ -1348,7 +1348,8 @@ def _check_quote_present(fill: dict, warns: list) -> None:
 
 
 def _check_optional_charts(fill: dict, warns: list) -> None:
-    """v4.8 可选图字段纪律：业务构成占比和 / 产业链两端 / 发丝图与第 11 章绑定 / 户数期数。"""
+    """v4.8 可选图字段纪律：业务构成占比和 / 产业链两端 / 发丝图与第 11 章绑定 / 户数期数。
+    v5.4.1：pe_history 禁填（成长型·高速层 / 未盈利·管线 → 软告警，fill-schema 填写条件）。"""
     seg = fill.get("segments") or {}
     items = seg.get("items") or []
     if items:
@@ -1378,6 +1379,18 @@ def _check_optional_charts(fill: dict, warns: list) -> None:
     if (fill.get("price_history") or {}).get("series") and not (fill.get("cycle_html") or "").strip():
         warns.append("price_history 已填但 cycle_html 缺失：股价/PE 发丝图挂第 11 章，整章被删后图不显示"
                      "——与 pe_history 同规则（v4.7.1 绑定关系）")
+    # v5.4.1：pe_history 禁填告警（fill-schema 填写条件长期只写在文档里、零校验）——
+    # 成长型·高速层（含旧名「快速成长」）与 未盈利/管线：历史区间锚不住合理带，禁填本字段
+    if fill.get("pe_history"):
+        std_ph, legacy_tier_ph, _leg_ph = _normalize_stock_type(fill.get("stock_type"))
+        gt_ph = str(fill.get("growth_tier") or "").strip().lower()
+        tier_ph = gt_ph if gt_ph in ("high", "mid") else legacy_tier_ph
+        if (std_ph == "成长型" and tier_ph == "high") or std_ph == "未盈利/管线":
+            shows = f"{std_ph}·高速层" if std_ph == "成长型" else std_ph
+            warns.append(f"pe_history 已填但本分型（{shows}）禁填：历史区间锚不住合理带"
+                         "（fill-schema 填写条件：周期股/成长型·中速层/成熟·停滞/稳定价值/困境反转"
+                         "按数据可得性填；成长型·高速层/未盈利·管线禁填——第 11 章时段表仍可写，"
+                         "但本字段删除，估值带改用远期 PE 折现或 rNPV/P/S）")
     holders = fill.get("holders") or []
     # v5.1.2：有效点口径与渲染同源——渲染先滤 num 可解析且带日期的行（charts_misc）
     h_valid = [p for p in holders if isinstance(p, dict) and _num(p.get("num")) is not None
@@ -1962,7 +1975,8 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
     v5.1.3：period 格式校验——解析不出起止月份软告警「季K图阶段分界不落该段」
     （格式 YYYY/MM–YYYY/MM；与渲染同源 parse_stage_period，单源防漂移）；
     v5.4.0：校准锚（calib）三校验（全部软告警）——①calib:true 项须含 similarity/discount；
-    ②分型属四型（周期/稳定价值/困境反转/成长·中速层）时 calib 项须 ≥2（首版软约束）；
+    ②分型属四型（周期/稳定价值/困境反转/成长·中速层）时 calib 项须 ≥2（v5.4.1 起含 0 个：
+    0 个走「未标注校准锚（calib）」专用文案，非四型不告警）；
     ③窗口内对账：calib 时段落在 price_history 月份窗口内 → 窗口实测 PE 极值与声明区间
     端点比对（相对偏差 >25% 告警），窗口外/序列无 pe 跳过，全部未核验 → 汇总告警一条。"""
     stages = [s for s in fill.get("cycle_stages") or [] if isinstance(s, dict)]
@@ -2010,7 +2024,7 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
                      "整章不渲染则卡无处显示（同 pe_history/price_history 绑定规则）")
     if hand_table:
         warns.append("cycle_html 手写阶段表与 cycle_stages 字段并存（内容重复）：请删除手写表格")
-    # v5.4.0 校准锚（calib）三校验（全部软告警；缺失/不标 calib 的字段不受影响）
+    # v5.4.0 校准锚（calib）三校验（全部软告警；非四型 / 无有效项不受影响）
     calibs = [s for s in valid if s.get("calib")]
     for s in calibs:
         tag = _plain_text(str(s.get("name") or "")).strip() or "?"
@@ -2020,10 +2034,16 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
             warns.append(f"cycle_stages[{short}] calib:true 缺 {'/'.join(miss_keys)}：校准时段须写明"
                          "与当前时段的相似性（similarity：增速/规模/宏观背景）与规模折价（discount："
                          "当前利润更大时 PE 应更低）——否则「为何拿这几段校准」无据（v5.4.0 软约束）")
-    if calibs and _anchor_unanchored_type(fill) and len(calibs) < 2:
-        warns.append(f"cycle_stages 校准锚（calib:true）仅 {len(calibs)} 个（应 ≥2）：估值带校准"
-                     "依赖 ≥2 个可比历史时段（scoring.md「三情景构建」PE 时段匹配）——"
-                     "请在阶段卡标注 ≥2 个 calib 时段（首版软约束，观察一轮后升拒渲染）")
+    # v5.4.1：四型零标记不再静默豁免（一个 calib 都不标 = 软约束失去观察意义）
+    if _anchor_unanchored_type(fill) and len(calibs) < 2:
+        if calibs:
+            warns.append(f"cycle_stages 校准锚（calib:true）仅 {len(calibs)} 个（应 ≥2）：估值带校准"
+                         "依赖 ≥2 个可比历史时段（scoring.md「三情景构建」PE 时段匹配）——"
+                         "请在阶段卡标注 ≥2 个 calib 时段（首版软约束，观察一轮后升拒渲染）")
+        else:
+            warns.append("cycle_stages 未标注校准锚（calib）：本分型（估值带依赖历史 PE 时段锚）"
+                         "的估值带须有 ≥2 个校准时段——在对应阶段加 \"calib\":true 并写 "
+                         "similarity/discount（渲染「校准锚」角标；首版软约束，观察一轮后升拒渲染）")
     if calibs:
         pts = _series_month_pe((fill.get("price_history") or {}).get("series"))
         verified = 0
@@ -2123,19 +2143,24 @@ def _check_earnings_stability(fill: dict, warns: list) -> None:
 
 def _check_dcf(fill: dict, warns: list) -> None:
     """v4.11.3：DCF 双卡字段校验（dcf，软告警迁移期——缺失不拒）。
-    稳健成长分型 dcf 缺失 → 强制告警；填了 → 八键齐全性 + verdict ≥40 字；
+    强制分型（v5.4.1 归一判定）：**成长型·中速层/未声明 high**（含旧名「稳健成长股」）与
+    **稳定价值（非金融）**缺 dcf → 告警；成长型·高速层（含旧名「快速成长」）走远期 PE 折现、
+    金融类稳定价值走 PB-ROE/DDM，均不强制。填了 → 八键齐全性 + verdict ≥40 字；
     valuation_html 仍手写 DCF 表 → 重复告警。"""
     d = fill.get("dcf")
     if not isinstance(d, dict) or not d:
         st = str(fill.get("stock_type") or "")
-        if "稳健成长" in st:
-            warns.append("dcf 字段未填：稳健成长分型 DCF 强制三行由 dcf 字段承载（v4.11.3 起；"
+        std, legacy_tier, _legacy = _normalize_stock_type(st)
+        gt = str(fill.get("growth_tier") or "").strip().lower()
+        tier = gt if gt in ("high", "mid") else legacy_tier
+        if std == "成长型" and tier != "high":
+            warns.append("dcf 字段未填：成长型（中速层 / 未声明 high）分型 DCF 强制三行由 dcf 字段"
+                         "承载（v4.11.3 起；原「稳健成长」改名后于 v5.4.1 重新对齐；"
                          "value/fcf0/growth_5y/g_perp/wacc/net_cash/implied_g/verdict 八键，"
                          "现价比价脚本算，valuation_html 不再手写 DCF 表）")
-        elif ("稳定价值" in st
-              and not re.search(r"(?<!非)金融|银行|保险|券商", st)):
+        elif std == "稳定价值" and not re.search(r"(?<!非)金融|银行|保险|券商", st):
             # v5.1.5（热核 P0-6，用户拍板补校验）：fill-schema/SKILL 承诺「稳定价值（非金融）
-            # 必填」此前零执行——与稳健成长同态（软告警）；金融类稳定价值股豁免
+            # 必填」此前零执行——与成长型·中速层同态（软告警）；金融类稳定价值股豁免
             # （银行/保险走 PB-ROE/DDM，见 scoring.md）
             warns.append("dcf 字段未填：稳定价值（非金融）分型 DCF 双卡由 dcf 字段承载"
                          "（v5.1.5 起；金融类稳定价值股豁免）")

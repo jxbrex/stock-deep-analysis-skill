@@ -1101,9 +1101,16 @@ def test_earnings_stability_validate():
 
 
 def test_dcf_validate():
-    """v4.11.3 DCF 校验：稳健成长缺 dcf 告警；缺键告警；valuation_html 手写 DCF 表重复告警。"""
+    """v4.11.3 DCF 校验：稳健成长缺 dcf 告警；缺键告警；valuation_html 手写 DCF 表重复告警。
+    v5.4.1：分型改归一判定——「成长型」+ mid / 未声明 high 与旧名「稳健成长股」同样命中，
+    「成长型」+ high 走远期 PE 折现不强制。"""
     warns = validate_stderr(minimal_fill(stock_type="稳健成长股"))
     assert "dcf 字段未填" in warns
+    for over in ({"stock_type": "成长型", "growth_tier": "mid"},      # v5.3.0 新名 + 中速层
+                 {"stock_type": "成长型"}):                            # 未声明 growth_tier（按 mid）
+        assert "dcf 字段未填" in validate_stderr(minimal_fill(**over)), f"{over} 缺 dcf 应告警"
+    assert "dcf 字段未填" not in validate_stderr(
+        minimal_fill(stock_type="成长型", growth_tier="high")), "高速层走远期 PE 折现，不强制 dcf"
     warns = validate_stderr(minimal_fill(dcf={"value": 12}))
     assert "缺键" in warns
     warns = validate_stderr(minimal_fill(
@@ -1122,6 +1129,27 @@ def test_dcf_stable_value_required_warn():
     warns = validate_stderr(minimal_fill(stock_type="稳定价值（金融）"))
     assert "dcf 字段未填" not in warns, "金融类稳定价值股应豁免"
     print("OK dcf 稳定价值分型校验（非金融告警 / 金融豁免）")
+
+
+def test_pe_history_banned_types():
+    """v5.4.1：pe_history 禁填告警（fill-schema 填写条件此前只写在文档里、零校验）——
+    成长型·高速层（含旧名「快速成长」）与未盈利/管线填了 → 软告警；
+    周期股 / 成长型·中速层 / 成熟·停滞 / 稳定价值 / 困境反转填了 → 不告警；未填永不告警。"""
+    ph = {"hist_lo": 13.7, "hist_hi": 83.2, "label": "近5年"}
+    assert "pe_history 已填但本分型" in validate_stderr(
+        minimal_fill(pe_history=ph, stock_type="成长型", growth_tier="high"))
+    assert "pe_history 已填但本分型" in validate_stderr(
+        minimal_fill(pe_history=ph, stock_type="快速成长（强周期属性）")), "旧名快速成长同样命中"
+    assert "pe_history 已填但本分型" in validate_stderr(
+        minimal_fill(pe_history=ph, stock_type="未盈利/管线"))
+    for over in ({"stock_type": "成长型", "growth_tier": "mid"}, {"stock_type": "周期股"},
+                 {"stock_type": "成熟/停滞"}, {"stock_type": "稳定价值/金融（银行）"},
+                 {"stock_type": "困境反转"}):
+        assert "pe_history 已填但本分型" not in validate_stderr(minimal_fill(pe_history=ph, **over)), \
+            f"{over} 允许填 pe_history，不应告警"
+    assert "pe_history 已填但本分型" not in validate_stderr(
+        minimal_fill(stock_type="成长型", growth_tier="high"))
+    print("OK pe_history 禁填（高速层/旧名快速成长/未盈利告警，其余分型放行）")
 
 
 # ---------------- v5.0 第 3 章「最新报告期透视」校验与渲染 ----------------
@@ -2052,7 +2080,14 @@ def test_calib_keys_and_count_warn():
         over = {"growth_tier": "mid"} if st == "成长型" else {}
         out5 = validate_stderr(_calib_fill(good, stock_type=st, **over))
         assert "校准锚（calib:true）仅" not in out5, f"{st} calib=2 不应告警数量"
-    print("OK calib 键与数量校验（缺键告警 / 四型 <2 告警 / 四型 ≥2 正例放行 / 非四型豁免）")
+    # v5.4.1：四型零标记不再静默豁免（0 个 → 独立文案）；非四型 0 个 → 不告警
+    zero = [{"name": "段一", "period": "2021/01–2021/12"}, stages[1], stages[2]]
+    out6 = validate_stderr(_calib_fill(zero))
+    assert "未标注校准锚（calib）" in out6, "四型 0 个 calib 应告警"
+    assert "校准锚（calib:true）仅" not in out6, "0 个走专用文案"
+    out7 = validate_stderr(_calib_fill(zero, stock_type="成熟/停滞"))
+    assert "未标注校准锚" not in out7 and "校准锚（calib:true）仅" not in out7, "非四型 0 个不应告警"
+    print("OK calib 键与数量校验（缺键告警 / 四型 0 与 1 个告警 / ≥2 正例放行 / 非四型豁免）")
 
 
 def test_calib_window_recon_warn():

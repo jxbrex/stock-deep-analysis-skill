@@ -178,9 +178,9 @@ def full_fill(**over):
     chain/triggers/consensus/price_history/pe_history/prev 全开——罩住第 11/13 章与
     可选 builder（segments/chain/peers_plot/tornado/triggers/pe_band/price_history/哑铃），
     minimal_fill 只罩主干。图形字段锚点全在位（无「缺锚点」告警）；内容类存量告警
-    （thesis 薄/dim 薄/quote 缺失/校验盲飞）继承自 minimal_fill，与本 fixture 无关——
-    peer 侧告警按 v5.4.0 规矩清零：peers_meta 三选二 + 排除语 + 凑不齐说明（仅 2 家），
-    散点点位的表态与表内事实一致（同业乙只入散点、点名说明未列）。"""
+    （thesis 薄/dim 薄/quote 缺失/校验盲飞/四型未标注校准锚）继承自 minimal_fill，
+    与本 fixture 无关——peer 侧告警按 v5.4.0 规矩清零：peers_meta 三选二 + 排除语 +
+    凑不齐说明（仅 2 家），散点点位的表态与表内事实一致（同业乙只入散点、点名说明未列）。"""
     dims = [_dim(_LONG_TEXT) for _ in range(5)]
     dims[0] += "<!--SEGMENTS-->"   # 4.1 后原位挂业务构成图
     dims[1] += "<!--CHAIN-->"      # 4.2 后原位挂产业链图

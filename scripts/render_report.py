@@ -357,7 +357,8 @@ def _build_repl_map(fill: dict, cur: str, calc: dict, sc: dict, valuation: float
         "L3_HTML": _inject_l3_charts(fill.get("l3_html", ""), fill),
         "L4_HTML": fill.get("l4_html", ""),
         "VALUATION_METHOD": _esc(fill.get("valuation_method", "")),
-        "STOCK_TYPE": _esc(fill.get("stock_type", "")),
+        # v5.3.0 判据 v2：7 卡片头强制标注判据版本（脚本拼接，模型无法漏写）
+        "STOCK_TYPE": _esc(fill.get("stock_type", "")) + "（判据 v2）",
         "VALUATION_HTML": fill.get("valuation_html", ""),
         "GAP_TIER": _esc(fill.get("gap_tier", "—")),
         # 9 章预期差图：<!--GAP--> 锚点注入 gap_html（图 + gap-notes 附注；缺失垫章首 + 告警）

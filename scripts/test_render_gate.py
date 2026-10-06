@@ -1772,3 +1772,82 @@ def test_cycle_stages_period_warn():
     out2 = validate_stderr(minimal_fill(cycle_stages=bad))
     assert out2.count("阶段分界不落该段") == 2, "非法 period（无数字/月份越界）应各告警一条"
     print("OK period 格式软告警（合法放行 / 无数字与月份越界各告警）")
+
+
+def test_typing_v2_stock_type_enum():
+    """v5.3.0 判据 v2：stock_type 枚举标准化——标准值放行、旧名映射告警、无法映射拒渲染。"""
+    assert "无法映射六型" not in validate_stderr(minimal_fill()), "默认值周期股应放行"
+    s = validate_stderr(minimal_fill(stock_type="稳健成长股"))
+    assert "旧名" in s and "成长型" in s, "稳健成长股应映射成长型并告警旧名"
+    s2 = validate_stderr(minimal_fill(stock_type="快速成长（强周期属性）"))
+    assert "旧名" in s2 and "high" in s2, "快速成长应映射成长型·high 层"
+    expect_valueerror(minimal_fill(stock_type="烟蒂股"), "无法映射六型")
+
+
+def test_typing_v2_layer_share_mismatch():
+    """型↔层占比对账（首版软约束）：稳定价值填 70:30 → 告警；85:15 → 不告警。"""
+    f = minimal_fill(stock_type="稳定价值/金融（银行）", layer_share={"L1": 70, "L3": 30})
+    assert "映射 85:15 不符" in validate_stderr(f), "稳定价值 70:30 应告警占比不符"
+    f2 = minimal_fill(stock_type="稳定价值/金融（银行）", layer_share={"L1": 85, "L3": 15})
+    assert "映射 85:15 不符" not in validate_stderr(f2), "85:15 不应告警"
+    f3 = minimal_fill(stock_type="成熟/停滞", layer_share={"L1": 70, "L3": 30})
+    assert "映射 80:20 不符" in validate_stderr(f3), "成熟/停滞 70:30 应告警占比不符"
+
+
+def test_typing_v2_growth_tier_cagr():
+    """成长层 CAGR 对账：按 fin_trend 归母净利序列复算，跨层（缓冲带 ±5pct 外）→ 告警。"""
+    # 默认 fin_trend 归母净利 [80,84,88,91,93]，CAGR≈3.8%：high 声明 → 告警；mid 声明 → 不告警
+    f_high = minimal_fill(stock_type="成长型", growth_tier="high")
+    assert "分层与财务事实不符" in validate_stderr(f_high), "CAGR 3.8% 声明 high 应告警"
+    f_mid = minimal_fill(stock_type="成长型", growth_tier="mid")
+    assert "应归高速层" not in validate_stderr(f_mid), "CAGR 3.8% 声明 mid 不应告警归高速层"
+    # 篡改归母净利序列为 [10,15,22,33,50]（CAGR≈49.5%）：mid 声明 → 告警应归高速层
+    f_fast = minimal_fill(stock_type="成长型", growth_tier="mid")
+    f_fast["fin_trend"]["panels"][1]["bars"][0]["values"] = [10, 15, 22, 33, 50]
+    assert "应归高速层" in validate_stderr(f_fast), "CAGR 49.5% 声明 mid 应告警归高速层"
+
+
+def test_typing_v2_evidence_keys():
+    """typing_evidence 按型必填键（首版软约束）：缺失 → 告警；填齐 → 不告警。"""
+    assert "typing_evidence 缺键" in validate_stderr(minimal_fill()), "未填 typing_evidence 应告警"
+    te = {"commodity_link": "利润随电解铝价格波动（归因：商品价格）",
+          "volatility_fact": "峰谷回撤 63%", "comparable_periods": "2015-2016 底部、2021-2022 顶部"}
+    assert "typing_evidence 缺键" not in validate_stderr(minimal_fill(typing_evidence=te)), "周期股三键齐全不应告警"
+
+
+def test_typing_v2_clash_whitelist():
+    """撞车白名单：周期股×成长型可声明共存（cross_check ≥30 字）；其他对拒渲染。"""
+    f = minimal_fill(stock_type="成长型", growth_tier="mid",
+                     typing_clash={"with": "周期股", "primary_reason": "量增主导",
+                                   "cross_check": "对照方法目标价 20-24 元，与主型结论方向一致，差异在倍数选择。"})
+    assert "非白名单共存对" not in validate_stderr(f), "白名单对应放行"
+    expect_valueerror(minimal_fill(stock_type="成长型", growth_tier="mid",
+                                   typing_clash={"with": "困境反转", "cross_check": "x" * 40}),
+                      "非白名单共存对")
+    f3 = minimal_fill(stock_type="周期股", typing_clash={"with": "成长型", "cross_check": "太短"})
+    assert "cross_check <30 字" in validate_stderr(f3), "cross_check 不足 30 字应告警"
+
+
+def test_typing_v2_weights_half_filled():
+    """weights 半填拒渲染（冰轮实证）：L1/L3 只填一层 → 拒；两层同填 → 放行。"""
+    expect_valueerror(minimal_fill(weights={"1A": 12, "1B": 12, "1C": 20, "1D": 16, "1E": 20, "1F": 20}),
+                      "weights 半填")
+    f = minimal_fill(weights={"1A": 12, "1B": 12, "1C": 20, "1D": 16, "1E": 20, "1F": 20,
+                              "3A": 40, "3B": 35, "3C": 25})
+    assert "weights 半填" not in validate_stderr(f), "两层同填不应告警"
+    print("OK typing v2 校验组（枚举/占比/分层/证据键/撞车/权重完整性）")
+
+
+def test_typing_v2_cagr_negative_skips():
+    """v5.3.0 热核修正：fin_trend 归母净利序列含非正值（亏损年/口径异常）→ 跳过 CAGR 对账。"""
+    f = minimal_fill(stock_type="成长型", growth_tier="high")
+    f["fin_trend"]["panels"][1]["bars"][0]["values"] = [80, -5, 90, 95, 100]
+    assert "分层与财务事实不符" not in validate_stderr(f), "含负值序列应跳过对账、不得告警"
+
+
+def test_typing_v2_mature_not_stagnation():
+    """v5.3.0 热核修正：裸「成熟」别名已删——「成熟成长股」应映射成长型而非成熟/停滞。"""
+    s = validate_stderr(minimal_fill(stock_type="成熟成长股"))
+    assert "无法映射六型" not in s, "成熟成长股应可映射（成长型）"
+    assert "growth_tier 缺失" in s, "应按成长型分支处理（缺 growth_tier 告警）"
+    print("OK 热核修正回归（非正值跳过 / 裸成熟不误吞）")

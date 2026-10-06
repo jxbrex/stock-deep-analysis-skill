@@ -679,14 +679,134 @@ def _check_growth_consistency(fill: dict, warns: list) -> None:
                 warns.append(f"valuation 基础情景换算增速（{g_base:.1f}%）越出 growth_plot 本文区间 "
                              f"[{lo:g}, {hi:g}]（容差 ±2pct）：5 章图与 7 章情景应口径一致（v5.1.2）")
 
-def _check_stock_type_weights(fill: dict, warns: list) -> None:
-    """分型权重交叉校验：非默认分型必须显式填 weights/layer_share，否则静默用默认值算错分。"""
-    st = str(fill.get("stock_type") or "")
-    if any(t in st for t in ("稳定价值", "金融", "银行", "保险", "券商", "快速成长", "未盈利", "困境反转")):
-        if not fill.get("layer_share"):
-            warns.append(f"stock_type={st} 层占比非默认，但未填 layer_share——脚本将用默认 70:30 计算，分数可能错误")
-        if not fill.get("weights"):
-            warns.append(f"stock_type={st} L1 权重非默认，但未填 weights——脚本将用基础权重计算，分数可能错误")
+# 分型判据 v2（v5.3.0）常量表——判据全文见 scoring.md「分型判据（v2）」节
+_TYPE_ALIASES = [  # 顺序敏感：先具体后笼统（「稳定价值」先于「成长」，「稳健/快速成长」先于裸「成长」）
+    ("稳定价值", "稳定价值", None),
+    ("稳健成长", "成长型", "mid"),
+    ("快速成长", "成长型", "high"),
+    ("停滞", "成熟/停滞", None),
+    ("未盈利", "未盈利/管线", None),
+    ("管线", "未盈利/管线", None),
+    ("困境反转", "困境反转", None),
+    ("周期", "周期股", None),
+    ("成长", "成长型", None),
+]
+_TYPE_LAYER = {"周期股": (70, 30), "稳定价值": (85, 15), "未盈利/管线": (75, 25),
+               "困境反转": (70, 30), "成熟/停滞": (80, 20)}
+_GROWTH_LAYER = {"high": (60, 40), "mid": (70, 30)}
+_TYPE_EVIDENCE_KEYS = {
+    "周期股": ("commodity_link", "volatility_fact", "comparable_periods"),
+    "成长型": ("cagr_hist", "driver_nature", "shock_history"),
+    "成熟/停滞": ("cagr_hist", "growth_narrative", "three_exclusions"),
+    "稳定价值": ("franchise", "dividend_streak"),
+    "未盈利/管线": ("loss_reason", "milestones"),
+    "困境反转": ("normal_anchor", "catalyst_timeline", "cash_runway"),
+}
+_TYPE_NONDEFAULT_WEIGHTS = ("稳定价值", "未盈利/管线", "困境反转", "成熟/停滞")  # 层内权重非默认的型
+
+
+def _normalize_stock_type(st):
+    """stock_type 自由文本 → (标准型, 默认成长层, legacy 旧名)；无法映射 → (None, None, None)。"""
+    st = str(st or "")
+    for kw, std, tier in _TYPE_ALIASES:
+        if kw in st:
+            legacy = st if (std == "成长型" and kw in ("稳健成长", "快速成长")) else None
+            return std, tier, legacy
+    return None, None, None
+
+
+def _hist_cagr(fill):
+    """fin_trend 复算历史 CAGR：years + panels 内「归母净利」bar 的 values（首尾正数、≥3 点）；
+    数据不足/口径异常（含负值）→ None。"""
+    ft = fill.get("fin_trend") or {}
+    years = [str(y) for y in (ft.get("years") or [])]
+    vals = None
+    for p in ft.get("panels") or []:
+        for b in p.get("bars") or []:
+            if "归母净利" in str(b.get("name") or ""):
+                vals = b.get("values") or []
+                break
+        if vals:
+            break
+    pairs = list(zip(vals or [], years))
+    nums = [_num(v) for v, _ in pairs]
+    if len(nums) < 3 or any(v is None or v <= 0 for v in nums):
+        return None  # <3 年或含非正值（亏损年/口径异常）→ 跳过对账（契约口径，甘李/快手实证）
+    y0 = re.sub(r"\D", "", pairs[0][1])[:4]
+    y1 = re.sub(r"\D", "", pairs[-1][1])[:4]
+    span = (int(y1) - int(y0)) if (y0 and y1) else (len(nums) - 1)
+    if span < 1:
+        return None
+    return (nums[-1] / nums[0]) ** (1 / span) - 1
+
+
+def _check_typing_v2(fill: dict, warns: list) -> None:
+    """分型判据 v2 校验组（v5.3.0）：枚举标准化（无法映射拒渲染）+ 型↔层占比对账 +
+    成长层 CAGR 对账 + typing_evidence 必填键 + 撞车白名单（非白名单拒渲染）+
+    weights 完整性（半填拒渲染）。首版软约束项均在文案注明，观察一轮后升级。"""
+    st_raw = str(fill.get("stock_type") or "")
+    std, tier, legacy = _normalize_stock_type(st_raw)
+    if not std:
+        raise ValueError(
+            f"stock_type={st_raw!r} 无法映射六型枚举（v5.3.0 判据 v2）："
+            "周期股 / 稳定价值[子类] / 成长型（配 growth_tier）/ 成熟·停滞 / 未盈利·管线 / 困境反转；"
+            "旧名「稳健/快速成长」请改为「成长型」+growth_tier")
+    if legacy:
+        warns.append(f"stock_type 旧名 {legacy!r}：v5.3.0 两型已合并为「成长型」，"
+                     f"本报告按映射 成长型·{tier} 层处理——请改用新名 + growth_tier（首版软约束）")
+
+    if std == "成长型":
+        gt = str(fill.get("growth_tier") or "").strip().lower()
+        if gt in ("high", "mid"):
+            tier = gt
+        elif tier is None:
+            warns.append("growth_tier 缺失：成长型须声明 high（历史 CAGR>25%）/ mid 分层（v5.3.0），本报告按 mid 处理")
+            tier = "mid"
+        cagr = _hist_cagr(fill)
+        if cagr is not None:
+            if tier == "high" and cagr < 0.20:
+                warns.append(f"growth_tier=high 但 fin_trend 历史 CAGR={cagr * 100:.1f}%（缓冲带 ±5pct 外）："
+                             "分层与财务事实不符——口径异常请在 typing_evidence.cagr_hist 注明正常化依据")
+            elif tier == "mid" and cagr > 0.30:
+                warns.append(f"growth_tier=mid 但 fin_trend 历史 CAGR={cagr * 100:.1f}%（缓冲带 ±5pct 外）："
+                             "应归高速层（60:40 + 高速层权重），请复核")
+
+    want = _GROWTH_LAYER.get(tier) if std == "成长型" else _TYPE_LAYER.get(std)
+    ls_raw = fill.get("layer_share") or {}
+    if want and ls_raw:
+        l1 = _num(ls_raw.get("L1"))
+        if l1 is not None and (int(l1), int(100 - l1)) != want:
+            warns.append(f"layer_share {l1:g}:{100 - l1:g} 与 {std}{'·' + tier if std == '成长型' else ''} "
+                         f"映射 {want[0]}:{want[1]} 不符（v5.3.0 型↔占比对账，首版软约束）")
+    elif want and want != (70, 30):
+        warns.append(f"{std} 层占比应为 {want[0]}:{want[1]}，未填 layer_share 将按默认 70:30 计算，分数可能错误")
+    if (std in _TYPE_NONDEFAULT_WEIGHTS or (std == "成长型" and tier == "high")) and not fill.get("weights"):
+        warns.append(f"{std}{'·高速层' if std == '成长型' else ''} 层内权重非默认，未填 weights——脚本将用基础权重计算，分数可能错误")
+
+    need = _TYPE_EVIDENCE_KEYS.get(std) or ()
+    te = fill.get("typing_evidence") or {}
+    miss = [k for k in need if not te.get(k)]
+    if miss:
+        warns.append(f"typing_evidence 缺键 {miss}（{std} 判据答案结构化，v5.3.0 首版软约束，观察一轮后升拒渲染）")
+
+    tc = fill.get("typing_clash")
+    if tc:
+        w_std, _, _ = _normalize_stock_type(tc.get("with"))
+        if not w_std or {std, w_std} != {"周期股", "成长型"}:
+            raise ValueError(
+                f"typing_clash.with={tc.get('with')!r} 非白名单共存对（仅 周期股×成长型）："
+                "高成本撞车（涉红灯豁免或占比跳变 ≥15pct）必须消歧，禁止共存声明（v5.3.0）")
+        cc = re.sub(r"<[^>]+>", "", str(tc.get("cross_check") or "")).strip()
+        if len(cc) < 30:
+            warns.append("typing_clash.cross_check <30 字：对照方法目标价互证/背离说明不足")
+
+    w = fill.get("weights") or {}
+    if w:
+        has_l1 = any(k in w for k in ("1A", "1B", "1C", "1D", "1E", "1F"))
+        has_l3 = any(k in w for k in ("3A", "3B", "3C"))
+        if has_l1 != has_l3:
+            raise ValueError("weights 半填：L1（1A-1F）与 L3（3A-3C）只填一层，另一层将静默回落默认权重拼算"
+                             "（冰轮 2026-09-13 实证，侥幸零影响非设计）——两层必须同填或同不填（v5.3.0）")
 
 
 def _check_thesis_price_tags(fill: dict, warns: list) -> None:
@@ -1349,7 +1469,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_cn_placeholder(fill)
 
     _check_missing_required_warns(fill, warns)
-    _check_stock_type_weights(fill, warns)
+    _check_typing_v2(fill, warns)
     _check_thesis_price_tags(fill, warns)
     _check_thesis_info_floor(fill, warns)
     _check_hero_band_claims(fill, warns)

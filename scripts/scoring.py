@@ -585,16 +585,21 @@ def _parse_prev_scenarios(prev_scen) -> dict:
     return out
 
 
-def pe_band_regime_dev(fill: dict):
-    """估值重构偏离度：valuation_inputs.pe_band 中枢 ÷ pe_history 近三年 P25–P75 中枢 −1。
-    返回 None=输入缺失或市值口径（metric_label 存在时 pe_band 非 PE，与历史 PE 带不可比）。
-    validate（rollback_html 门禁）与 build_regime_note（尺子声明）同源阈值 >15%。"""
+# 估值重构声明阈值（15%）：双尺偏离判定（scoring 渲染声明）与回滚门禁（validate 硬拒）唯一常量
+REGIME_DEV_THRESHOLD = 0.15
+REGIME_SCALE_BAND = "合理带"
+REGIME_SCALE_BASE = "基础情景带"
+
+
+def _dev_vs_hist(fill: dict, band):
+    """估带中枢 ÷ pe_history 近三年 P25–P75 中枢 − 1 的唯一实现（v5.4.0 双尺收敛）。
+    返回 None=输入缺失、band 非 [低,高] 数组、或市值口径（metric_label 存在时带语义非 PE）。"""
     vi = fill.get("valuation_inputs") or {}
     if vi.get("metric_label"):
         return None
-    band = vi.get("pe_band") or []
-    blo = _num(band[0]) if len(band) >= 1 else None
-    bhi = _num(band[1]) if len(band) >= 2 else None
+    if not isinstance(band, (list, tuple)) or len(band) < 2:
+        return None
+    blo, bhi = _num(band[0]), _num(band[1])
     ph = fill.get("pe_history") or {}
     p25, p75 = _num(ph.get("p25")), _num(ph.get("p75"))
     if None in (blo, bhi, p25, p75) or (p25 + p75) <= 0:
@@ -602,18 +607,60 @@ def pe_band_regime_dev(fill: dict):
     return ((blo + bhi) / 2) / ((p25 + p75) / 2) - 1
 
 
+def pe_band_regime_dev(fill: dict):
+    """估值重构偏离度（合理带尺）：valuation_inputs.pe_band 中枢 ÷ pe_history 近三年
+    P25–P75 中枢 −1（取带后交 _dev_vs_hist）。返回 None=输入缺失或市值口径。"""
+    return _dev_vs_hist(fill, (fill.get("valuation_inputs") or {}).get("pe_band"))
+
+
+def base_band_regime_dev(fill: dict):
+    """估值重构偏离度（基础情景尺）：valuation.scenarios 中 key=base 的 pe [lo,hi] 中枢
+    ÷ pe_history 近三年 P25–P75 中枢 −1。返回 None=输入缺失或市值口径（metric_label 存在，
+    或情景无 pe——mcap 口径下基础情景是目标市值，与历史 PE 带不可比）。"""
+    v = fill.get("valuation") or {}
+    base = next((s for s in v.get("scenarios") or []
+                 if isinstance(s, dict) and str(s.get("key") or "").lower() == "base"), None)
+    return _dev_vs_hist(fill, (base or {}).get("pe"))
+
+
+def regime_scale_devs(fill: dict) -> list:
+    """双尺偏离度清单 [(尺名, dev)]，**顺序固定**：合理带、基础情景带；只含可算的尺
+    （v5.4.0 单源形状）——build_regime_note（尺子声明）与 validate._check_anchor_discipline
+    （回滚门禁/混用判定）共用，避免两处各自重算三目与 None 兜底。"""
+    out = []
+    for name, dev in ((REGIME_SCALE_BAND, pe_band_regime_dev(fill)),
+                      (REGIME_SCALE_BASE, base_band_regime_dev(fill))):
+        if dev is not None:
+            out.append((name, dev))
+    return out
+
+
 def build_regime_note(fill: dict) -> str:
-    """8 章估值分卡后·尺子一致性声明（v5.1.0 锚纪律四）：pe_band 中枢偏离历史 P25–P75
-    中枢 >15%（估值重构判断）时自动声明「估值分的分位与合理倍数读数基于历史带，参考性
-    降级」并渲染 valuation.rollback_html（回滚条款前置）。偏离 ≤15% 或输入缺失 → 空串。"""
-    dev = pe_band_regime_dev(fill)
-    if dev is None or abs(dev) <= 0.15:
+    """8 章估值分卡后·尺子一致性声明（v5.1.0 锚纪律四；v5.4.0 双尺判定）：合理带
+    （valuation_inputs.pe_band）与基础情景带（valuation.scenarios 的 base pe）任一中枢偏离历史
+    P25–P75 中枢 >REGIME_DEV_THRESHOLD（估值重构判断）即声明「估值分的分位与合理倍数读数基于
+    历史带，参考性降级」并渲染 valuation.rollback_html（回滚条款前置），文案点名偏离的尺
+    （合理带／基础情景带／两者）。两尺皆未越界或输入缺失 → 空串。"""
+    off = [(n, d) for n, d in regime_scale_devs(fill) if abs(d) > REGIME_DEV_THRESHOLD]
+    if not off:
         return ""
-    vi = fill.get("valuation_inputs") or {}
     ph = fill.get("pe_history") or {}
-    direction = "下移" if dev < 0 else "上移"
-    note = (f'合理带中枢较历史 P25–P75 中枢（{_fmt(_num(ph.get("p25")))}–'
-            f'{_fmt(_num(ph.get("p75")))}x）系统性{direction} {abs(dev) * 100:.0f}%'
+    hist = f'{_fmt(_num(ph.get("p25")))}–{_fmt(_num(ph.get("p75")))}x'
+    if len(off) == 2:
+        d0, d1 = off[0][1], off[1][1]
+        who = "合理带与基础情景带两者"
+        if (d0 < 0) == (d1 < 0):   # 同向同越界=一致重构（异号属双尺混用，validate 拒渲染）
+            s0, s1 = f"{abs(d0) * 100:.0f}", f"{abs(d1) * 100:.0f}"
+            arrow = "下移" if d0 < 0 else "上移"
+            # 按显示串去重（56.4/56.6 同印为 56% 时只写一个数，v5.4.0 审计）
+            delta = f'{arrow} {s0}%' if s0 == s1 else f'{arrow} {s0}%、{s1}%'
+        else:
+            delta = "偏离方向相反（" + "、".join(
+                f'{name}{"下移" if dev < 0 else "上移"} {abs(dev) * 100:.0f}%' for name, dev in off) + "）"
+    else:
+        who = off[0][0]
+        delta = f'{"下移" if off[0][1] < 0 else "上移"} {abs(off[0][1]) * 100:.0f}%'
+    note = (f'{who}中枢较历史 P25–P75 中枢（{hist}）系统性{delta}'
             f'（估值重构判断）——估值分的分位与合理倍数读数基于历史带，参考性降级')
     rb = str((fill.get("valuation") or {}).get("rollback_html") or "").strip()
     if rb:

@@ -731,6 +731,31 @@ def test_cycle_stages():
     assert build_cycle_stages(minimal_fill()) == ""
 
 
+def test_cycle_stages_calib_badge():
+    """v5.4.0 校准锚角标：calib:true 的阶段卡渲染弱化沙色「校准锚」角标（stage-calib-tag），
+    非 calib 项不渲染；current 卡上两角标并存（CSS 让位由 .stage.current .stage-calib-tag 承载）。"""
+    from charts_misc import build_cycle_stages
+    fill = minimal_fill(cycle_stages=[
+        {"name": "景气顶", "period": "2021/01–2021/12", "pe": "30–47x", "calib": True,
+         "similarity": "增速 25%+、渗透率低", "discount": "无（规模相当）"},
+        {"name": "出清", "period": "2022/01–2024/01", "driver": "估值先杀", "current": True},
+        {"name": "修复", "period": "2024/02–至今", "driver": "业绩兑现"}])
+    html = build_cycle_stages(fill)
+    assert html.count('class="stage-calib-tag"') == 1, "仅 calib 项带校准锚角标"
+    assert ">校准锚<" in html
+    assert html.count('class="stage-cur-tag"') == 1, "「本轮」角标不受影响"
+    # 非 calib 阶段（含 current 卡）不带校准锚角标
+    plain = build_cycle_stages(minimal_fill(cycle_stages=[
+        {"name": "出清", "period": "2022/01–2024/01", "current": True},
+        {"name": "修复", "period": "2024/02–至今"}]))
+    assert "校准锚" not in plain and "stage-calib-tag" not in plain
+    # 同卡并存（current + calib）：两角标同屏
+    both = build_cycle_stages(minimal_fill(cycle_stages=[
+        {"name": "出清", "period": "2022/01–2024/01", "current": True, "calib": True,
+         "similarity": "x", "discount": "y"}]))
+    assert "stage-cur-tag" in both and "stage-calib-tag" in both
+
+
 def test_cycle_position_bar():
     """v5.2.0 当前周期位置刻度条：五键齐 → 横条含阶段名/三刻度/含义句；
     字段缺失或不足两件 → 空串（首版软约束，渲染不炸）。"""

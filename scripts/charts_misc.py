@@ -401,6 +401,8 @@ def build_cycle_stages(fill: dict) -> str:
     cycle_stages: [{"name":"赛道泡沫期","period":"2021/01–2022/04","pe":"60–216x",
                     "price":"162–355","driver":"新能源爆发初期赛道溢价；碳酸锂 5万→50万/吨",
                     "current":false}, ...]
+    v5.4.0：calib:true 的校准时段再叠「校准锚」角标（弱化沙色系，不与「本轮」撞色；
+    两角标同卡时并排于同一 `.stage-tags` 容器内 flex 自动让位）。
     （3-6 项、恰 1 个 current；字段缺失/空 → 返回空串，cycle_html 手写阶段表旧形态不受影响）"""
     cards = []
     for s in fill.get("cycle_stages") or []:
@@ -411,8 +413,12 @@ def build_cycle_stages(fill: dict) -> str:
         if not name or not period:
             continue
         cur = bool(s.get("current"))
+        calib = bool(s.get("calib"))
         cls = "stage current" if cur else "stage"
-        tag = '<span class="stage-cur-tag">本轮</span>' if cur else ""
+        # v5.4.0：角标容器化（flex + gap 自动并排，取代「current 时右移 52px」的魔法数）
+        tags = "".join(('<span class="stage-cur-tag">本轮</span>' if cur else "",
+                        '<span class="stage-calib-tag">校准锚</span>' if calib else ""))
+        tags = f'<span class="stage-tags">{tags}</span>' if tags else ""
         pe = str(s.get("pe") or "").strip()
         price = str(s.get("price") or "").strip()
         meta = " ｜ ".join(p for p in (_esc(period),
@@ -421,7 +427,7 @@ def build_cycle_stages(fill: dict) -> str:
         driver = str(s.get("driver") or "").strip()
         driver_html = f'<div class="stage-driver">{_esc(driver)}</div>' if driver else ""
         cards.append(
-            f'<div class="{cls}">{tag}<div class="stage-top"><span class="stage-num">{len(cards) + 1:02d}</span>'
+            f'<div class="{cls}">{tags}<div class="stage-top"><span class="stage-num">{len(cards) + 1:02d}</span>'
             f'<span class="stage-name">{_esc(name)}</span></div>'
             f'<div class="stage-meta">{meta}</div>{driver_html}</div>')
     if not cards:

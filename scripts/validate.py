@@ -13,7 +13,8 @@ import re
 import sys
 
 from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_REFUSE,
-                     _SCENARIO_NAMES, _parse_prev_scenarios, pe_band_regime_dev,
+                     _SCENARIO_NAMES, _parse_prev_scenarios,
+                     REGIME_DEV_THRESHOLD, regime_scale_devs,
                      _cn_placeholders, growth_sigma)
 from charts_base import (_C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio,
                          parse_stage_period, _PERIOD_VERDICTS)
@@ -473,57 +474,112 @@ def _check_anchor_discipline(fill: dict, warns: list) -> None:
     ②增量证据锁死：基础情景 PE 带相对上版移动 → valuation.pe_band_evidence 必填且至少
       一条 type=基本面；带未移动 → 该键须缺席/空（防口径漂移）。价格/卖方观点不构成
       移动理由（双向禁用：跌不许下修、涨不许上修）；上版解析失败降级告警不拒；
-    ③回滚条款前置：pe_band 中枢偏离历史 P25-P75 中枢 >15%（重构声明）→
-      valuation.rollback_html 必填。首版（无 prev）与市值口径不校验 ②③。"""
+    ③回滚条款前置（v5.4.0 双尺全量生效）：合理带与基础情景带任一中枢偏离历史 P25-P75
+      中枢 >15%（重构声明）→ valuation.rollback_html 必填——首版（无 prev）同样执行；
+      两尺混用（一尺越界一尺不越、或两尺越界但偏离异号）→ 拒渲染（纪律四）；
+      两尺同向同越界 = 一致重构，只要求 rollback_html。
+    ①②为复盘专属（prev 缺失才跳过）；③全量生效（尺子一致性不因是否复盘而变）。
+    尺子不可算（None：市值口径 metric_label / 情景无 pe / pe_history 缺 p25/p75）→ 该尺
+    不参与判定，混用检查仅在两尺均可算时执行（不可算 ≠ 未越界）。"""
     prev = fill.get("prev")
-    if not prev:
-        return
-    if not isinstance(prev.get("scenarios"), list) or not prev["scenarios"]:
-        raise ValueError("回测模式 prev.scenarios 缺失或非数组：照抄 extract_review 输出的 "
-                         "scenarios 数组（锚移动台账数据源，禁手改；v5.1.0 起必填）")
-    v = fill.get("valuation") or {}
-    scen = v.get("scenarios") or []
-    base = next((s for s in scen if isinstance(s, dict)
-                 and str(s.get("key") or "").lower() == "base"), None)
-    prev_pe = (_parse_prev_scenarios(prev["scenarios"]).get("base") or {}).get("pe")
-    ev = v.get("pe_band_evidence")
-    if base is not None and prev_pe is not None:
-        pe = base.get("pe") or []
-        cur_pe = (_num(pe[0]) if len(pe) >= 1 else None, _num(pe[1]) if len(pe) >= 2 else None)
-        if None not in cur_pe:
-            moved = (cur_pe[0], cur_pe[1]) != prev_pe
-            if moved:
-                if not ev or not isinstance(ev, list):
-                    raise ValueError(
-                        f"基础情景 PE 带相对上版移动（{prev_pe[0]:g}-{prev_pe[1]:g}x → "
-                        f"{cur_pe[0]:g}-{cur_pe[1]:g}x）但 valuation.pe_band_evidence 缺失："
-                        f"增量证据锁死纪律——两版间无新增基本面证据时 PE 带不得移动"
-                        f"（v5.1.0 估值锚纪律一）")
-                for i, e in enumerate(ev):
-                    if not isinstance(e, dict) or e.get("type") not in _ANCHOR_EVIDENCE_TYPES:
+    if prev:
+        if not isinstance(prev.get("scenarios"), list) or not prev["scenarios"]:
+            raise ValueError("回测模式 prev.scenarios 缺失或非数组：照抄 extract_review 输出的 "
+                             "scenarios 数组（锚移动台账数据源，禁手改；v5.1.0 起必填）")
+        v = fill.get("valuation") or {}
+        scen = v.get("scenarios") or []
+        base = next((s for s in scen if isinstance(s, dict)
+                     and str(s.get("key") or "").lower() == "base"), None)
+        prev_pe = (_parse_prev_scenarios(prev["scenarios"]).get("base") or {}).get("pe")
+        ev = v.get("pe_band_evidence")
+        if base is not None and prev_pe is not None:
+            pe = base.get("pe") or []
+            cur_pe = (_num(pe[0]) if len(pe) >= 1 else None, _num(pe[1]) if len(pe) >= 2 else None)
+            if None not in cur_pe:
+                moved = (cur_pe[0], cur_pe[1]) != prev_pe
+                if moved:
+                    if not ev or not isinstance(ev, list):
                         raise ValueError(
-                            f"pe_band_evidence[{i}].type 非法: {(e or {}).get('type') if isinstance(e, dict) else e!r}"
-                            f"——四选一：{'/'.join(_ANCHOR_EVIDENCE_TYPES)}")
-                    if not str(e.get("note") or "").strip():
-                        raise ValueError(f"pe_band_evidence[{i}].note 为空——证据须写明可核查内容")
-                if not any(e["type"] == "基本面" for e in ev):
-                    raise ValueError(
-                        f"pe_band_evidence 无「基本面」类条目（现有："
-                        f"{'/'.join(e['type'] for e in ev)}）——PE 带移动必须锚定新增基本面证据，"
-                        f"纯价格/卖方观点触发不合法；若无新增基本面证据，请将 PE 带锁回上版数值")
-            elif ev:
-                raise ValueError("PE 带与上版一致，pe_band_evidence 应缺席（画蛇添足防口径漂移）")
-    elif ev:
-        warns.append("上版三情景 PE 解析失败或本版为市值口径：PE 带移动校验跳过，"
-                     "pe_band_evidence 已填无法比对——请人工核对锚移动归因")
-    dev = pe_band_regime_dev(fill)
-    if dev is not None and abs(dev) > 0.15:
+                            f"基础情景 PE 带相对上版移动（{prev_pe[0]:g}-{prev_pe[1]:g}x → "
+                            f"{cur_pe[0]:g}-{cur_pe[1]:g}x）但 valuation.pe_band_evidence 缺失："
+                            f"增量证据锁死纪律——两版间无新增基本面证据时 PE 带不得移动"
+                            f"（v5.1.0 估值锚纪律一）")
+                    for i, e in enumerate(ev):
+                        if not isinstance(e, dict) or e.get("type") not in _ANCHOR_EVIDENCE_TYPES:
+                            raise ValueError(
+                                f"pe_band_evidence[{i}].type 非法: {(e or {}).get('type') if isinstance(e, dict) else e!r}"
+                                f"——四选一：{'/'.join(_ANCHOR_EVIDENCE_TYPES)}")
+                        if not str(e.get("note") or "").strip():
+                            raise ValueError(f"pe_band_evidence[{i}].note 为空——证据须写明可核查内容")
+                    if not any(e["type"] == "基本面" for e in ev):
+                        raise ValueError(
+                            f"pe_band_evidence 无「基本面」类条目（现有："
+                            f"{'/'.join(e['type'] for e in ev)}）——PE 带移动必须锚定新增基本面证据，"
+                            f"纯价格/卖方观点触发不合法；若无新增基本面证据，请将 PE 带锁回上版数值")
+                elif ev:
+                    raise ValueError("PE 带与上版一致，pe_band_evidence 应缺席（画蛇添足防口径漂移）")
+        elif ev:
+            warns.append("上版三情景 PE 解析失败或本版为市值口径：PE 带移动校验跳过，"
+                         "pe_band_evidence 已填无法比对——请人工核对锚移动归因")
+    # ③ 回滚门禁 + 双尺混用（v5.4.0 全量生效，首版同样执行；形状单源 regime_scale_devs）
+    v = fill.get("valuation") or {}
+    devs = regime_scale_devs(fill)          # 只含可算的尺，顺序固定：合理带、基础情景带
+    if len(devs) == 2:                       # 两尺都可算才判混用（缺一尺=不可判定，不误判）
+        (n_band, dev_band), (n_base, dev_base) = devs
+        out_band = abs(dev_band) > REGIME_DEV_THRESHOLD
+        out_base = abs(dev_base) > REGIME_DEV_THRESHOLD
+        if out_band != out_base:
+            raise ValueError(
+                f"估值锚双尺混用：{n_band}中枢偏离历史 P25-P75 中枢 {dev_band * 100:+.0f}%、"
+                f"{n_base} {dev_base * 100:+.0f}%——一尺越界一尺未越（{n_band if out_band else n_base}"
+                f"越界），属「纪律四：禁止评分用旧尺、目标价用新尺」的精选混合；"
+                f"请把两把尺对齐（同越界须配 rollback_html，同不越界则两处都锁回历史带）后重渲")
+        if out_band and (dev_band > 0) != (dev_base > 0):
+            raise ValueError(
+                f"估值锚双尺偏离方向相反：{n_band} {dev_band * 100:+.0f}%、{n_base} {dev_base * 100:+.0f}%"
+                f"（两尺均 >15% 但一上一下）——同一份报告的合理带与目标价 PE 带指向相反的重构方向，"
+                f"属「纪律四：禁止评分用旧尺、目标价用新尺」的双尺混用；请统一重构方向后重渲")
+    off = [(n, d) for n, d in devs if abs(d) > REGIME_DEV_THRESHOLD]
+    if off:
         rb = str(v.get("rollback_html") or "").strip()
         if not rb:
+            which = "合理带/基础情景带两尺" if len(off) == 2 else off[0][0]
+            deltas = "、".join(f"{n} {d * 100:+.0f}%" for n, d in off)
+            absent = "；另一把尺输入缺失不可算，未参与判定" if len(devs) == 1 else ""
             raise ValueError(
-                f"pe_band 中枢偏离历史 P25-P75 中枢 {dev * 100:+.0f}%（>15%，属估值重构声明）"
+                f"{which}中枢偏离历史 P25-P75 中枢（{deltas}）>15%，属估值重构声明"
                 f"但 valuation.rollback_html 缺失：回滚条款前置纪律——必须写明"
-                f"「回滚条件：〈可观测证据〉→ 回滚至历史带/上版带」（v5.1.0 估值锚纪律二）")
+                f"「回滚条件：〈可观测证据〉→ 回滚至历史带/上版带」（v5.1.0 估值锚纪律二，"
+                f"v5.4.0 起首版同样生效）{absent}")
+
+
+def _check_anchor_blind_fly(fill: dict, warns: list) -> None:
+    """v5.4.0 校验盲飞（软告警）：估值带依赖历史 PE 时段锚的分型（周期股 / 稳定价值 /
+    困境反转 / 成长型·中速层——四型对应 _anchor_unanchored_type），若既无行业口径
+    metric_label 又缺 pe_history.p25/p75，则两把尺的偏离度都算不出来——形态合规但校准
+    零机械校验（盲飞），要求正文写明降级取数路径（时段 PE 自算口径与出处）。"""
+    if not _anchor_unanchored_type(fill):
+        return
+    vi = fill.get("valuation_inputs") or {}
+    if vi.get("metric_label"):
+        return
+    ph = fill.get("pe_history") or {}
+    if _num(ph.get("p25")) is not None and _num(ph.get("p75")) is not None:
+        return
+    warns.append("校验盲飞：本分型（估值带依赖历史 PE 时段锚）既无 metric_label 行业口径、"
+                 "pe_history 又缺 p25/p75——双尺偏离与时段校准均无法机械对账（形态合规但无尺）。"
+                 "请在 valuation_html 写明降级取数路径：时段 PE 自算口径 + 数据出处"
+                 "（E2 月线/自算 PE 的月份与公式），并注明 p25/p75 缺失原因（E1 落盘 pe_p25/pe_p75 未回填）")
+
+
+def _anchor_unanchored_type(fill: dict) -> bool:
+    """估值带依赖历史 PE 时段锚的四型（v5.4.0 单源判定，校验盲飞与 calib 时段数共用）：
+    周期股 / 稳定价值 / 困境反转 / 成长型·中速层（growth_tier ≠ high）。
+    成熟·停滞走 PE 绝对带 + 股息率锚、未盈利·管线走 rNPV/P/S，不在此列。"""
+    st = str(fill.get("stock_type") or "")
+    if any(k in st for k in ("周期", "稳定价值", "困境反转")):
+        return True
+    return "成长" in st and str(fill.get("growth_tier") or "").strip().lower() != "high"
 
 
 def _check_thesis_consistency(fill: dict, calc: dict) -> None:
@@ -715,35 +771,72 @@ def _normalize_stock_type(st):
     return None, None, None
 
 
-def _hist_cagr(fill):
-    """fin_trend 复算历史 CAGR：years + panels 内「归母净利」bar 的 values（首尾正数、≥3 点）；
-    数据不足/口径异常（含负值）→ None。"""
+def _bar_values(fill, key):
+    """fin_trend 中 name 含 key 且 values 非空的柱 values（标准 4 面板之净利面板）。"""
     ft = fill.get("fin_trend") or {}
-    years = [str(y) for y in (ft.get("years") or [])]
-    vals = None
     for p in ft.get("panels") or []:
         for b in p.get("bars") or []:
-            if "归母净利" in str(b.get("name") or ""):
-                vals = b.get("values") or []
-                break
-        if vals:
-            break
-    pairs = list(zip(vals or [], years))
-    nums = [_num(v) for v, _ in pairs]
+            if key in str((b or {}).get("name") or ""):
+                vals = (b or {}).get("values") or []
+                if vals:
+                    return vals
+    return None
+
+
+def _hist_cagr(fill, key="扣非"):
+    """fin_trend 复算历史 CAGR（v5.4.0 改扣非口径）：years + panels 内 name 含 key 的
+    bar 的 values（**与 years 等长且全可解析**、首尾正数、≥3 点）；数据不足/口径异常
+    （不等长/含非数字/含负值）→ None——回落人工判定，不给门禁喂错窗口。
+    归母柱不再作对账基准——一次性损益会把正常化路径算歪，口径例外由 cagr_adjustments 承接。"""
+    ft = fill.get("fin_trend") or {}
+    years = [str(y) for y in (ft.get("years") or [])]
+    vals = _bar_values(fill, key)
+    # v5.4.0 审计 P0-2：柱值与 years 不等长时 zip 静默截断 → CAGR 算错窗口（本数驱动拒渲染门禁）
+    if not vals or len(vals) != len(years):
+        return None
+    nums = [_num(v) for v in vals]
     if len(nums) < 3 or any(v is None or v <= 0 for v in nums):
-        return None  # <3 年或含非正值（亏损年/口径异常）→ 跳过对账（契约口径，甘李/快手实证）
-    y0 = re.sub(r"\D", "", pairs[0][1])[:4]
-    y1 = re.sub(r"\D", "", pairs[-1][1])[:4]
+        return None  # <3 年/含非数字或非正值（亏损年、口径异常）→ 跳过对账（甘李/快手实证）
+    y0 = re.sub(r"\D", "", years[0])[:4]
+    y1 = re.sub(r"\D", "", years[-1])[:4]
     span = (int(y1) - int(y0)) if (y0 and y1) else (len(nums) - 1)
     if span < 1:
         return None
     return (nums[-1] / nums[0]) ** (1 / span) - 1
 
 
+# v5.4.0 口径例外明细四键（typing_evidence.cagr_adjustments 每项必须齐全且非空）
+_CAGR_ADJ_KEYS = ("year", "item", "amount", "reason")
+# 例外 c 的触发词（v5.4.0 审计收窄）：去掉裸「调整」——「目标价调整」等无关说法不得触发
+# 强制明细门禁；只认口径语义的词形（剔除/口径调整/重述/正常化/经调整）。
+_CAGR_ADJ_KEYWORDS = ("剔除", "口径调整", "重述", "正常化", "经调整")
+
+
+def _cagr_adj_reasons(fill: dict, te: dict) -> list:
+    """cagr_adjustments 强制的三条例外（v5.4.0 口径收口）：
+    a 港股 5 位代码（经调整口径）；b 扣非柱不可用（无柱/不等长/含非数字或非正值/有效年 <3）；
+    c cagr_hist 含 _CAGR_ADJ_KEYWORDS（剔除/口径调整/重述/正常化/经调整，不含裸「调整」）。
+    三条皆不成立 → 空列表（默认扣非口径直接复算）。"""
+    reasons = []
+    if re.fullmatch(r"\d{5}", str(fill.get("code") or "").strip()):
+        reasons.append("港股 5 位代码（经调整口径）")
+    if _hist_cagr(fill) is None:
+        reasons.append("扣非柱不可用（无扣非柱/不等长/含非数字或非正值/有效年 <3）")
+    hist = str(te.get("cagr_hist") or "")
+    kw = [k for k in _CAGR_ADJ_KEYWORDS if k in hist]
+    if kw:
+        reasons.append(f"cagr_hist 含口径调整词「{'/'.join(kw)}」")
+    return reasons
+
+
 def _check_typing_v2(fill: dict, warns: list) -> None:
     """分型判据 v2 校验组（v5.3.0）：枚举标准化（无法映射拒渲染）+ 型↔层占比对账 +
     成长层 CAGR 对账 + typing_evidence 必填键 + 撞车白名单（非白名单拒渲染）+
-    weights 完整性（半填拒渲染）。首版软约束项均在文案注明，观察一轮后升级。"""
+    weights 完整性（半填拒渲染）。首版软约束项均在文案注明，观察一轮后升级。
+    v5.4.0：CAGR 对账改扣非口径；分型要求 cagr_hist 键时三条例外（港股 5 位代码 /
+    扣非柱不可用 / cagr_hist 含口径调整词）任一命中 → cagr_adjustments 四键明细缺失或
+    结构不全即拒渲染；明细齐备 → 按声明调整口径处理（人工判定）不复算（③扣非不可用
+    分支经此到达——无明细时已被门禁先行拒渲染）。te/ok_adj 一次算清，对账与门禁共用。"""
     st_raw = str(fill.get("stock_type") or "")
     std, tier, legacy = _normalize_stock_type(st_raw)
     if not std:
@@ -755,21 +848,40 @@ def _check_typing_v2(fill: dict, warns: list) -> None:
         warns.append(f"stock_type 旧名 {legacy!r}：v5.3.0 两型已合并为「成长型」，"
                      f"本报告按映射 成长型·{tier} 层处理——请改用新名 + growth_tier（首版软约束）")
 
+    te = fill.get("typing_evidence") or {}
+    need = _TYPE_EVIDENCE_KEYS.get(std) or ()
+    # v5.4.0 口径收口：明细结构一次判定（对账跳过与强制门禁共用同一 ok_adj，
+    # 残件如 [{}] 不再「非空即算数」静默关掉对账）
+    adj = te.get("cagr_adjustments")
+    ok_adj = (isinstance(adj, list) and bool(adj)
+              and all(isinstance(a, dict)
+                      and all(a.get(k) not in (None, "") and str(a.get(k)).strip() for k in _CAGR_ADJ_KEYS)
+                      for a in adj))
+
     if std == "成长型":
         gt = str(fill.get("growth_tier") or "").strip().lower()
         if gt in ("high", "mid"):
             tier = gt
         elif tier is None:
-            warns.append("growth_tier 缺失：成长型须声明 high（历史 CAGR>25%）/ mid 分层（v5.3.0），本报告按 mid 处理")
+            warns.append("growth_tier 缺失：成长型须声明 high（扣非 CAGR>25%）/ mid 分层（v5.3.0），本报告按 mid 处理")
             tier = "mid"
-        cagr = _hist_cagr(fill)
+        if ok_adj:
+            # ① 明细齐备 → 人工判定（按声明调整口径），脚本不复算扣非 CAGR
+            warns.append("growth_tier 对账按声明调整口径处理（人工判定）：typing_evidence.cagr_adjustments 非空，"
+                         "脚本不复算扣非 CAGR——分层以声明为准，调整明细已入账")
+            cagr = None
+        else:
+            # ② 扣非柱复算（口径例外走 ①；扣非不可用/不等长 → None——成长型此时无明细，
+            # 已被下方门禁先拒渲染，故「人工判定」只经 ① 到达）
+            cagr = _hist_cagr(fill)
         if cagr is not None:
             if tier == "high" and cagr < 0.20:
-                warns.append(f"growth_tier=high 但 fin_trend 历史 CAGR={cagr * 100:.1f}%（缓冲带 ±5pct 外）："
-                             "分层与财务事实不符——口径异常请在 typing_evidence.cagr_hist 注明正常化依据")
+                warns.append(f"growth_tier=high 但 fin_trend 扣非 CAGR={cagr * 100:.1f}%"
+                             "（高速层门槛 >25%，缓冲带 ±5pct 外）：分层与财务事实不符——"
+                             "口径异常请在 typing_evidence.cagr_hist/cagr_adjustments 注明正常化依据")
             elif tier == "mid" and cagr > 0.30:
-                warns.append(f"growth_tier=mid 但 fin_trend 历史 CAGR={cagr * 100:.1f}%（缓冲带 ±5pct 外）："
-                             "应归高速层（60:40 + 高速层权重），请复核")
+                warns.append(f"growth_tier=mid 但 fin_trend 扣非 CAGR={cagr * 100:.1f}%"
+                             "（中速层 5-25%，缓冲带 ±5pct 外）：应归高速层（60:40 + 高速层权重），请复核")
 
     want = _GROWTH_LAYER.get(tier) if std == "成长型" else _TYPE_LAYER.get(std)
     ls_raw = fill.get("layer_share") or {}
@@ -783,11 +895,22 @@ def _check_typing_v2(fill: dict, warns: list) -> None:
     if (std in _TYPE_NONDEFAULT_WEIGHTS or (std == "成长型" and tier == "high")) and not fill.get("weights"):
         warns.append(f"{std}{'·高速层' if std == '成长型' else ''} 层内权重非默认，未填 weights——脚本将用基础权重计算，分数可能错误")
 
-    need = _TYPE_EVIDENCE_KEYS.get(std) or ()
-    te = fill.get("typing_evidence") or {}
     miss = [k for k in need if not te.get(k)]
     if miss:
         warns.append(f"typing_evidence 缺键 {miss}（{std} 判据答案结构化，v5.3.0 首版软约束，观察一轮后升拒渲染）")
+    # v5.4.0 口径收口：正常化口径须落明细——三条例外任一命中即强制 cagr_adjustments
+    if "cagr_hist" in need:
+        reasons = _cagr_adj_reasons(fill, te)
+        if reasons and not ok_adj:
+            raise ValueError(
+                "typing_evidence.cagr_adjustments 缺失或结构不全（命中：" + "；".join(reasons) + "）："
+                "正常化口径不成立时历史 CAGR 必须逐条给出调整明细——"
+                '格式 [{"year":2024,"item":"处置子公司股权收益","amount":-6.2,"reason":"一次性损益剔除"}]'
+                "（四键 year/item/amount/reason 齐全且非空，amount 单位亿元；v5.4.0 口径收口，拒渲染）")
+        if ok_adj and not reasons:
+            warns.append("typing_evidence.cagr_adjustments 已填但三条例外（港股 / 扣非柱不可用 / "
+                         "cagr_hist 口径调整词）均不成立：默认扣非口径可直接复算，多余明细易成口径漂移口"
+                         "——请删除该键（确需调整则把理由写进 cagr_hist）")
 
     tc = fill.get("typing_clash")
     if tc:
@@ -883,6 +1006,120 @@ def _check_peers_plot_target(fill: dict, warns: list) -> None:
                 if troe < p_lo / 2 or troe > p_hi * 2:
                     warns.append(f"peers_plot 目标公司 ROE（{troe:g}%）脱离同业量级（同业 {p_lo:g}-{p_hi:g}%）"
                                  f"——ROE 口径疑似不一（年报/加权/TTM、不同年份）或取数错误，请核对")
+
+
+def _peers_name_key(s: str) -> str:
+    """同业名归一（表图一致比对键，v5.4.0 热核审计）：去括号注（（…）/(…)）、空白（含全角）
+    与尾部交易所标记（-U 未盈利/-W 同股不同权/-SW 二次上市等）——「宁德时代（CATL）」
+    ≡「宁德时代」、「百济神州-U」≡「百济神州」（恒瑞 2026-09-19 存量实证：表图两处同一家
+    公司带了没带 -U 后缀）；近似名不互相放行——此前双向子串匹配会把「比亚迪」与
+    「比亚迪电子」当同一家，是硬门禁的假阴性口。"""
+    s = re.sub(r"[（(][^）)]*[）)]", "", str(s or ""))
+    s = re.sub(r"[\s\u3000]+", "", s)
+    return re.sub(r"-(?:SW|WD|U|W|S)$", "", s, flags=re.I)
+
+
+def _check_peers_selection(fill: dict, warns: list) -> None:
+    """v5.4.0 peer 选取硬化（五条，与 peers_plot/peers_meta/peers_html 三方对账）：
+    ⑨表图一致（**拒渲染**）：peers_plot 非 target 点必须出现在 peers_html **非 matrix-table
+      的表**的行首格（名字归一后精确相等），或名点写进 peers_meta（= 已声明剔出理由）；
+      未声明的名字 → 拒渲染，target 点豁免。九宫格兜底表（行=ROE 档、公司名在单元格里）
+      不作名字来源、且渲染器会删除它——peers_html 只剩 matrix-table 时整条检查跳过
+      （审计 P0-1：同存路径此前把九宫格行首档位名当公司名 → 误拒）。
+    ⑩尺子一致（告警）：target 点 roe 与 fin_trend 的 ROE 线末值 >3pct 且 peers_meta 无
+      「口径词（TTM/加权/经调整/静态）+ 点名目标」双命中的注明 → 告警。
+    ⑪peer ≥3（告警）：非 target 有效点（name+roe+pe 可解析）<3 → 告警；peers_meta 已写明
+      凑不齐原因（含「仅/凑不齐/可比公司不足」）→ 抑制（与「meta 注明后可忽略」惯例一致）。
+    ⑫rationale（软告警）：有 peer 章节实体（peers_plot 或非占位 peers_meta）时即检查——
+      peers_meta 须含两把尺（同行业/同规模/同商业模式 ≥2 种）+ 排除语（排除/未选/剔出），
+      缺一告警（占位「—」由 _check_misc_required 的占位告警兜底，不重复报）。
+    ⑬PE 交叉（软告警）：valuation base 情景 pe 下限高于全部非 target 点 pe → 须溢价论证。
+    数据缺失的分支一律跳过（不误报）。"""
+    meta = str(fill.get("peers_meta") or "")
+    pp = fill.get("peers_plot")
+    pts = (pp or {}).get("points") or [] if isinstance(pp, dict) else []
+    # ⑨ 表图一致（硬）：非 matrix-table 表内公司名集合（归一）+ peers_meta 声明名单
+    if pts:
+        tbl_names, n_plain = set(), 0
+        for tbl in re.findall(r"<table\b[^>]*>.*?</table>", fill.get("peers_html") or "",
+                              flags=re.I | re.S):
+            if "matrix-table" in tbl:
+                continue
+            n_plain += 1
+            for tr in re.findall(r"<tr\b[^>]*>(.*?)</tr>", tbl, flags=re.I | re.S):
+                cells = re.findall(r"<t[hd]\b[^>]*>(.*?)</t[hd]>", tr, flags=re.I | re.S)
+                key = _peers_name_key(_plain_text(cells[0])) if cells else ""
+                if key:
+                    tbl_names.add(key)
+        if n_plain:
+            undeclared = []
+            for p in pts:
+                if not isinstance(p, dict) or p.get("target"):
+                    continue
+                nm = str(p.get("name") or "").strip()
+                if not nm or nm in meta or _peers_name_key(nm) in tbl_names:
+                    continue
+                undeclared.append(nm)
+            if undeclared:
+                raise ValueError("peers_plot 点位未出现在 peers_html 表格、peers_meta 亦无声明："
+                                 + "、".join(undeclared)
+                                 + "——表图一致纪律（v5.4.0，拒渲染）：散点图每家同业必须在当前指标表/"
+                                   "趋势表有一行，或在 peers_meta 点名说明未列/剔出理由"
+                                   "（target 点豁免；matrix-table 九宫格不作名字来源）")
+    # ⑩ 尺子一致（告警）：散点图 ROE vs fin_trend ROE 线末值
+    tg = [p for p in pts if isinstance(p, dict) and p.get("target")
+          and _num(p.get("roe")) is not None]
+    roe_ref = None
+    for p in (fill.get("fin_trend") or {}).get("panels") or []:
+        if not isinstance(p, dict):
+            continue
+        for ln in p.get("lines") or []:
+            if isinstance(ln, dict) and "ROE" in str(ln.get("name") or ""):
+                vals = [_num(v) for v in (ln.get("values") or [])]
+                if vals and vals[-1] is not None:
+                    roe_ref = vals[-1]
+                    break
+        if roe_ref is not None:
+            break
+    if tg and roe_ref is not None:
+        troe = _num(tg[0].get("roe"))
+        # 口径注明须「口径词 + 点名目标」双命中（热核审计 P2：裸「口径」是万能逃生口——
+        # 只在偏离存在时才需要注明，而偏离的正当理由必然指向目标公司的特殊口径）
+        co = str(fill.get("company") or "")
+        calib_noted = (re.search(r"TTM|加权|经调整|静态", meta)
+                       and bool((co and co in meta) or "目标" in meta))
+        if abs(troe - roe_ref) > 3 and not calib_noted:
+            warns.append(f"peers_plot 目标点 ROE（{troe:g}%）与 fin_trend ROE 线末值（{roe_ref:g}%）"
+                         f"绝对差 {abs(troe - roe_ref):.1f}pct > 3pct：两处口径须一致——"
+                         f"在 peers_meta 注明目标公司口径（含 TTM/加权/经调整/静态并点名目标公司）"
+                         f"或改齐数据后重渲")
+    # ⑪ peer ≥3（告警）：有效同业点计数（peers_meta 已写明凑不齐原因 → 抑制，同「注明后可忽略」惯例）
+    peer_pts = [p for p in pts if isinstance(p, dict) and not p.get("target")
+                and str(p.get("name") or "").strip()
+                and _num(p.get("roe")) is not None and _num(p.get("pe")) is not None]
+    if pts and len(peer_pts) < 3 and not re.search(r"仅|凑不齐|可比公司不足", meta):
+        warns.append(f"peers_plot 有效同业点仅 {len(peer_pts)} 家（<3）：同业对比至少 3 家可比公司"
+                     f"（表与散点同源）——凑不齐请在 peers_meta 写明原因（如「可比公司仅 2 家」）")
+    # ⑫ rationale（软告警）：三选二 + 排除语；有 peer 章节实体即检查（占位「—」由占位告警兜底）
+    if pts or meta.strip() not in ("", "—"):
+        kinds = [k for k in ("同行业", "同规模", "同商业模式") if k in meta]
+        if len(kinds) < 2 or not re.search(r"排除|未选|剔出", meta):
+            warns.append(f"peers_meta 选取理由不完整（现含 {'/'.join(kinds) or '无'}；"
+                         f"{'有' if re.search(r'排除|未选|剔出', meta) else '缺'}排除语）："
+                         f"须含「同行业/同规模/同商业模式」≥2 种 + 「排除/未选/剔出」说明"
+                         f"（为何不选近邻标的）")
+    # ⑬ PE 交叉（软告警）：基础带下限高于全部同业 PE
+    base_pe = None
+    for s in (fill.get("valuation") or {}).get("scenarios") or []:
+        if isinstance(s, dict) and str(s.get("key") or "").lower() == "base":
+            pe = s.get("pe") or []
+            base_pe = _num(pe[0]) if len(pe) >= 1 else None
+    peer_pes = [_num(p.get("pe")) for p in pts
+                if isinstance(p, dict) and not p.get("target") and _num(p.get("pe")) is not None]
+    if base_pe is not None and peer_pes and base_pe > max(peer_pes):
+        warns.append(f"valuation 基础情景 PE 下限（{base_pe:g}x）高于全部同业散点 PE"
+                     f"（最高 {max(peer_pes):g}x）：基础带高于全部同业，须溢价论证"
+                     f"（在 valuation_html 写明溢价来源：护城河/成长差/资产质量）")
 
 
 def _check_timing_table_cells(fill: dict, warns: list) -> None:
@@ -1456,7 +1693,8 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_valuation_scenarios(fill, warns)
     _check_odds_floor(fill, warns, calc)  # v5.0 机制三：赔率 ∞ 须配悲观地板证据（floor）
     _check_consensus_np(fill, warns)    # v5.0 机制二：乐观税一致预期照抄交叉校验
-    _check_anchor_discipline(fill, warns)  # v5.1.0 估值锚纪律：增量证据锁死+回滚条款前置
+    _check_anchor_discipline(fill, warns)  # v5.1.0 估值锚纪律：增量证据锁死+回滚条款前置（v5.4.0 双尺）
+    _check_anchor_blind_fly(fill, warns)   # v5.4.0：无历史分位可对账 → 校验盲飞告警
     _check_chart_fields(fill)
     _check_quote_present(fill, warns)   # v4.11.1（审核 D5）：date ≥ 2026-09-02 缺 quote 拒渲染
     _check_gap_plot(fill, calc, warns)  # v4.11.1：gap_plot 分布图字段校验（可选字段，缺失不查）
@@ -1474,6 +1712,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_thesis_info_floor(fill, warns)
     _check_hero_band_claims(fill, warns)
     _check_peers_plot_target(fill, warns)
+    _check_peers_selection(fill, warns)   # v5.4.0：表图一致（硬）+ 尺子一致/peer≥3/rationale/PE 交叉
     _check_hero_cross(fill, warns)        # v5.1.2：Hero 与估值结构化字段互查
     _check_growth_consistency(fill, warns)  # v5.1.2：growth_plot 换算对账
     _check_timing_table_cells(fill, warns)
@@ -1687,6 +1926,29 @@ def _check_sensitivity_units(fill: dict, warns: list) -> None:
             warns.append(f"sensitivity[{s['name'][:8]}] delta「{d}」量纲不规范：变动幅度须带单位——"
                          "比例写 ±10%、百分点写 ±1pct（条端/坐标轴的净利影响 % 由脚本按 impact 生成）")
 
+def _parse_pe_range(text):
+    """cycle_stages.pe 声明区间解析：「60–216x」/「10-16」/「12x」→ (低, 高)（容 en dash/
+    连字符/波浪号）；单值 → (v, v)；无数字 → None。先剔除四位年份——「2021 年 60x」
+    的 2021 不是区间端点（热核审计 P2）。"""
+    text = re.sub(r"(?:19|20)\d{2}", " ", str(text or ""))
+    vals = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)[:2]]
+    if not vals:
+        return None
+    return (vals[0], vals[0]) if len(vals) == 1 else (min(vals), max(vals))
+
+
+def _series_month_pe(series):
+    """price_history.series → [(年, 月, pe)]（m 可解析「YYYY-MM」才入列；pe 缺失记 None）。"""
+    out = []
+    for p in series or []:
+        if not isinstance(p, dict):
+            continue
+        m = str(p.get("m") or "").strip()
+        if len(m) >= 7 and m[:4].isdigit() and m[5:7].isdigit():
+            out.append((int(m[:4]), int(m[5:7]), _num(p.get("pe"))))
+    return out
+
+
 def _check_cycle_stages(fill: dict, warns: list) -> None:
     """v4.11.3：周期阶段卡字段校验（cycle_stages，软告警迁移期——缺失不拒）。
     3-6 项、name ≤8 字、driver 显示宽 ≤48（灭孤字契约；宽度口径：CJK 计 2、ASCII 计 1）、
@@ -1698,7 +1960,11 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
     （阶段卡挂第 11 章条件块内，整章消失则卡无处显示，同 pe_history 绑定规则）；
     cycle_html 手写阶段表与字段的关系：字段未填 → 迁移告警；并存 → 重复告警；
     v5.1.3：period 格式校验——解析不出起止月份软告警「季K图阶段分界不落该段」
-    （格式 YYYY/MM–YYYY/MM；与渲染同源 parse_stage_period，单源防漂移）。"""
+    （格式 YYYY/MM–YYYY/MM；与渲染同源 parse_stage_period，单源防漂移）；
+    v5.4.0：校准锚（calib）三校验（全部软告警）——①calib:true 项须含 similarity/discount；
+    ②分型属四型（周期/稳定价值/困境反转/成长·中速层）时 calib 项须 ≥2（首版软约束）；
+    ③窗口内对账：calib 时段落在 price_history 月份窗口内 → 窗口实测 PE 极值与声明区间
+    端点比对（相对偏差 >25% 告警），窗口外/序列无 pe 跳过，全部未核验 → 汇总告警一条。"""
     stages = [s for s in fill.get("cycle_stages") or [] if isinstance(s, dict)]
     hand_table = re.search(r"<th[^>]*>\s*阶段\s*</th>", fill.get("cycle_html") or "")
     if not stages:
@@ -1744,6 +2010,51 @@ def _check_cycle_stages(fill: dict, warns: list) -> None:
                      "整章不渲染则卡无处显示（同 pe_history/price_history 绑定规则）")
     if hand_table:
         warns.append("cycle_html 手写阶段表与 cycle_stages 字段并存（内容重复）：请删除手写表格")
+    # v5.4.0 校准锚（calib）三校验（全部软告警；缺失/不标 calib 的字段不受影响）
+    calibs = [s for s in valid if s.get("calib")]
+    for s in calibs:
+        tag = _plain_text(str(s.get("name") or "")).strip() or "?"
+        short = tag[:6] + ("…" if len(tag) > 6 else "")
+        miss_keys = [k for k in ("similarity", "discount") if not str(s.get(k) or "").strip()]
+        if miss_keys:
+            warns.append(f"cycle_stages[{short}] calib:true 缺 {'/'.join(miss_keys)}：校准时段须写明"
+                         "与当前时段的相似性（similarity：增速/规模/宏观背景）与规模折价（discount："
+                         "当前利润更大时 PE 应更低）——否则「为何拿这几段校准」无据（v5.4.0 软约束）")
+    if calibs and _anchor_unanchored_type(fill) and len(calibs) < 2:
+        warns.append(f"cycle_stages 校准锚（calib:true）仅 {len(calibs)} 个（应 ≥2）：估值带校准"
+                     "依赖 ≥2 个可比历史时段（scoring.md「三情景构建」PE 时段匹配）——"
+                     "请在阶段卡标注 ≥2 个 calib 时段（首版软约束，观察一轮后升拒渲染）")
+    if calibs:
+        pts = _series_month_pe((fill.get("price_history") or {}).get("series"))
+        verified = 0
+        for s in calibs:
+            span = parse_stage_period(str(s.get("period") or "").strip())
+            if span is None or not pts:
+                continue   # period 解析失败已单独告警；无序列无从对账
+            (y0, m0), (y1, m1) = span
+            if (y1, m1) == (9999, 12):   # 「至今」开口 → 夹取到序列末月（与渲染同源规则）
+                y1, m1 = max((y, m) for y, m, _pe in pts)
+            inwin = [pe for y, m, pe in pts if (y0, m0) <= (y, m) <= (y1, m1)]
+            pes = [pe for pe in inwin if pe is not None]
+            dec = _parse_pe_range(s.get("pe"))
+            if not inwin or not pes or dec is None:
+                continue   # 窗口外 / 序列无 pe / 未写 PE 区间 → 跳过（不计入已核验）
+            verified += 1
+            lo, hi = dec
+            bad = []
+            if lo and abs(min(pes) - lo) / lo > 0.25:
+                bad.append(f"下限 {lo:g}x vs 实测最低 {min(pes):g}x")
+            if hi and abs(max(pes) - hi) / hi > 0.25:
+                bad.append(f"上限 {hi:g}x vs 实测最高 {max(pes):g}x")
+            if bad:
+                tag = _plain_text(str(s.get("name") or "")).strip() or "?"
+                short = tag[:6] + ("…" if len(tag) > 6 else "")
+                warns.append(f"cycle_stages[{short}] calib 时段 PE 声明与 price_history 同窗口实测"
+                             f"端点偏差 >25%（{'；'.join(bad)}）：校准时段声明须与取数窗口同源"
+                             f"（E2 月线月末 PE）——请核对阶段 pe 或校准时段划段")
+        if not verified:
+            warns.append("cycle_stages 的 calib 时段均在取数窗口外（或窗口内无 PE 序列/未写 PE 区间）："
+                         "校准声明未核验——请核对 price_history.series 的月份覆盖与阶段 pe 声明")
 
 
 def _check_cycle_position(fill: dict, warns: list) -> None:

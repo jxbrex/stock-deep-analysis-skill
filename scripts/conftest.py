@@ -178,7 +178,9 @@ def full_fill(**over):
     chain/triggers/consensus/price_history/pe_history/prev 全开——罩住第 11/13 章与
     可选 builder（segments/chain/peers_plot/tornado/triggers/pe_band/price_history/哑铃），
     minimal_fill 只罩主干。图形字段锚点全在位（无「缺锚点」告警）；内容类存量告警
-    （thesis 薄/dim 薄/peers_meta 占位/quote 缺失）继承自 minimal_fill，与本 fixture 无关）。"""
+    （thesis 薄/dim 薄/quote 缺失/校验盲飞）继承自 minimal_fill，与本 fixture 无关——
+    peer 侧告警按 v5.4.0 规矩清零：peers_meta 三选二 + 排除语 + 凑不齐说明（仅 2 家），
+    散点点位的表态与表内事实一致（同业乙只入散点、点名说明未列）。"""
     dims = [_dim(_LONG_TEXT) for _ in range(5)]
     dims[0] += "<!--SEGMENTS-->"   # 4.1 后原位挂业务构成图
     dims[1] += "<!--CHAIN-->"      # 4.2 后原位挂产业链图
@@ -244,6 +246,9 @@ def full_fill(**over):
              "net_cash": "120亿", "implied_g": "0.5",
              "implied_note": "g=WACC−FCF₁/EV（EV=市值−净现金）",
              "verdict": "隐含 g≈0.5% vs 近5年净利复合 +8%——市场按低增长定价，DCF 值与基础中值互证。"},
+        peers_meta="同行业（煤化工/烯烃）、同规模（总市值 800-1,500 亿）筛选；"
+                   "同业乙仅入散点、未列入指标表（集团口径 ROE 不可比）；"
+                   "可比公司仅 2 家（行业集中，凑不齐 3 家），纯焦化标的排除。",
         peers_plot={"points": [
             {"name": "测试股份", "roe": 14, "pe": 11, "target": True},  # 与 valuation_inputs.pe_ttm 一致
             {"name": "同业甲", "roe": 9, "pe": 25},

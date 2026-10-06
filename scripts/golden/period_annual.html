@@ -219,7 +219,12 @@ td.cell-worst { color: var(--ink); font-weight: 700; }
 .stage-driver { font-size: 12px; color: var(--muted); }
 .stage.current { border-color: var(--accent); background: var(--accent-soft); }
 .stage.current .stage-name { color: var(--accent); }
-.stage-cur-tag { position: absolute; top: 10px; right: 12px; font-size: 11px; font-weight: 700; color: var(--white); background: var(--accent); border-radius: 3px; padding: 1px 6px; }
+/* 阶段卡角标容器（v5.4.0）：flex + gap 自动并排——「本轮」「校准锚」同卡时不叠字，
+   无需按徽章宽度手算偏移量 */
+.stage-tags { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; align-items: center; }
+.stage-cur-tag { font-size: 11px; font-weight: 700; color: var(--white); background: var(--accent); border-radius: 3px; padding: 1px 6px; }
+/* 校准锚角标（calib:true 阶段卡）：弱化沙色系——与「本轮」钢蓝徽章区分 */
+.stage-calib-tag { font-size: 11px; font-weight: 700; color: var(--muted); background: var(--sand-deep); border: 1px solid var(--line); border-radius: 3px; padding: 1px 6px; }
 /* 双数取整（trig-strip v4.9.2 同款）：恰 2/4 张时桌面 2 列 */
 @media (min-width: 1025px) {
   .stage-strip:has(> .stage:nth-child(2):last-child),

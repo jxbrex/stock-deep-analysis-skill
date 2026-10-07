@@ -12,6 +12,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import render_report as R
+from validate import _is_hk_code
 from scoring import (_position_steps, _quality_verdict, _valuation_verdict,
                      _edge_info, build_edge_upgrade_rows)
 from conftest import (
@@ -2528,3 +2529,219 @@ def test_peers_pe_cross_warn():
     assert "高于全部同业" not in validate_stderr(
         minimal_fill(peers_meta=_PEERS_META_OK, peers_plot={"points": high}))
     print("OK peers PE 交叉告警（基础带高于全部同业告警，低于则放行）")
+
+
+def test_period_track_hk_deadend_message():
+    """v5.5.1 F1：港股（5 位代码）period_track 硬拒点文案。港股 em_fetch 依赖 tushare
+    hk_income 权限，无权限时 period_track 永不落盘，报错须指向「删除 fill 的 period_track」
+    而非重跑 em_fetch（小米 01810 2026-10-07 实证：拦得对、文案误导）。
+    拒渲染本身不变（防伪链不动），A 股文案保持原样。"""
+    with tempfile.TemporaryDirectory() as d:
+        ref = write_fill({"price": 10.0, "pe_ttm": 11.0}, d, name="em_ref.json")
+        q = {"source_file": ref, "date": "2026-08-27"}
+        # A 股：既有文案（重跑 em_fetch --out 落盘 或 删除 fill 的 period_track）
+        f = period_fill(quote=q)
+        try:
+            R.validate_content(f, R.compute_valuation(f))
+            raise AssertionError("A 股落盘无 period_track 键应拒渲染")
+        except ValueError as e:
+            assert "重跑 em_fetch --out 落盘" in str(e), f"A 股文案应保持原样，实际: {e}"
+            assert "港股" not in str(e), f"A 股文案不应提港股，实际: {e}"
+        # 港股：仍拒渲染（防伪链不动），文案改指港股真实出路
+        fh = minimal_fill(code="01810", quote=q,
+                          period_track={"period": "2026中报", "rev": 100.0})
+        try:
+            R.validate_content(fh, R.compute_valuation(fh))
+            raise AssertionError("港股落盘无 period_track 键仍应拒渲染（防伪链不动）")
+        except ValueError as e:
+            m = str(e)
+            assert "hk_income" in m and "删除" in m, f"港股文案应指向删字段，实际: {m}"
+            assert "勿重跑" in m, f"港股文案应劝止重跑 em_fetch，实际: {m}"
+    print("OK 港股 period_track 死路文案（仍拒渲染，文案分派港股）")
+
+
+def test_gap_plot_street_source_gate():
+    """v5.5.1 F2：gap_plot.street 落盘第二照抄源（首版软告警，不拒）——港股 street 非空而
+    无 source_file → 告警（E5 对港股无逐机构明细，防手填）；source_file 读不到 / 结构非法 /
+    数值对不上 → 告警；数值对得上 → 静默；A 股无 source_file 不告警（存量合法用法=
+    street 直接照抄 E5「净利明细/目标价明细」行）。"""
+    dims = [{"name": "2026E 出货量（万台）", "ours": 1800, "consensus": 1750,
+             "street": [{"org": "国泰海通", "v": 1830}]},
+            {"name": "2026E 均价（元）", "ours": 1150, "consensus": 1120,
+             "street": [{"org": "花旗", "v": 1180}]}]
+    # 港股无 source_file → 告警（指向 _street_ 落盘路径）
+    out = validate_stderr(minimal_fill(code="01810", gap_plot={"dims": dims}))
+    assert "gap_plot.street 无落盘源" in out and "_street_" in out, "港股 street 无源应告警"
+    # A 股无 source_file → 静默（不误伤存量照抄 E5 行的合法用法）
+    assert "gap_plot.street 无落盘源" not in validate_stderr(
+        minimal_fill(code="600000", gap_plot={"dims": dims})), "A 股 street 无源不应告警"
+    with tempfile.TemporaryDirectory() as d:
+        ok = write_fill(
+            {"source": "2026-10-07 六家机构电话调研纪要",
+             "dims": {"2026E 出货量（万台）": [{"org": "国泰海通", "v": 1830,
+                                                "date": "2026-09-28"}],
+                      "2026E 均价（元）": [{"org": "花旗", "v": 1180, "date": "2026-10-01"}]}},
+            d, name="_street_01810_10-07.json")
+        # 数值对得上 → 静默
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": dims, "source_file": ok}))
+        assert "无对应记录" not in out and "读取失败" not in out and "结构非法" not in out \
+            and "四要素" not in out, "street 数值可在落盘源中找到时不应告警"
+        # 数值对不上 → 告警（文案须写明真实容差口径）
+        bad = [dict(dims[0], street=[{"org": "国泰海通", "v": 1500}]), dims[1]]
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": bad, "source_file": ok}))
+        assert "无对应记录" in out, "street 数值与落盘源对不上应告警"
+        assert "容差" in out and "0.005" in out, "告警文案应写明容差口径（1%，下限 0.005）"
+        # 维度在落盘源中缺键 → 告警
+        one = write_fill({"source": "调研", "dims": {}}, d, name="_street_01810_10-08.json")
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": dims, "source_file": one}))
+        assert "无对应维度记录" in out, "落盘源缺维度键应告警"
+        # 结构非法（缺 dims 对象）→ 告警
+        bad_struct = write_fill([{"org": "花旗", "v": 1180}], d, name="_street_bad.json")
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": dims, "source_file": bad_struct}))
+        assert "结构非法" in out, "落盘源缺 dims 对象应告警"
+        # 记录缺机构名/日期（四要素不全）→ 告警
+        noorg = write_fill(
+            {"source": "调研", "dims": {"2026E 出货量（万台）": [{"v": 1830}],
+                                        "2026E 均价（元）": [{"org": "花旗", "v": 1180,
+                                                              "date": "2026-10-01"}]}},
+            d, name="_street_01810_10-09.json")
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": dims, "source_file": noorg}))
+        assert "四要素" in out, "记录缺机构名/日期应告警"
+        # 落盘源缺 source（文件级来源说明）→ 告警
+        nosrc = write_fill(
+            {"dims": {"2026E 出货量（万台）": [{"org": "国泰海通", "v": 1830,
+                                               "date": "2026-09-28"}],
+                      "2026E 均价（元）": [{"org": "花旗", "v": 1180, "date": "2026-10-01"}]}},
+            d, name="_street_01810_10-10.json")
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": dims, "source_file": nosrc}))
+        assert "缺 source" in out, "落盘源缺 source（来源说明）应告警"
+        # 文件读不到 → 告警不拒
+        out = validate_stderr(minimal_fill(
+            code="01810",
+            gap_plot={"dims": dims, "source_file": os.path.join(d, "不存在.json")}))
+        assert "gap_plot.source_file 读取失败" in out, "source_file 读不到应告警"
+        # 图下注释：注明基名（不露本地全路径），无 source_file 则保持 E5 口径（存量 A 股）
+        html = render_fill(minimal_fill(code="01810",
+                                        gap_plot={"dims": dims, "source_file": ok}))
+        assert "调研落盘" in html and os.path.basename(ok) in html, \
+            "有 source_file 时图注应注明实际来源"
+        assert ok not in html, "图注不得暴露本地全路径（只显示 basename）"
+    assert "E5 逐研报明细回填" in render_fill(minimal_fill(gap_plot={"dims": dims})), \
+        "无 source_file 时图注保持 E5 口径"
+    print("OK gap_plot street 落盘源软校验（无源告警/对账/读不到/结构/四要素，A 股不误伤）")
+
+
+def test_gap_plot_street_org_match():
+    """v5.5.1 P1-2：street 对账按机构名匹配（防张冠李戴）——fill 写「摩根士丹利 1830」而落盘
+    是「国泰海通 1830」→ 告警（数值相同也不算）；同 org 对得上 → 静默；同 org 多条任一命中
+    → 静默（同机构取最新口径）；org 缺失（未具名点）→ 退全池数值比对。"""
+    dims = [{"name": "2026E 出货量（万台）", "ours": 1800, "consensus": 1750,
+             "street": [{"org": "国泰海通", "v": 1830}]},
+            {"name": "2026E 均价（元）", "ours": 1150, "consensus": 1120,
+             "street": [{"org": "花旗", "v": 1180}]}]
+    with tempfile.TemporaryDirectory() as d:
+        src = write_fill(
+            {"source": "调研", "dims": {
+                "2026E 出货量（万台）": [{"org": "国泰海通", "v": 1830, "date": "2026-09-28"},
+                                        {"org": "国泰海通", "v": 1810, "date": "2026-08-15"},
+                                        {"org": "中金", "v": 1850, "date": "2026-09-20"}],
+                "2026E 均价（元）": [{"org": "花旗", "v": 1180, "date": "2026-10-01"}]}},
+            d, name="_street_org.json")
+        # 张冠李戴：数值与落盘中某条相同，但署名机构对不上 → 告警
+        wrong = [dict(dims[0], street=[{"org": "摩根士丹利", "v": 1830}]), dims[1]]
+        out = validate_stderr(minimal_fill(code="01810",
+                                           gap_plot={"dims": wrong, "source_file": src}))
+        assert "无对应记录" in out and "摩根士丹利" in out, \
+            "机构名对不上应告警（数值相同也不能算对账成功）"
+        # 同 org 命中（同机构多条取其一）→ 静默
+        same = [dict(dims[0], street=[{"org": "国泰海通", "v": 1810}]), dims[1]]
+        assert "无对应记录" not in validate_stderr(
+            minimal_fill(code="01810", gap_plot={"dims": same, "source_file": src})), \
+            "同机构数值命中应静默"
+        # org 缺失（未具名点）→ 退全池数值比对，不误报
+        noorg = [dict(dims[0], street=[{"v": 1830}]), dims[1]]
+        assert "无对应记录" not in validate_stderr(
+            minimal_fill(code="01810", gap_plot={"dims": noorg, "source_file": src})), \
+            "未具名点应退全池数值比对"
+    print("OK gap_plot street 机构名匹配（张冠李戴告警/同 org 命中/未具名退全池）")
+
+
+def test_is_hk_code_single_source():
+    """v5.5.1 P1-3：港股判定收单源 `_is_hk_code`（5 位数字）——period_track 硬拒文案、
+    gap_plot street 无源门、cagr_adjustments 例外三处共用同一判定。"""
+    assert _is_hk_code({"code": "01810"}) and _is_hk_code({"code": " 00700 "})
+    for code in ("600000", "000001", "830799", "399001", "0181", "018100", None, ""):
+        assert not _is_hk_code({"code": code}), f"{code!r} 不应判为港股"
+    print("OK 港股判定单源（5 位数字，A 股/指数/缺失不命中）")
+
+
+def test_prev_charts_structure_warn():
+    """v5.5.1 F3：复盘模式「旧有新无」结构对照（软告警）——prev.charts 缺失提醒回填；
+    gap_plot 旧有本无 / fin_trend 有效面板变少 / growth_plot.fcst 年少 / pe_history 有→无
+    逐项各一条（文案要求 review_html 写明减配理由）；本版补齐 → 该项静默；无 prev → 静默。"""
+    # prev 无 charts → 提醒回填；无 prev → 全程静默
+    f_no = full_fill()
+    del f_no["prev"]["charts"]
+    assert "prev.charts 未填" in validate_stderr(f_no), "prev 有而 charts 缺失应告警提醒回填"
+    assert "prev.charts" not in validate_stderr(minimal_fill()), "无 prev 应全程静默"
+    # 上版 gap_plot 已生成、本版无 → 告警；本版补齐（有效维度 ≥2）→ 该项静默
+    dims = [{"name": "2026E 出货量（万台）", "ours": 1800, "consensus": 1750},
+            {"name": "2026E 均价（元）", "ours": 1150, "consensus": 1120}]
+    f = full_fill()
+    f["prev"]["charts"] = {"gap_plot": True}
+    out = validate_stderr(f)
+    assert "复盘减配" in out and "gap_plot" in out and "review_html" in out, "上版有图本版无应告警"
+    f2 = full_fill()
+    f2["prev"]["charts"] = {"gap_plot": True}
+    f2["gap_plot"] = {"dims": dims}
+    assert "复盘减配" not in validate_stderr(f2), "本版补齐图后该项应静默"
+    # fin_trend 有效面板 4 → 3
+    f = full_fill()
+    f["prev"]["charts"] = {"fin_trend_panels": 4}
+    f["fin_trend"]["panels"] = f["fin_trend"]["panels"][:3]
+    out = validate_stderr(f)
+    assert "复盘减配" in out and "fin_trend" in out and "4" in out and "3" in out, \
+        "面板变少应告警"
+    # growth_plot.fcst 有效年 2 → 1
+    f = full_fill()
+    f["prev"]["charts"] = {"growth_fcst_years": 2}
+    out = validate_stderr(f)
+    assert "复盘减配" in out and "fcst" in out, "预测年少应告警"
+    # pe_history 有 → 无
+    f = full_fill()
+    f["prev"]["charts"] = {"pe_history": True}
+    del f["pe_history"]
+    out = validate_stderr(f)
+    assert "复盘减配" in out and "pe_history" in out, "pe_history 有→无应告警"
+    # 本版比上版「变多」→ 静默（只报减配，不报增配）
+    f = full_fill()
+    f["prev"]["charts"] = {"fin_trend_panels": 2, "growth_fcst_years": 1}
+    assert "复盘减配" not in validate_stderr(f), "本版比上版图多不应告警"
+    # 四项齐平（本版与上版一致）→ 无减配告警
+    f = full_fill()
+    f["prev"]["charts"] = {"gap_plot": False, "fin_trend_panels": 4,
+                           "growth_fcst_years": 1, "pe_history": True}
+    assert "复盘减配" not in validate_stderr(f), "与上版齐平不应告警"
+    print("OK prev.charts 结构对照（缺字段提醒/四项减配逐条/补齐与变多静默/无 prev 静默）")
+
+
+def test_prev_charts_pe_history_keys():
+    """v5.5.1 P1-1：prev.charts.pe_history 判定与渲染同源（charts_cycle._pe_band_ok 单源）——
+    本版 pe_history 只剩 hist_lo（缺 hist_hi，build_pe_band 不落图）而 prev.charts.pe_history=true
+    → 告警（此前只看字段非空，缺键减配漏检）；hist_lo/hist_hi + valuation_inputs 的
+    pe_ttm/pe_band 五键齐备 → 静默。"""
+    f = full_fill()
+    f["prev"]["charts"] = {"pe_history": True}
+    f["pe_history"] = {"hist_lo": 13.7}          # 缺 hist_hi → 图不生成
+    out = validate_stderr(f)
+    assert "复盘减配" in out and "pe_history" in out, "pe_history 缺键导致图不生成应告警"
+    f2 = full_fill()
+    f2["prev"]["charts"] = {"pe_history": True}
+    assert "复盘减配" not in validate_stderr(f2), "五键齐备应静默"
+    print("OK prev.charts.pe_history 与渲染同源（缺键告警/齐备静默）")

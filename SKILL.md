@@ -155,7 +155,7 @@ sensitivity 的 name）或写**带数字的排除理由**（`excluded`，如「A
 端点/字段/港股矩阵/429 规则在 `references/data-sources.md`（需要手工 curl 时再读）。
 
 取数优先级：**em_fetch.py（首选，一条命令）→ 妙想 MCP 直调（缺席时经 mx-data/mx-search skill 替补）→ 手工 curl → 定性搜索**。
-**v5.0 新增输出**：em_fetch 摘要新增「报告期进度」照抄行（最新报告期四累计值+同比/单季拆分/近三年同期占比带/完成度分母说明），落盘 JSON 新增 `period_track`/`consensus_np` 键——fill 的 `period_track` 照抄键与 `valuation_inputs.consensus_np` 一律照抄该行/落盘回填，禁手估（v4.11.0 holders/price_history 同款照抄纪律；契约见 fill-schema.md）。**v5.0.1 扩充**：单季拆分照抄键新增扣非与经营现金流（`sq_dedt`/`sq_ocf` 及 prev/yoy 四键，累计差分口径）。**v5.1.0 补源**：E5 走东财降级源（tushare report_rc 空/失败）时，当年 EPS 均值按 ×总股本（总市值/现价）换算落盘 `consensus_np`（落盘 `src` 键标记换算口径）——此前该分支不落盘，恒瑞 2026-09 实证致第 3 章进度条与预期差拆解口径分裂。
+**v5.0 新增输出**：em_fetch 摘要新增「报告期进度」照抄行（最新报告期四累计值+同比/单季拆分/近三年同期占比带/完成度分母说明），落盘 JSON 新增 `period_track`/`consensus_np` 键——fill 的 `period_track` 照抄键与 `valuation_inputs.consensus_np` 一律照抄该行/落盘回填，禁手估（v4.11.0 holders/price_history 同款照抄纪律；契约见 fill-schema.md）。**v5.0.1 扩充**：单季拆分照抄键新增扣非与经营现金流（`sq_dedt`/`sq_ocf` 及 prev/yoy 四键，累计差分口径）。**v5.1.0 补源**：E5 走东财降级源（tushare report_rc 空/失败）时，当年 EPS 均值按 ×总股本（总市值/现价）换算落盘 `consensus_np`（落盘 `src` 键标记换算口径）——此前该分支不落盘，恒瑞 2026-09 实证致第 3 章进度条与预期差拆解口径分裂。**v5.5.1 港股补源**：E5 对港股无逐机构明细（tushare `report_rc` 不覆盖港股），第 9 章 `gap_plot` 的 `street` 无照抄行——填报方把调研（卖方研报/电话调研）得到的逐机构预测**先落盘**为 `_street_{code}_{date}.json`（含机构名/数值/日期/来源四要素）再照抄填 `gap_plot.street`，并在 `gap_plot` 加 `source_file` 指向该文件（契约见 fill-schema.md「gap_plot」节；无 `source_file` 的港股 street 会被软校验判为手填嫌疑）。
 **委派边界（一条自洽规则，模板与工具限制逐字见 data-collection.md Step 1.3）**：
 - **强制委派（MANDATORY）**：同业 peer **≥3 只**的 `--peers` 批量取数、公告 PDF 下载提表
   **必须委派子代理**（回传须含各 peer 的 E1 原文行 + 清洗成表，主会话只核对来源）。

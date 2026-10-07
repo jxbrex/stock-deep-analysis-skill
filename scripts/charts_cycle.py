@@ -20,6 +20,23 @@ def _quad_word(de: float, pc: float) -> str:
                 "业绩估值双杀" if de <= -3 else "价与业绩同步回落")
     return "横盘"
 
+
+def _pe_band_ok(fill: dict) -> bool:
+    """PE 历史带可生成性单源（v5.5.1，lessons 2026-09-21 规则 1：渲染与校验调同一份）：
+    pe_history 的 hist_lo/hist_hi 与 valuation_inputs 的 pe_ttm/pe_band 两端齐备、且域合法
+    （hist_hi > hist_lo、band_hi ≥ band_lo）才落图。build_pe_band 与
+    validate._prev_chart_facts（复盘「旧有新无」对照）共用——两处各判一遍则缺键减配漏检。"""
+    ph = fill.get("pe_history") or {}
+    vi = fill.get("valuation_inputs") or {}
+    hist_lo, hist_hi = _num(ph.get("hist_lo")), _num(ph.get("hist_hi"))
+    cur = _num(vi.get("pe_ttm"))
+    band = vi.get("pe_band") or []
+    band_lo = _num(band[0]) if len(band) >= 1 else None
+    band_hi = _num(band[1]) if len(band) >= 2 else None
+    return (None not in (hist_lo, hist_hi, cur, band_lo, band_hi)
+            and hist_hi > hist_lo and band_hi >= band_lo)
+
+
 def build_pe_band(fill: dict) -> str:
     """08→11 估值·PE 历史带（fill["pe_history"] 可选字段 + valuation_inputs 的 pe_band/pe_ttm）：
     横向子弹图——浅带=历史 PE 区间，钢蓝段=合理带，黑刻=当前值，灰虚刻=关键时点。
@@ -29,16 +46,17 @@ def build_pe_band(fill: dict) -> str:
     pe_history: {"hist_lo":13.7, "hist_hi":83.2, "label":"近5年",
                  "milestones":[{"label":"2021H1","pe":46.9}, …]}（label 可选；milestones 可选，
                  建议 3-6 个关键时点：峰值/谷值/典型时段，与时段拆解表同源取数）；
-    字段缺失或与 valuation_inputs 不齐 → 返回空串（可选增强，静默跳过）。"""
+    字段缺失或与 valuation_inputs 不齐 → 返回空串（可选增强，静默跳过；可生成性判定
+    单源 _pe_band_ok，validate 复盘结构对照共用）。"""
     ph = fill.get("pe_history") or {}
     vi = fill.get("valuation_inputs") or {}
+    if not _pe_band_ok(fill):
+        return ""
     hist_lo, hist_hi = _num(ph.get("hist_lo")), _num(ph.get("hist_hi"))
     cur = _num(vi.get("pe_ttm"))
     band = vi.get("pe_band") or []
     band_lo = _num(band[0]) if len(band) >= 1 else None
     band_hi = _num(band[1]) if len(band) >= 2 else None
-    if None in (hist_lo, hist_hi, cur, band_lo, band_hi) or hist_hi <= hist_lo or band_hi < band_lo:
-        return ""
     # 分位区（v4.8，可选 pe_history.p25/p75，em_fetch E1 分位带直接回填）：带内深沙段
     p25, p75 = _num(ph.get("p25")), _num(ph.get("p75"))
     iq_ok = p25 is not None and p75 is not None and hist_lo <= p25 < p75 <= hist_hi

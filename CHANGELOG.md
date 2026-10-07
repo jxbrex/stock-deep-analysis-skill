@@ -198,6 +198,48 @@
 
 ## 版本历史
 
+### V5.5.1（2026-10-07）— 小米复盘九问定位：港股两处数据源死路修复 + 复盘「旧有新无」对照告警
+
+> 小版本。缘起：小米 01810 复盘报告（v5.5.0 首个实战）全过程复盘九问，定位出四个真缺陷：
+> 港股 period_track 校验死路（唯一一次硬拒渲染的制度诱因）、港股 gap_plot 无合规数据源
+> （tushare 不覆盖港股研报明细→E5 东财兜底无逐机构行→street 无照抄源→图静默消失）、
+> 复盘模式「旧有新无」零告警（研发 panel/2027E/逐机构图三处静默减配）、lessons.md
+> 2026-09-13 条过期（同日 v4.11.1 已落地被漏记）。评分维度 1C/1D 同日 -1.0 经查证为
+> 判据零改动下的 LLM 独立复打漂移（增量证据为零、踩「常量不能解释变量」纪律）——不改判据，
+> 实证归入置顶结转 1D 机械化素材。
+
+- **F1 港股 period_track 校验死路修文案**（validate.py `_check_period_track`）：硬拒维持
+  不变（禁手估防伪链不动），港股 5 位代码命中该拒点时报错文案改指真实出路（em_fetch 依赖
+  tushare hk_income 权限、无权限永不落盘 → 删除 period_track、第 3 章整章缺席为港股预期
+  形态、勿重跑 em_fetch）；A 股文案逐字未动。
+- **F2 港股 gap_plot 调研落盘小门**（用户拍板「开合规小门」）：E5 无逐机构明细时（港股
+  常态），调研所得逐机构预测先落盘 `_street_{code}_{date}.json`（机构/数值/日期/来源
+  四要素），fill `gap_plot.source_file` 指向之、street 照抄其数值；validate 软校验
+  （告警级）：港股 street 非空无 source_file → 告警疑似手填；文件读不到/结构非法/数值
+  对不上 → 告警；**A 股照抄 E5 行的存量合法用法不告警**（精确限定 5 位港股，零误伤）。
+  charts_gap 图注按有无 source_file 分派来源口径（调研落盘 / E5 逐研报明细回填）。
+- **F3 复盘模式「旧有新无」结构对照告警**：`prev.charts` 必填四键（首版软告警不拒；
+  gap_plot 有无 / fin_trend panels 数 / growth fcst 年数 / pe_history 图是否生成，
+  填报方照抄上版 fill 事实）；prev 存在而 charts 缺失 → 提醒回填告警；对照发现本版
+  减配 → 逐项告警并要求 review_html 写明理由。本版事实判定与渲染同源（`_gap_dim_ok`/
+  面板有效性/预测年规则复用渲染侧，pe_history 经 `_pe_band_ok` 单源）。
+- **F4/F5 文档**：lessons.md 2026-09-13 条补落地注记；data-collection.md 公告 PDF 委派段
+  补两条效率纪律（markitdown 必带 `PYTHONIOENCODING=utf-8`；转 md 后 grep 先行定位、
+  禁止顺序扫读——46 页公告找 4 个数字扫读 21 次实证）。
+- **热核审计会审（发布前两路，用户召起）**：代码路 + 契约路并行，P0 零发现；
+  **P1×4 同轮修**——①F3 pe_history 事实判定与渲染不同源（bool 已填 vs build_pe_band
+  五键齐备，缺键减配整洞漏检）：charts_cycle 抽 `_pe_band_ok` 单源、渲染校验共用
+  （lessons 2026-09-21 规则 1 执行）；②F2 street 对账不按机构名匹配（「摩根士丹利 1830」
+  撞「国泰海通 1830」零告警）：org 非空先筛同机构再比数值，实现向告警文案对齐；
+  ③港股代码判定三处复制收 `_is_hk_code` 单源；④handoff 结转丢项两条（coverage
+  first-wins 告警 / B4 报错回显）补回 + 「必填/可选」措辞统一。**P2 顺手修**：gap 图注
+  只显示落盘基名（防露本地全路径）、street 容差文案对齐实现（相对 1% 下限 0.005）、
+  补漏测分支（缺 source / 本版变多静默）；lessons 补注文件名更正（v4.11.1 落地时函数居
+  charts_misc.py，v5.1.5 拆出 charts_gap.py）。未修 P2 登记 handoff 结转。
+- 测试：**202 全绿**（+6 用例：period_track 港股文案 / gap_plot street 源门禁 / prev.charts
+  对照 + 会审补 pe_history 缺键 / street 张冠李戴 / 缺 source 与变多静默）；golden 零变化；
+  conftest `full_fill` 补 `prev.charts` 齐平合规态。`RENDERER_VERSION` v5.5.0→v5.5.1。
+
 ### V5.5.0（2026-10-06）— B 级三硬化：sensitivity 业务线覆盖硬闸 + 3B 无项目型四档 + 风险溢价分型参考带
 
 > 立项：v5.3.0 结转「主观判据点全梳理」B 级 4/5/6（第 7 项时机信号并入结转 E 不单立）。

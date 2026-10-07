@@ -6,6 +6,7 @@
 _gap_fmt/_px。依赖 charts_base 与 scoring。"""
 
 import math
+import os
 import re
 
 from scoring import _num, _fmt, _esc
@@ -105,12 +106,16 @@ def build_gap_plot(fill: dict) -> str:
         return ""
     dims = dims[:6]
     if any(d["street"] for d in dims):
-        return _gap_plot_a(dims)
+        # P2（v5.5.1）：图注只显示基名——fill 若写绝对路径，原样嵌入会随报告外露本地路径
+        src = str(gp.get("source_file") or "").strip()
+        return _gap_plot_a(dims, os.path.basename(src) if src else "")
     return _gap_plot_b(dims)
 
 
-def _gap_plot_a(dims: list) -> str:
-    """A 档主形态：逐机构横向分布定位（demo v3 定稿版式：轴 x∈[280,840]、行距 70、右列 x=880）。"""
+def _gap_plot_a(dims: list, src_note: str = "") -> str:
+    """A 档主形态：逐机构横向分布定位（demo v3 定稿版式：轴 x∈[280,840]、行距 70、右列 x=880）。
+    src_note 非空（fill 的 gap_plot.source_file 基名）= 港股调研落盘源，图下注释注明实际来源
+    文件（v5.5.1；缺省仍写「E5 逐研报明细回填」——A 股存量口径）。"""
     n = len(dims)
     parts = ['<span class="section-tag">卖方分布 vs 本文假设 · 逐机构定位</span>',
              _svg_open(1000, 30 + 70 * n, "市场预期差机构分布图")]
@@ -232,7 +237,9 @@ def _gap_plot_a(dims: list) -> str:
                      f'fill="{_C_INK}">{pct:+.1f}%</text>')
     parts.append(_svg_close())
     parts.append('<span class="source">机构分布定位图（脚本按 gap_plot 字段生成）：一个点=一家机构近 180 天研报预测'
-                 '（E5 逐研报明细回填，同机构多份取最新）；沙=其他机构、橙=头部/外资（标名称）、蓝=本文、'
+                 + (f'（来源：{_esc(src_note)} 调研落盘，同机构多份取最新）；' if src_note
+                    else '（E5 逐研报明细回填，同机构多份取最新）；')
+                 + '沙=其他机构、橙=头部/外资（标名称）、蓝=本文、'
                  '◆=一致预期均值；各维度独立原生单位轴，行内比较有效、跨行比偏离看右列；'
                  '近点处理=本文点白描边压轴压盖（值接近时灰点露月牙）、灰点间对称泳道错位，'
                  '◆ 标签与刻度冲突时右移或省略等值刻度</span>')

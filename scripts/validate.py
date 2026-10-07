@@ -18,6 +18,7 @@ from scoring import (DIMS, _num, _fmt, _scenario_numbers, _plain_text, _LABEL_RE
                      _cn_placeholders, growth_sigma)
 from charts_base import (_C_BLUE, _sensitivity_items, _var_key, _gap_dim_ok, _period_ratio,
                          parse_stage_period, _PERIOD_VERDICTS)
+from charts_cycle import _pe_band_ok
 
 
 # 正文 HTML 字段全集（写作纪律/代号泄漏/.rev 高亮检查用）
@@ -43,6 +44,13 @@ def _split_dim_blocks(frag: str) -> list:
 def _dim_body_text(blk: str) -> str:
     """dim-block 正文体纯文本（剥标题行与评分末拍）——B5 数字义务判定的取数口径。"""
     return _plain_text(_SCORE_BEAT_RE.sub("", _DIM_HEADER_RE.sub("", blk or "")))
+
+
+def _is_hk_code(fill: dict) -> bool:
+    """港股判定单源（v5.5.1 收口，此前 `re.fullmatch(r"\\d{5}", …)` 散三处）：
+    fill.code 为 5 位数字即港股（A 股/北交所/指数为 6 位或 4 位，不命中）。
+    消费点：period_track 硬拒文案、gap_plot street 无落盘源门、cagr_adjustments 例外。"""
+    return bool(re.fullmatch(r"\d{5}", str(fill.get("code") or "").strip()))
 
 
 def _check_price_date(fill: dict) -> None:
@@ -309,6 +317,75 @@ def _check_gap_plot(fill: dict, calc: dict, warns: list) -> None:
         warns.append(f"gap_plot 有效数值维度仅 {effective} 个 <2：分布图不会生成（准入规则）")
     if len(dims) > 6:
         warns.append(f"gap_plot.dims 共 {len(dims)} 行 >6：图内只画前 6 行，其余请挪 text_dims 附注")
+
+
+def _check_gap_plot_street_source(fill: dict, warns: list) -> None:
+    """v5.5.1 F2 gap_plot.street 落盘第二照抄源（首版软告警，不拒——升拒登记 handoff）。
+    纪律：street 逐机构数值必须照抄落盘。A 股走 em_fetch E5「净利明细/目标价明细」行（无
+    source_file，存量合法用法不告警）；港股 E5（tushare report_rc）无逐机构明细，须把调研
+    得到的逐机构预测先落盘为 `_street_{code}_{date}.json` 并由 `gap_plot.source_file` 指向，
+    street 照抄其数值（小米 01810 2026-10-07 实证：六家机构数字无合规路径入图）。
+    告警范围：① 港股（5 位代码）street 非空而无 source_file（手填嫌疑）；② source_file
+    读不到 / 结构非法 / 缺 source / 维度无记录 / 记录缺机构名或日期 / 数值对不上。"""
+    gp = fill.get("gap_plot")
+    if not isinstance(gp, dict):
+        return
+    street_dims = [d for d in (gp.get("dims") or [])
+                   if _gap_dim_ok(d) and any(isinstance(s, dict) and _num(s.get("v")) is not None
+                                             for s in (d.get("street") or []))]
+    if not street_dims:
+        return
+    src = str(gp.get("source_file") or "").strip()
+    if not src:
+        if _is_hk_code(fill):
+            warns.append("gap_plot.street 无落盘源（港股标的）：E5 落盘对港股无逐机构明细，"
+                         "street 来源须先落盘为 `_street_{code}_{date}.json` 并由 "
+                         "gap_plot.source_file 指向（调研得到的机构名/数值/日期/来源四要素），"
+                         "street 照抄其数值——否则视为手填（fill-schema「gap_plot」节）")
+        return
+    try:
+        with open(src, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        warns.append(f"gap_plot.source_file 读取失败: {src}（{e}）——street 逐机构数值无落盘源"
+                     f"可对账，请核对路径后重渲")
+        return
+    recs = doc.get("dims") if isinstance(doc, dict) else None
+    if not isinstance(recs, dict):
+        warns.append(f"gap_plot.source_file 结构非法: {src}——须为 "
+                     '{"source":"调研来源说明","dims":{"维度名":[{"org","v","date"}]}}'
+                     "（契约见 fill-schema「gap_plot」节）")
+        return
+    if not str(doc.get("source") or "").strip():
+        warns.append(f"gap_plot.source_file 缺 source（调研来源说明）: {src}——"
+                     "四要素（机构名/数值/日期/来源）缺一即无法追溯出处")
+    for d in street_dims:
+        name = str(d.get("name") or "").strip()
+        rows = recs.get(name)
+        if not isinstance(rows, list):
+            warns.append(f"gap_plot「{name}」street 在 source_file 中无对应维度记录: {src}"
+                         f"——维度名须与落盘源 dims 的键完全一致")
+            continue
+        bad = [r for r in rows if not isinstance(r, dict) or not str(r.get("org") or "").strip()
+               or not str(r.get("date") or "").strip()]
+        if bad:
+            warns.append(f"gap_plot「{name}」source_file 有 {len(bad)} 条记录缺机构名/日期: {src}"
+                         f"——四要素（机构名/数值/日期/来源）缺一不可追溯")
+        for s in d["street"]:
+            v = _num(s.get("v"))
+            if v is None:
+                continue
+            org = str(s.get("org") or "").strip()
+            # P1-2：署名非空 → 只与落盘同机构记录比（防张冠李戴：数值撞上别家机构不算对账成功）；
+            # 同 org 多条任一命中即通过（对应「同机构取最新」口径）；未具名点退全池数值比对
+            pool = [_num(r.get("v")) for r in rows if isinstance(r, dict)
+                    and (not org or str(r.get("org") or "").strip() == org)]
+            pool = [x for x in pool if x is not None]
+            if not any(abs(v - rv) <= max(abs(rv) * 0.01, 0.005) for rv in pool):
+                shown = "、".join(f"{x:g}" for x in pool) or "无"
+                warns.append(f"gap_plot「{name}」street {org or '未具名'} {v:g} 在 source_file 中"
+                             f"无对应记录（同机构落盘值 {shown}）: {src}——"
+                             f"street 须照抄落盘源、禁手填（容差：相对 1%，下限 0.005）")
 
 
 def _check_chart_fields(fill: dict) -> None:
@@ -827,7 +904,7 @@ def _cagr_adj_reasons(fill: dict, te: dict) -> list:
     c cagr_hist 含 _CAGR_ADJ_KEYWORDS（剔除/口径调整/重述/正常化/经调整，不含裸「调整」）。
     三条皆不成立 → 空列表（默认扣非口径直接复算）。"""
     reasons = []
-    if re.fullmatch(r"\d{5}", str(fill.get("code") or "").strip()):
+    if _is_hk_code(fill):
         reasons.append("港股 5 位代码（经调整口径）")
     if _hist_cagr(fill) is None:
         reasons.append("扣非柱不可用（无扣非柱/不等长/含非数字或非正值/有效年 <3）")
@@ -1326,6 +1403,67 @@ def _check_prev_fields(fill: dict, warns: list) -> None:
                          "（假设未变也要显式写明），见 backtest.md 6.6")
 
 
+def _prev_chart_facts(fill: dict) -> dict:
+    """本版图字段事实（v5.5.1 F3 结构对照右侧，判定与渲染同源）：
+    gap_plot=有效维度（_gap_dim_ok，取前 6）≥2 才落图；fin_trend_panels=有效面板数
+    （bars/lines 名非空且 values 与 years 等长全数字，同 build_fin_trend）；growth_fcst_years=
+    有效预测年数（同 build_growth_plot）；pe_history=可生成性（v5.5.1 P1-1：调
+    charts_cycle._pe_band_ok 单源，键不齐/域非法即不落图——此前只看字段非空，缺键减配漏检）。"""
+    gp = fill.get("gap_plot") or {}
+    gap_dims = [d for d in (gp.get("dims") or []) if _gap_dim_ok(d)][:6]
+    ft = fill.get("fin_trend") or {}
+    years = [str(y) for y in (ft.get("years") or [])]
+
+    def _series_ok(seq):
+        return [x for x in seq if isinstance(x, dict) and str(x.get("name") or "").strip()
+                and len(x.get("values") or []) == len(years)
+                and all(_num(v) is not None for v in x.get("values") or [])]
+
+    panels = sum(1 for p in (ft.get("panels") or []) if isinstance(p, dict)
+                 and (_series_ok(p.get("bars") or []) or _series_ok(p.get("lines") or [])))
+    fcst_n = sum(1 for f in ((fill.get("growth_plot") or {}).get("fcst") or [])
+                 if isinstance(f, dict) and str(f.get("y") or "").strip()
+                 and _num(f.get("np_lo")) is not None and _num(f.get("np_hi")) is not None
+                 and _num(f.get("np_hi")) >= _num(f.get("np_lo"))
+                 and _num(f.get("np_consensus")) is not None)
+    return {"gap_plot": len(gap_dims) >= 2, "fin_trend_panels": panels,
+            "growth_fcst_years": fcst_n, "pe_history": _pe_band_ok(fill)}
+
+
+def _check_prev_charts(fill: dict, warns: list) -> None:
+    """v5.5.1 F3 复盘模式「旧有新无」结构对照（软告警，升拒登记 handoff）：prev.charts 照抄
+    上版 fill 的图字段事实，本版逐项对照——上版有而本版不生成/变少即告警，减配要求写进
+    review_html。小米 01810 2026-10-07 实证：gap_plot 消失、fin_trend 少 panel、
+    growth_plot.fcst 少年份、pe_history 消失全程零告警，只能靠肉眼发现。"""
+    pv = fill.get("prev")
+    if not isinstance(pv, dict):
+        return
+    pc = pv.get("charts")
+    if not isinstance(pc, dict):
+        warns.append("prev.charts 未填：复盘模式须照抄上版 fill 的图字段事实"
+                     '（{"gap_plot": true, "fin_trend_panels": 4, "growth_fcst_years": 2, '
+                     '"pe_history": true}），否则本版相对上版的图形减配（gap_plot 消失 / '
+                     "fin_trend 少 panel / growth_plot.fcst 少年份 / pe_history 消失）无人对照"
+                     "——请回填上版事实后重渲（fill-schema「prev」节）")
+        return
+    now = _prev_chart_facts(fill)
+    why = "——若为有意减配，请在 review_html 写明减配理由与替代数据来源；否则补齐"
+    if pc.get("gap_plot") and not now["gap_plot"]:
+        warns.append(f"复盘减配：上版 gap_plot 逐机构定位图已生成（prev.charts.gap_plot=true）"
+                     f"而本版不生成（维度不足 2 行）{why}（v5.5.1 结构对照）")
+    was_p = _num(pc.get("fin_trend_panels"))
+    if was_p is not None and now["fin_trend_panels"] < was_p:
+        warns.append(f"复盘减配：上版 fin_trend 有效面板 {was_p:g} 个而本版 {now['fin_trend_panels']} 个"
+                     f"{why}（第 4.4 章图墙少画）")
+    was_f = _num(pc.get("growth_fcst_years"))
+    if was_f is not None and now["growth_fcst_years"] < was_f:
+        warns.append(f"复盘减配：上版 growth_plot.fcst 预测年 {was_f:g} 个而本版 "
+                     f"{now['growth_fcst_years']} 个{why}（第 5.1 章利润增长图缩短）")
+    if pc.get("pe_history") and not now["pe_history"]:
+        warns.append(f"复盘减配：上版 pe_history（第 11 章 PE 历史带图）已生成而本版不生成"
+                     f"（字段缺失或 hist_lo/hist_hi/pe_ttm/pe_band 键不齐）{why}")
+
+
 def _check_misc_required(fill: dict, warns: list) -> None:
     """其余 fill-schema 标 ✓ 但渲染器零校验的必填字段。"""
     for name in ("valuation_method", "stock_type", "gap_tier", "peers_meta", "next_review"):
@@ -1732,6 +1870,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_chart_fields(fill)
     _check_quote_present(fill, warns)   # v4.11.1（审核 D5）：date ≥ 2026-09-02 缺 quote 拒渲染
     _check_gap_plot(fill, calc, warns)  # v4.11.1：gap_plot 分布图字段校验（可选字段，缺失不查）
+    _check_gap_plot_street_source(fill, warns)  # v5.5.1 F2：street 落盘第二照抄源（软告警）
 
     _check_red_flag_breaker(fill)
     _check_red_flag_conclusion(fill)  # v5.1.2：红旗 ≥2 项 → 首卡首句存疑句硬门禁
@@ -1760,6 +1899,7 @@ def _validate_content_impl(fill: dict, calc: dict, warns: list) -> None:
     _check_peers_column_support(fill, warns)
     _check_price_history_pe(fill, warns)
     _check_prev_fields(fill, warns)
+    _check_prev_charts(fill, warns)   # v5.5.1 F3：复盘「旧有新无」结构对照（软告警）
     _check_review_miss_diagnostics(fill, warns)
     _check_misc_required(fill, warns)
     _check_optional_charts(fill, warns)
@@ -2378,7 +2518,9 @@ def _period_time_pct(period: str):
 
 def _check_period_track(fill: dict, warns: list) -> None:
     """v5.0 第 3 章 period_track 校验（quote 防伪同款纪律：照抄 em_fetch --out 落盘，禁手估）。
-    硬拒：fill 有 period_track 而落盘无该键；照抄字段与落盘不一致（标签/文字同比完全一致，
+    硬拒：fill 有 period_track 而落盘无该键（v5.5.1 港股 5 位代码文案分派——hk_income 无权限时
+    period_track 永不落盘，真实出路是删除 fill 字段而非重跑 em_fetch；拒渲染本身不变）；
+    照抄字段与落盘不一致（标签/文字同比完全一致，
     数值偏差 >1%；fill 有值而落盘 None=手估嫌疑）；consensus_np 与落盘 np_avg 失配；
     verdict_* 非四选一；goal_* 非正数。
     软告警：落盘有 period_track 而 fill 未回填（第 3 章缺席）；quote 缺失/落盘读不到
@@ -2396,10 +2538,17 @@ def _check_period_track(fill: dict, warns: list) -> None:
         warns.append("period_track 已填但 quote.source_file 缺失或读不到：第 3 章数据无法交叉校验"
                      "（quote 门禁已管主键，本条不重复硬拒）——请重跑 em_fetch --out 落盘并回填 quote 后重渲")
     if pt and ref is not None and not isinstance(ref_pt, dict):
+        hk = _is_hk_code(fill)
+        body = ("港股标的 em_fetch 依赖 tushare hk_income 权限，无权限时 period_track 永不落盘"
+                if hk else
+                "第 3 章数据必须照抄 em_fetch --out 落盘的 period_track 照抄行，禁手估")
+        tail = ("——请删除 fill 的 period_track（第 3 章整章缺席为港股预期形态），勿重跑 em_fetch；"
+                "港股财报数据请走降级路径（优先妙想 MCP mx_hk_finance_data 直查）核对后写正文，禁手估"
+                if hk else
+                "（神华现价造假同款防伪纪律）——请重跑 em_fetch --out 落盘，"
+                "或删除 fill 的 period_track 后重渲")
         raise ValueError("fill.period_track 已填但 em_fetch 落盘 JSON 无 period_track 键："
-                         "第 3 章数据必须照抄 em_fetch --out 落盘的 period_track 照抄行，禁手估"
-                         "（神华现价造假同款防伪纪律）——请重跑 em_fetch --out 落盘，"
-                         "或删除 fill 的 period_track 后重渲")
+                         + body + tail)
     if not pt and isinstance(ref_pt, dict):
         warns.append("em_fetch 落盘含 period_track 但 fill 未回填：第 3 章「最新报告期透视」将缺席"
                      "——请照抄落盘 period_track 行回填（年报期 is_annual=true 整章消失属预期，可忽略本条）")

@@ -288,7 +288,12 @@ def full_fill(**over):
                    "目标价": "10.5-12.4 元", "较现价": "+14.5%（中值11.5）"},
                   {"scenario": "乐观情景", "时间维度": "12个月", "触发条件": "上版乐观触发",
                    "归母净利": "110 亿", "EPS": "1.10", "PE": "13-15x",
-                   "目标价": "14.3-16.5 元", "较现价": "+54.0%（中值15.4）"}]},
+                   "目标价": "14.3-16.5 元", "较现价": "+54.0%（中值15.4）"}],
+              # v5.5.1 F3：prev.charts 照抄上版 fill 的图字段事实——本夹具按「上版与本版齐平」
+              # 填（gap_plot 本版未填 → 上版也未填；fin_trend 4 面板；fcst 1 年；pe_history 有）
+              # 走「无减配」合规路径，减配告警用例见 test_render_gate.py
+              "charts": {"gap_plot": False, "fin_trend_panels": 4,
+                         "growth_fcst_years": 1, "pe_history": True}},
         review_html=('<table><tr><td>假设变更对比</td></tr></table>'
                      '<span class="source">数据来源：测试</span>'
                      '<span class="rev">甲</span><span class="rev">乙</span><span class="rev">丙</span>'),

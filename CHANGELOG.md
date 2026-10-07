@@ -236,6 +236,9 @@
   只显示落盘基名（防露本地全路径）、street 容差文案对齐实现（相对 1% 下限 0.005）、
   补漏测分支（缺 source / 本版变多静默）；lessons 补注文件名更正（v4.11.1 落地时函数居
   charts_misc.py，v5.1.5 拆出 charts_gap.py）。未修 P2 登记 handoff 结转。
+  发布环节补记：fill-schema `gap_plot` 行被 F2 细则撑至 1595 字触部署超长行闸
+  （v4.9.2 阈值 1500）——`_street_` 细则挪表下附段「gap_plot 港股调研落盘细则」
+  （行内容量守恒，fin_trend/l1_html 同款拆法）。
 - 测试：**202 全绿**（+6 用例：period_track 港股文案 / gap_plot street 源门禁 / prev.charts
   对照 + 会审补 pe_history 缺键 / street 张冠李戴 / 缺 source 与变多静默）；golden 零变化；
   conftest `full_fill` 补 `prev.charts` 齐平合规态。`RENDERER_VERSION` v5.5.0→v5.5.1。

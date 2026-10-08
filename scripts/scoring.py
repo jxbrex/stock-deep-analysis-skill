@@ -168,9 +168,15 @@ def _scenario_numbers(s: dict):
     按各自语义处理——校验层拒渲染、计算层按现行优先级取数）。"""
     profit = _num(s.get("profit"))
     pe = s.get("pe") or []
+    # 数组守卫：字符串 "12-16" 会被按字符切片成 pe_lo=1/pe_hi=2 静默错算——归空数组后
+    # 由校验层「缺 PE 区间」拒渲染、计算层跳过该情景的既有路径处理（mcap 同口径）
+    if not isinstance(pe, (list, tuple)):
+        pe = []
     pe_lo = _num(pe[0]) if len(pe) >= 1 else None
     pe_hi = _num(pe[1]) if len(pe) >= 2 else None
     mc = s.get("mcap") or []
+    if not isinstance(mc, (list, tuple)):
+        mc = []
     mc_lo = _num(mc[0]) if len(mc) >= 1 else None
     mc_hi = _num(mc[1]) if len(mc) >= 2 else None
     return profit, pe_lo, pe_hi, mc_lo, mc_hi
@@ -321,10 +327,14 @@ def compute_valuation_score(calc: dict, inputs: dict, gap_tier=None):
         return None
     pe_ttm = _num(inputs.get("pe_ttm"))
     band = inputs.get("pe_band") or []
+    if not isinstance(band, (list, tuple)):
+        band = []  # 字符串 "12-16" 按字符切片静默错算（与 _scenario_numbers 守卫同口径）
     if pe_ttm is None or len(band) < 2:
         return None
     band = [_num(band[0]), _num(band[1])]
-    if band[0] is None or band[1] is None or band[1] <= band[0]:
+    # 带中点 ≤0（跨 0 带如 [-5,5]）时 _map_warranted 的 pe_ttm÷中点 除零/变号裸崩——
+    # 与 _dev_vs_hist 口径对齐：带和 ≤0 即无效带，return None 由 render 层转友好 ValueError
+    if band[0] is None or band[1] is None or band[1] <= band[0] or (band[0] + band[1]) <= 0:
         return None
     central_s = _map_central(calc["central"])
     # 乐观税门禁：base 净利 vs 卖方一致预期（mcap 口径无净利可比，跳过）
@@ -401,12 +411,22 @@ def compute_scores(fill: dict):
         weights[key] = float(w_override.get(key, default_w))
     for layer in ("L1", "L3"):
         layer_w = sum(weights[d[0]] for d in DIMS if d[1] == layer)
+        # 负权重只校总和拦不住（正负可凑够 100），静默错分须显式拒
+        neg = [d[0] for d in DIMS if d[1] == layer and weights[d[0]] < 0]
+        if neg:
+            raise ValueError(f"{layer} 层内权重含负值 {neg}：负权重会静默错分（总和仍可凑够 100），拒渲染")
         if abs(layer_w - 100.0) > 0.01:
             raise ValueError(f"{layer} 层内权重总和 = {layer_w}，必须为 100（分型调整时各层内权重之和仍须等于100）")
 
     # 层占比（质量分内 L1:L3，分型可通过 layer_share 覆盖）
     ls_raw = fill.get("layer_share") or {}
+    if not isinstance(ls_raw, dict):
+        raise ValueError(f"layer_share 需为对象（{{\"L1\": 占比, \"L3\": 占比}}），实际: {type(ls_raw).__name__}")
     ls = {k: float(ls_raw.get(k, DEFAULT_LAYER_SHARE[k])) for k in ("L1", "L3")}
+    # 负占比只校总和同样拦不住（如 120/-20），静默错分须显式拒
+    if any(v < 0 for v in ls.values()):
+        raise ValueError(f"layer_share 含负值 {[k for k, v in ls.items() if v < 0]}："
+                         f"负占比会静默错分（总和仍可凑够 100），拒渲染")
     if abs(sum(ls.values()) - 100.0) > 0.01:
         raise ValueError(f"layer_share 之和 = {sum(ls.values())}，必须为 100")
 
@@ -467,7 +487,10 @@ def compute_scores(fill: dict):
     bad_t = [k for k in t_scores if k not in {d[0] for d in TIMING_DIMS}]
     if bad_t:
         raise ValueError(f"timing_scores 含非法键名 {bad_t}：只接受 筹码面/技术面（2B/2C 旧键名兼容已移除）")
-    t_weights = {k: float((fill.get("timing_weights") or {}).get(k, dw)) for k, _n, dw in TIMING_DIMS}
+    tw_raw = fill.get("timing_weights") or {}
+    if not isinstance(tw_raw, dict):
+        raise ValueError(f"timing_weights 需为对象（{{\"筹码面\": 权重, \"技术面\": 权重}}），实际: {type(tw_raw).__name__}")
+    t_weights = {k: float(tw_raw.get(k, dw)) for k, _n, dw in TIMING_DIMS}
     tw_sum = sum(t_weights.values())
     if abs(tw_sum - 100.0) > 0.01:
         raise ValueError(f"时机层权重总和 = {tw_sum}，必须为 100")

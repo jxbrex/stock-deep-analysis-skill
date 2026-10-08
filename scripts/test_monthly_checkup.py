@@ -79,7 +79,32 @@ def test_disclosure_ts_code_mapping():
     print("OK --disclosure ts_code 映射（SH/SZ/BJ + 港股跳过，mock 无网络）")
 
 
+def test_scan_reports_anchor_beyond_8kb_tail():
+    """审计#15：大仪表盘报告「下次审查」锚点距尾可超 8KB——尾窗放大到 64KB 后必须仍能抓到
+    （旧 8KB 尾窗下本用例红：锚点被挤出尾窗 → next_review=None）。"""
+    with tempfile.TemporaryDirectory() as d:
+        # 锚点前置、后跟 20KB 填充：锚点距尾 ~20KB，8KB 尾窗抓不到、64KB 可以
+        content = "<html><body>下次审查：2026-09-26" + "填" * 20000 + "</body></html>"
+        _write(d, "万华化学-600309-6.74-7.4-2026-08-01.html", content)
+        rows = {r["code"]: r for r in mc.scan_reports(d)}
+    assert rows["600309"]["next_review"] == "2026-09-26", \
+        f"锚点距尾 20KB 时未抓到: {rows['600309']}"
+
+
+def test_scan_reports_walks_subdirs():
+    """审计#16：报告按子目录归档时不得静默漏样本（与 extract_review/score_drift 递归口径一致）。"""
+    with tempfile.TemporaryDirectory() as d:
+        sub = os.path.join(d, "2026-08")
+        os.makedirs(sub)
+        _write(sub, "万华化学-600309-6.74-7.4-2026-08-01.html", "<html>下次审查：2026-09-01</html>")
+        rows = {r["code"]: r for r in mc.scan_reports(d)}
+    assert set(rows) == {"600309"}, f"子目录样本被漏: {sorted(rows)}"
+    assert rows["600309"]["next_review"] == "2026-09-01"
+
+
 if __name__ == "__main__":
     test_scan_reports_merged_caliber()
+    test_scan_reports_anchor_beyond_8kb_tail()
+    test_scan_reports_walks_subdirs()
     test_disclosure_ts_code_mapping()
-    print("全部 2 项测试通过")
+    print("全部 4 项测试通过")

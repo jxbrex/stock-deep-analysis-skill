@@ -260,7 +260,9 @@ stock-deep-analysis/
 │   ├── test_golden.py          # 渲染器端到端 golden 快照测试（无网络，逐字节比对）
 │   ├── test_calibration.py     # score_calibration 纯函数回归测试
 │   ├── test_monthly_checkup.py # monthly_checkup 月度体检回归测试
-│   └── test_deploy_meta.py     # 部署元数据守卫（deploy.ps1 排除清单 / UTF-8 BOM 断言）
+│   ├── test_deploy_meta.py     # 部署元数据守卫（deploy.ps1 排除清单 / UTF-8 BOM 断言 / 超长行闸）
+│   ├── test_visual_check.py    # visual_check 视觉审计降级路径回归测试
+│   └── test_score_drift.py     # score_drift 分数漂移分布回归测试
 ├── handoffs/                   # 版本交接文档：最外层只留最新版，旧版归 supercede/
 │   └── supercede/              # 历史 handoff 归档（新版发布须先结转未动工内容再归档原文）
 └── assets/
@@ -286,7 +288,9 @@ python test_mcap_mode.py        # 市值口径渲染
 python test_golden.py           # 渲染器端到端 golden 快照（minimal/full/mcap 三份主干 fill + 报告期四态，产物与入库快照逐字节比对）
 python test_calibration.py      # score_calibration 纯函数回归（文件名解析 / 分桶边界 / 同股去重）
 python test_monthly_checkup.py  # monthly_checkup 月度体检回归（scan_reports 合并口径 / --disclosure 市场映射）
-python test_deploy_meta.py      # 部署元数据守卫（deploy.ps1 排除清单 / UTF-8 BOM 断言）
+python test_deploy_meta.py      # 部署元数据守卫（deploy.ps1 排除清单 / UTF-8 BOM 断言 / 超长行闸扫描行为）
+python test_visual_check.py     # visual_check 视觉审计降级路径（无浏览器跳过 / 坏 --chrome 路径）
+python test_score_drift.py      # score_drift 分数漂移回归（_pctile / 配对与跨代隔离）
 ```
 
 ## 版本历史

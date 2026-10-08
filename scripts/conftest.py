@@ -13,10 +13,13 @@
 
 拆分自 test_render_core.py（v4.10.2），逻辑逐字沿用，仅作共享化。
 """
+import atexit
 import contextlib
+import copy
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 
@@ -468,6 +471,8 @@ def _period_ref_file(variant: str, pt: dict) -> str:
     global _PERIOD_TMPDIR
     if _PERIOD_TMPDIR is None:
         _PERIOD_TMPDIR = tempfile.mkdtemp(prefix="sda_period_ref_")
+        # 会话级目录随解释器退出清理（此前从不清理，本机 temp 已堆积百余个）
+        atexit.register(shutil.rmtree, _PERIOD_TMPDIR, ignore_errors=True)
     payload = {"price": 10.0, "pe_ttm": 11.0,
                "period_track": {k: pt[k] for k in _PERIOD_REF_KEYS if k in pt}}
     if pt.get("consensus_np") is not None:
@@ -484,7 +489,7 @@ def period_fill(variant="h1", **over):
     variant 四态：h1（中报，fill 契约示例数）/ q1（一季，单季图退化单柱）/ q3（三季）/
     annual（is_annual=true，整章消失）。over 透传 minimal_fill 顶层覆盖；
     period_track 单字段微调请直接改返回值的 fill["period_track"]。"""
-    pt = dict(_PERIOD_VARIANTS[variant])
+    pt = copy.deepcopy(_PERIOD_VARIANTS[variant])  # 浅拷贝会共享嵌套 list，用例间互相污染
     fill = minimal_fill(period_track=pt,
                         quote={"source_file": _period_ref_file(variant, pt), "date": "2026-08-27"})
     fill.update(over)

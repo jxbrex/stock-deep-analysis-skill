@@ -199,9 +199,13 @@ def _ts_latest_quarter(code: str, secucode: str = None) -> dict:
     inc = _pick_latest_per_period(inc)
     cur = inc[0]
     yoy = None
+    cur_ed = cur.get("end_date") or ""
     for r in inc[1:]:
-        # 找去年同期（end_date 月日相同、年份-1）
-        if (r.get("end_date") or "")[4:] == (cur.get("end_date") or "")[4:]:
+        # 找去年同期：end_date 月日相同且年份恰好-1（缺中间年份时不得拿两年前同期当
+        # 基数，同比会静默错两年——审计 #2；年份非数字时整段不匹配，参照 _period_track_calc）
+        r_ed = r.get("end_date") or ""
+        if (r_ed[4:] == cur_ed[4:] and cur_ed[:4].isdigit() and r_ed[:4].isdigit()
+                and int(r_ed[:4]) == int(cur_ed[:4]) - 1):
             yoy = _yoy(cur.get("n_income_attr_p"), r.get("n_income_attr_p"))
             break
     em = {}
@@ -691,9 +695,11 @@ def fetch_forensic(code: str) -> list:
                 gm = g(t, "grossprofit_margin")  # income 无毛利率，从 fina_indicator 补
                 gm1 = g(t1, "grossprofit_margin")
                 if gm is None or gm1 is None:
+                    # fields 必须走第三参（塞 params 会被键归一化剔除→实际全字段拉取，
+                    # 与 em_market.fetch_pe_pb_band 同款 bug，见 em_market.py 注释）
                     ind = {r["end_date"]: r for r in _C.ts_call(
-                        "fina_indicator", {"ts_code": ts, **rng,
-                                           "fields": "ts_code,end_date,grossprofit_margin"})}
+                        "fina_indicator", {"ts_code": ts, **rng},
+                        "ts_code,end_date,grossprofit_margin")}
                     gm = gm if gm is not None else g(ind.get(t["end_date"]) or {}, "grossprofit_margin")
                     gm1 = gm1 if gm1 is not None else g(ind.get(t1["end_date"]) or {}, "grossprofit_margin")
                 vals = [rev, rev1, ar, ar1, ca, ca1, ppe, ppe1, dep, dep1, tl, tl1, ta, ta1,

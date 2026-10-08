@@ -150,7 +150,8 @@ REPORT_RE = re.compile(r'<div id="visual-check-report">(.*?)</div>', re.S)
 
 def find_chrome(explicit: str | None):
     if explicit:
-        return explicit
+        # 显式路径先验存在性：坏路径返回 None 走统一跳过——原样直通会让 Popen 抛 FileNotFoundError
+        return explicit if Path(explicit).exists() else None
     for candidate in CHROME_CANDIDATES:
         if Path(candidate).exists():
             return candidate

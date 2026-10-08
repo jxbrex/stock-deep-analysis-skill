@@ -343,13 +343,13 @@ def build_fin_trend(fill: dict) -> str:
         head_parts = []
         if p["bars"]:
             b0 = p["bars"][0]
-            b_last = f'{_fmt(b0["values"][-1])}{b0["unit"]}'
+            b_last = f'{_fmt(b0["values"][-1])}{_esc(b0["unit"])}'
             yoy = ""
             if n >= 2 and b0["values"][-2] != 0:
                 yoy = f' <span class="m-yoy">{(b0["values"][-1] / b0["values"][-2] - 1) * 100:+.1f}%</span>'
             if len(p["bars"]) > 1:
                 b1 = p["bars"][1]
-                b_last += f' / {_fmt(b1["values"][-1])}{b1["unit"]}'
+                b_last += f' / {_fmt(b1["values"][-1])}{_esc(b1["unit"])}'
             head_parts.append(f'{b_last}{yoy}')
         line_lasts = " / ".join((f'{_fmt(ln["values"][-1])}%' if ln["pct"] else _fmt(ln["values"][-1]))
                                 for ln in p["lines"])

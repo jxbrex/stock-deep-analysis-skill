@@ -35,6 +35,7 @@ tushare 不可用时自动回落东财野生端点（curl 传输，防 TLS 指�
       / 有息负债（tushare balancesheet）
 """
 import json
+import os
 import sys
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
@@ -600,8 +601,13 @@ def _sec_e6(secucode: str, is_hk: bool) -> list:
             latest_date = items_all[0].get("REPORT_DATE")
             items = [r for r in items_all if r.get("REPORT_DATE") == latest_date][:8]
             latest = (items_all[0].get("REPORT_NAME") or "")
-            # 毛利占比分母：各分部毛利额合计（v4.8 业务构成图用；分部净利无公开数据，口径=毛利）
-            gp_total = sum(float(r["GROSS_PROFIT"]) for r in items if r.get("GROSS_PROFIT")) or None
+            # 毛利占比分母（v4.8 业务构成图用；分部净利无公开数据，口径=毛利）：合计行口径
+            # 优先（fetch_mainop 剔除合计行时带出 _TOTAL_GP——层级 payload 下父级小计+子级
+            # 明细并存，sum(明细毛利) 会重复计数，工商银行型各行占比合计可达 366%，审计 #3）；
+            # 无合计行（东财兜底等）退回各分部毛利额合计
+            gp_meta = getattr(mo, "_TOTAL_GP", None)
+            gp_total = gp_meta if gp_meta is not None else (
+                sum(float(r["GROSS_PROFIT"]) for r in items if r.get("GROSS_PROFIT")) or None)
             out.append(f"## E6 主营构成（{latest}，按{'产品' if typed.get('2') else '行业/地区'}）")
             for r in items:
                 ratio = r.get("MBI_RATIO")
@@ -746,8 +752,13 @@ def main():
                     pass
             _CAPTURE["fetched_at"] = date.today().isoformat()
             _CAPTURE["source"] = "em_fetch.py"
-            with open(opts["out"], "w", encoding="utf-8") as f:
+            # 原子落盘（照抄 em_cache.dc_write 模式，审计 #8）：先写 PID 后缀 tmp 再
+            # os.replace——中断/并发读都不留半个 JSON；tmp 带 PID，同机并发写同一 out
+            # 路径互不覆盖（同 dc_write 的考量）
+            _tmp_out = f'{opts["out"]}.{os.getpid()}.tmp'
+            with open(_tmp_out, "w", encoding="utf-8") as f:
                 json.dump(_CAPTURE, f, ensure_ascii=False, indent=2)
+            os.replace(_tmp_out, opts["out"])
             print(f"[E1 已落盘] {opts['out']}（fill 的 quote.source_file 引用此文件）",
                   file=sys.stderr)
     for peer in (opts.get("peers") or "").split(","):

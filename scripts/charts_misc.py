@@ -153,7 +153,8 @@ def build_holders_plot(fill: dict) -> str:
     n = len(pts)
     slot = (W - L - R) / n
     bar_w = min(slot * 0.5, 44)   # v4.11.0：季度序列柱数上探 12+，柱宽封顶下调（72→44）
-    hi = max(p["num"] for p in pts) * 1.18  # 不断轴（柱=真实数值契约），顶部留给数值标签
+    hi = max(p["num"] for p in pts) * 1.18 or 1.0  # 不断轴（柱=真实数值契约），顶部留给数值标签；
+    # 全零户数（停牌脏数据）时 max×1.18=0 会除零——or 1.0 兜底（同 charts_period 单季图口径）
     Y = _lin_map(0, hi, H - B, T)
 
     parts = ['<span class="section-tag">股东户数趋势</span>',

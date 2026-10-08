@@ -21,11 +21,24 @@ function Test-DocLines {
     }
     if ($bad -gt 0) { Write-Host "提示：文档超长行 $bad 处（>1500 字符，v4.9.2 截断陷阱立案阈值），建议拆行后再部署。" }
 }
+
+# /MIR 删除可见性（审计#19）：/MIR 会删除部署目录里仓库侧不存在的文件（robocopy 的 *EXTRA 行），
+# 此前 robocopy 输出被丢弃，用户手工放的文件被静默删除。输出存变量筛出 *EXTRA 行，预览与
+# 实跑都打印。注意：中文系统 robocopy 输出本地化为「*多余文件/目录」，故同时匹配英文标记。
+function Show-ExtraLines {
+    param($out)
+    $hit = @($out | Select-String -Pattern '\*EXTRA', '\*多')
+    if ($hit.Count -gt 0) {
+        Write-Host '注意：以下部署目录内容仅存在于目标侧，/MIR 将删除：'
+        $hit | ForEach-Object { Write-Host "  $($_.Line.Trim())" }
+    }
+}
 Test-DocLines
 
 if (-not $Go) {
-    robocopy $repo $dest /MIR /L /XD $xd /XF $xf /NJH | Out-Null
+    $out = robocopy $repo $dest /MIR /L /XD $xd /XF $xf /NJH
     $rc = $LASTEXITCODE
+    Show-ExtraLines $out
     if ($rc -ge 8) { Write-Host "robocopy 预览失败 (code $rc)"; exit 1 }
     if ($rc -eq 0) { Write-Host '预览完成：部署目录已是最新，无需变更。' }
     else { Write-Host "预览完成：有变更待部署 (code $rc)。确认无误后运行: powershell -File scripts\deploy.ps1 -Go" }
@@ -33,8 +46,10 @@ if (-not $Go) {
 }
 
 attrib -R "$dest\*" /S /D | Out-Null
-robocopy $repo $dest /MIR /XD $xd /XF $xf /NFL /NDL | Out-Null
+# /NFL /NDL 会连 *EXTRA 清单一并抑制（实测），输出存变量不外显，故去掉以便删除可见性取行
+$out = robocopy $repo $dest /MIR /XD $xd /XF $xf
 $rc = $LASTEXITCODE
+Show-ExtraLines $out
 if ($rc -ge 8) { Write-Host "robocopy 部署失败 (code $rc)，只读未恢复"; exit 1 }
 attrib +R "$dest\*" /S /D | Out-Null
 Write-Host '部署完成，部署目录已恢复只读。'

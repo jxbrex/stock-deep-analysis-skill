@@ -20,7 +20,7 @@ import sys
 from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_review import parse_report_name  # 文件名解析唯一 owner（extract_review.py）
+from extract_review import parse_report_name, prune_scan_dirs  # 文件名解析/扫描剪枝唯一 owner（extract_review.py）
 # debt: stdout/stderr UTF-8 reconfigure 靠 extract_review 的 import 副作用保障；
 # 若改为不 import 它，需自带 reconfigure 块
 
@@ -31,34 +31,37 @@ _NEXT_REVIEW_RE = re.compile(r"下次审查[：:]\s*(?:</span>)?\s*(\d{4}-\d{2}-
 
 
 def scan_reports(directory: str) -> list:
-    """扫报告目录 → 每代码最新一份的锚点字典列表。
-    文件名口径 = extract_review.parse_report_name（三代命名；分数为 float，旧 _ 命名
-    无估值分则 valuation=None）。"""
+    """扫报告目录（递归子目录，剪枝口径与 extract_review/score_drift 一致）→ 每代码最新一份
+    的锚点字典列表。文件名口径 = extract_review.parse_report_name（三代命名；分数为 float，
+    旧 _ 命名无估值分则 valuation=None）。"""
     latest = {}
-    for fn in sorted(os.listdir(directory)):
-        info = parse_report_name(fn)
-        if not info:
-            continue
-        path = os.path.join(directory, fn)
-        nxt = None
-        try:
-            # 只读文件头尾各一段找「下次审查」（大文件免整读）
-            size = os.path.getsize(path)
-            with open(path, encoding="utf-8", errors="replace") as f:
-                head = f.read(8192)
-                if size > 8192:
-                    f.seek(max(0, size - 8192))
-                    head += f.read()
-            mm = _NEXT_REVIEW_RE.search(head)
-            if mm:
-                nxt = mm.group(1)
-        except OSError:
-            pass
-        if info["code"] not in latest or info["date"] > latest[info["code"]]["date"]:
-            latest[info["code"]] = {"company": info["company"], "code": info["code"],
-                                    "date": info["date"], "quality": info["quality"],
-                                    "valuation": info["valuation"],
-                                    "next_review": nxt, "file": fn}
+    for root, dirs, files in os.walk(directory):
+        prune_scan_dirs(dirs)  # 报告按子目录归档时平扫会静默漏样本（与回测触发同口径）
+        for fn in sorted(files):
+            info = parse_report_name(fn)
+            if not info:
+                continue
+            path = os.path.join(root, fn)
+            nxt = None
+            try:
+                # 只读文件头 8KB + 尾 64KB 找「下次审查」（大仪表盘报告锚点距尾可超 8KB，
+                # 本地单用户文件 1-2MB，尾窗放大成本可忽略）
+                size = os.path.getsize(path)
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    head = f.read(8192)
+                    if size > 8192:
+                        f.seek(max(0, size - 65536))
+                        head += f.read()
+                mm = _NEXT_REVIEW_RE.search(head)
+                if mm:
+                    nxt = mm.group(1)
+            except OSError:
+                pass
+            if info["code"] not in latest or info["date"] > latest[info["code"]]["date"]:
+                latest[info["code"]] = {"company": info["company"], "code": info["code"],
+                                        "date": info["date"], "quality": info["quality"],
+                                        "valuation": info["valuation"],
+                                        "next_review": nxt, "file": fn}
     return list(latest.values())
 
 

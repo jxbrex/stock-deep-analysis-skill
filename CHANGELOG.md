@@ -198,6 +198,53 @@
 
 ## 版本历史
 
+### V5.5.2（2026-10-08）— ponytail 全仓审计：28 项发现全修（静默算错 4 / 崩溃 4 / 数据安全 3 / 口径与转义 7 / 测试基建 8 / 部署可见性 1）
+
+> 缘起：ponytail-audit 全仓审计（五路并行分区精读 ~1.7 万行），按「正确 > 安全 > 负载 >
+> 测试 > 速度 > 精简」定级，每条发现带可复现案例。用户拍板全修，四路并行修复，
+> 每项配「坏了会红」测试。审计基准测试 202 全绿；修后 **240 全绿**（+38 用例），
+> golden 快照零变化。`RENDERER_VERSION` v5.5.1→v5.5.2。
+
+- **静默算错（4 条，危害最大组）**：①区间字段误写字符串（`"pe": "12-16"`）被按字符
+  切片成 pe 1~2 倍且通过校验——`_scenario_numbers` 与 `compute_valuation_score` 加
+  isinstance 守卫落既有拒渲染路径；②`_ts_latest_quarter` 同比基数只比月日不校年份，
+  缺期标的错拿两年前的期当分母——加年份校验，与同文件另两处精确匹配同口径；
+  ③`_sec_e6` 毛利占比对层级披露 payload（父级小计+子级明细并存）分母重复计数
+  （工商银行型合计 366%）——`fetch_mainop` 带出合计行毛利 `_TOTAL_GP` 优先作分母；
+  ④`compute_scores` 层内权重与 layer_share 只校总和=100 不校非负，负权重静默错分——
+  负值即拒渲染。
+- **崩溃修复（4 条）**：pe_band 跨 0 中点除零裸崩（带校验加「带和 ≤0 即拒」，与
+  `_dev_vs_hist` 同口径）；price_history 判词块两处 close=0 除零（停牌脏数据，分母
+  非正时判词句缺席）；holders 全零户数除零（`or 1.0` 兜底，同 charts_period 口径）；
+  对象型字段（scores/layer_share/timing_weights）误传数组 AttributeError 裸崩
+  （三处 isinstance 守卫转友好 ValueError）。
+- **数据安全（3 条）**：em_fetch `--out` 落盘改原子写（tmp+os.replace，照抄
+  em_cache.dc_write 既有模式，中断不再留半个 JSON 覆盖旧好文件）；归档同日重渲覆盖
+  上版 fill 前打 ⚠️ 告警（对齐 _write_html 的既有告警行为）；align_fix 重建循环补登记
+  th 的 rowspan（跨行表头不再列位错位、数字列不再被剥右对齐）。
+- **口径与转义（7 条）**：fetch_forensic 的 fields 改走 ts_call 第三参（塞 params 会被
+  键归一化剔除，em_market 同款事故已有记录）；fetch_index_return 三处 close 包 float
+  （字符串 close 不再被吞成超额收益整列缺失）；score_calibration/monthly_checkup 目录
+  扫描改 os.walk+prune_scan_dirs（与 extract_review/score_drift 递归口径对齐，子目录
+  归档的报告不再静默漏样本）；monthly_checkup 审查锚点尾窗 8KB→64KB（大仪表盘报告
+  不再漏抓到期提醒）；三指标卡 horizon 与 fin_trend 头行 unit 补 _esc（同字段其他渲染
+  路径早已转义，补齐漏网点）；band_years 传字符串不再按字符迭代误拒（报错文案不再
+  自相矛盾）。
+- **测试基建（8 条）**：GOLDEN_UPDATE=1 在 pytest 会话内禁更新基线（防环境变量泄漏
+  把回归固化进快照、测试假绿；__main__ 直跑更新工作流不受影响）；新建
+  test_visual_check.py（4 用例钉住无浏览器跳过契约）+ visual_check 坏 --chrome 路径
+  改走统一跳过；新建 test_score_drift.py（score_drift 最小拆出 scan_infos/pair_deltas
+  纯函数，_pctile/配对/跨代隔离有锚点——该模块输出直接喂养机制一临界宽度决策）；
+  _check_cn_placeholder/_check_internal_codes/_check_thesis_info_floor/_check_prev_fields
+  四道事故守门补齐测试；conftest period_fill 改 deepcopy（嵌套 list 不再跨用例共享）+
+  会话临时目录 atexit 清理（本机已堆积 131 个）；test_deploy_meta 补 Test-DocLines
+  扫描行为用例；em_core memo falsy 缓存契约与 _daily_basic_latest 取最新行补测试；
+  validate 删两条与 compute_scores 硬拒矛盾的冗余 warn 分支（精简）。
+- **部署可见性**：deploy.ps1 预览与实跑均打印 robocopy *EXTRA（多余文件/目录）清单——
+  /MIR 将删除什么不再不可见（中文系统 robocopy 输出本地化，双语匹配；实跑分支去
+  /NFL /NDL 否则 *EXTRA 被一并抑制，均已实测）。
+- README 目录结构与测试清单补两个新测试文件。
+
 ### V5.5.1（2026-10-07）— 小米复盘九问定位：港股两处数据源死路修复 + 复盘「旧有新无」对照告警
 
 > 小版本。缘起：小米 01810 复盘报告（v5.5.0 首个实战）全过程复盘九问，定位出四个真缺陷：

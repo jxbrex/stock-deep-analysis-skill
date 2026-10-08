@@ -49,43 +49,46 @@ def bucket_of(v, buckets):
 
 
 def collect_reports(directory: str) -> list:
-    """扫描目录 → [{path, code, rep_date, quality, valuation, timing, price}]。提取失败的跳过并告警。"""
+    """扫描目录（递归子目录，剪枝口径与 extract_review/score_drift 一致）→
+    [{path, code, rep_date, quality, valuation, timing, price}]。提取失败的跳过并告警。"""
     reps = []
-    for fn in sorted(os.listdir(directory)):
-        if not fn.lower().endswith(".html"):
-            continue
-        info = parse_report_name(fn)
-        if not info:
-            if E._looks_like_report(fn):   # 「像报告但解析失败」不静默丢（与回测触发同口径）
-                print(f"[跳过: 文件名无法解析 {fn}]", file=sys.stderr)
-            continue
-        code, rep_date = info["code"], info["date"]
-        path = os.path.join(directory, fn)
-        try:
-            ext = E.extract(path)
-        except Exception as e:
-            print(f"跳过 {fn}（提取失败: {e}）", file=sys.stderr)
-            continue
-        prev = ext.get("prev") or {}
-        q, v = prev.get("quality"), prev.get("valuation")
-        code = norm_code(ext.get("code") or code)  # 归一：剥 .SH/.SZ 后缀，口径见 extract_review
-        if q is None and v is None:
-            # 旧版单轨报告（pre-v4.0）：无三轨分——取文件名首分作质量分近似
-            # （_ 分隔格式那是综合分，- 分隔双分格式第一个是质量分），入明细但不入桶
-            if info["quality"] is None:
-                print(f"跳过 {fn}（未提取到三轨分，旧版单轨报告）", file=sys.stderr)
+    for root, dirs, files in os.walk(directory):
+        E.prune_scan_dirs(dirs)  # 报告按子目录归档时平扫会静默漏样本（审计#16）
+        for fn in sorted(files):
+            if not fn.lower().endswith(".html"):
+                continue
+            info = parse_report_name(fn)
+            if not info:
+                if E._looks_like_report(fn):   # 「像报告但解析失败」不静默丢（与回测触发同口径）
+                    print(f"[跳过: 文件名无法解析 {fn}]", file=sys.stderr)
+                continue
+            code, rep_date = info["code"], info["date"]
+            path = os.path.join(root, fn)
+            try:
+                ext = E.extract(path)
+            except Exception as e:
+                print(f"跳过 {fn}（提取失败: {e}）", file=sys.stderr)
+                continue
+            prev = ext.get("prev") or {}
+            q, v = prev.get("quality"), prev.get("valuation")
+            code = norm_code(ext.get("code") or code)  # 归一：剥 .SH/.SZ 后缀，口径见 extract_review
+            if q is None and v is None:
+                # 旧版单轨报告（pre-v4.0）：无三轨分——取文件名首分作质量分近似
+                # （_ 分隔格式那是综合分，- 分隔双分格式第一个是质量分），入明细但不入桶
+                if info["quality"] is None:
+                    print(f"跳过 {fn}（未提取到三轨分，旧版单轨报告）", file=sys.stderr)
+                    continue
+                reps.append({"file": fn, "code": code,
+                             "company": ext.get("company") or fn,
+                             "rep_date": prev.get("date") or rep_date,
+                             "quality": info["quality"], "valuation": None, "timing": None,
+                             "price": ext.get("price"), "legacy": True})
                 continue
             reps.append({"file": fn, "code": code,
                          "company": ext.get("company") or fn,
                          "rep_date": prev.get("date") or rep_date,
-                         "quality": info["quality"], "valuation": None, "timing": None,
-                         "price": ext.get("price"), "legacy": True})
-            continue
-        reps.append({"file": fn, "code": code,
-                     "company": ext.get("company") or fn,
-                     "rep_date": prev.get("date") or rep_date,
-                     "quality": q, "valuation": v, "timing": prev.get("timing"),
-                     "price": ext.get("price")})
+                         "quality": q, "valuation": v, "timing": prev.get("timing"),
+                         "price": ext.get("price")})
     return reps
 
 
@@ -166,11 +169,11 @@ def fetch_index_return(market: str, start_td: str, end_td: str) -> float:
     if not rows:
         raise RuntimeError("指数数据空返回")
     rows = sorted(rows, key=lambda r: r["trade_date"])
-    base = rows[0]["close"]
-    for r in rows:
-        if r["trade_date"] <= start_td:
-            base = r["close"]  # ≤报告日最后一个交易日收盘
-    last = rows[-1]["close"]
+    base = float(rows[0]["close"])   # tushare 字符串 close 须显式 float（审计#17：
+    for r in rows:                   # 否则下游 TypeError 被外层 except 吞成 None，
+        if r["trade_date"] <= start_td:  # A 股超额收益整列静默丢失
+            base = float(r["close"])  # ≤报告日最后一个交易日收盘
+    last = float(rows[-1]["close"])
     ret = last / base - 1
     _INDEX_CACHE[key] = ret
     return ret

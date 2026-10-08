@@ -2745,3 +2745,146 @@ def test_prev_charts_pe_history_keys():
     f2["prev"]["charts"] = {"pe_history": True}
     assert "复盘减配" not in validate_stderr(f2), "五键齐备应静默"
     print("OK prev.charts.pe_history 与渲染同源（缺键告警/齐备静默）")
+
+
+# ---------------- 审计加固：类型守卫 / 负权重 / 覆盖告警 / 冗余告警清理 ----------------
+
+def test_scenario_pe_string_rejected():
+    """#1: 情景 pe/mcap 传字符串 "12-16" 不得按字符切片静默错算（pe_lo=1/pe_hi=2）——
+    归空数组后走既有「缺 PE 区间/缺净利假设」拒渲染路径；四件套 pe_band 字符串同理（None）。"""
+    f = minimal_fill()
+    f["valuation"]["scenarios"][1]["pe"] = "12-16"
+    expect_valueerror(f, "pe 字符串应拒渲染", kw="缺 PE 区间")
+    f = mcap_fill()
+    f["valuation"]["scenarios"][0]["mcap"] = "640-800"
+    expect_valueerror(f, "mcap 字符串应拒渲染", kw="缺净利假设")
+    # 四件套侧：pe_band 字符串按字符切片会静默错算（"12-16" → 带 [1,2]），应视为无效带
+    calc = R.compute_valuation(minimal_fill())
+    vi = {"pe_ttm": 11, "pe_band": "12-16", "div_yield": 2, "risk_free": 1.7}
+    assert R.compute_valuation_score(calc, vi) is None, "pe_band 字符串应视为无效带（None）"
+    print("OK 字符串区间拒渲染（pe/mcap/pe_band 字符切片静默错算已堵）")
+
+
+def test_negative_weights_rejected():
+    """#4: 层内权重/layer_share 只校总和=100 拦不住负值（正负可凑够 100 静默错分）——
+    负权重/负占比须显式拒渲染。"""
+    # 1B -10、1C +22 → L1 总和仍恰 = 100，但含负权重
+    f = minimal_fill(weights={"1B": -10, "1C": 42})
+    expect_valueerror(f, "负层内权重应拒", kw="层内权重含负值")
+    f = minimal_fill(layer_share={"L1": 120, "L3": -20})  # 总和仍 = 100
+    expect_valueerror(f, "负 layer_share 应拒", kw="layer_share 含负值")
+    print("OK 负权重拒渲染（总和凑够 100 也拦）")
+
+
+def test_zero_crossing_pe_band_friendly_reject():
+    """#5: 合理带跨 0（[-5,5]，中点为 0）→ _map_warranted 的 pe_ttm÷中点 除零——
+    与 _dev_vs_hist 口径对齐视为无效带（None），render 层转友好 ValueError，不得裸崩。"""
+    fill = minimal_fill(valuation_inputs={"pe_ttm": 11, "pe_band": [-5, 5],
+                                          "div_yield": 2, "risk_free": 1.7})
+    calc = R.compute_valuation(fill)
+    assert R.compute_valuation_score(calc, fill["valuation_inputs"]) is None, \
+        "跨 0 带应视为无效带（None），不得进入 _map_warranted 除零"
+    try:
+        render_fill(fill)
+    except ValueError as e:
+        assert "估值分无法计算" in str(e), f"应友好拒渲染，实际: {e}"
+        return
+    raise AssertionError("跨 0 带应拒渲染但未拒")
+
+
+def test_archive_overwrite_warns():
+    """#9: 同日重渲时归档 os.replace 静默覆盖上版 fill/quote——补覆盖告警，
+    与 _write_html 的输出覆盖告警对称。"""
+    fill = minimal_fill()
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "out.html")
+        p = write_fill(fill, d, name="_fill_t.json")
+        err1 = capture_stderr(lambda: R.render(p, out))
+        assert "归档文件已存在" not in err1, "首次渲染无既有归档，不应告警"
+        p = write_fill(fill, d, name="_fill_t.json")   # 首次渲染后源 fill 已被移入归档，重写再渲
+        err2 = capture_stderr(lambda: R.render(p, out))
+        assert "归档文件已存在" in err2, f"同日二次渲染归档覆盖应告警，实际 stderr: {err2}"
+
+
+def test_cn_placeholder_gate():
+    """#11: fill 正文【待填】类中文占位符硬拒渲染；a-d 字母开头的黄灯类别标注
+    （【b 行业与政策环境】）是合法引用，放行。"""
+    f = minimal_fill(l1_html="".join(_dim(_LONG_TEXT) for _ in range(5))
+                     + _dim(_LONG_TEXT + "【待填】") + _L1_GOV_BLOCK)
+    expect_valueerror(f, "中文占位符应拒", kw="残留中文占位符")
+    f2 = minimal_fill(l1_html="".join(_dim(_LONG_TEXT) for _ in range(5))
+                      + _dim(_LONG_TEXT + "【b 行业与政策环境】已逐项核查") + _L1_GOV_BLOCK)
+    R.validate_content(f2, R.compute_valuation(f2))  # 合法豁免引用 → 放行
+    print("OK 中文占位符门禁（【待填】拒 / 【b …】豁免放行）")
+
+
+def test_internal_codes_warn():
+    """#11: 正文泄漏框架内部代号（L1/L3/L4/1D）→ 告警改用章节编号/名称。"""
+    l1 = ("".join(_dim(_LONG_TEXT) for _ in range(5))
+          + _dim(_LONG_TEXT + "，详见 L1。") + _L1_GOV_BLOCK)
+    out = validate_stderr(minimal_fill(l1_html=l1))
+    assert "内部代号" in out, f"正文出现 L1 应告警，实际 stderr: {out}"
+    assert "内部代号" not in validate_stderr(minimal_fill()), "fixture 正文无代号不应告警"
+
+
+def test_thesis_info_floor_warn():
+    """#11: thesis 只塞三个 span 价（信息量地板）→ 告警不能只写目标价。"""
+    th = ('<span class="scenario-pess">7.2</span>/<span class="scenario-base">11</span>'
+          '/<span class="scenario-opt">15.6</span>')
+    out = validate_stderr(minimal_fill(thesis_html=th))
+    assert "信息量不足" in out, f"纯三价 thesis 应告警，实际 stderr: {out}"
+    th_ok = ("论点：测试公司具备长期竞争优势与稳定现金流，论据：近三年盈利持续增长"
+             "且资产负债表稳健，三情景目标价 "
+             '<span class="scenario-pess">7.2</span>/<span class="scenario-base">11</span>'
+             '/<span class="scenario-opt">15.6</span> 元，结论：逢低布局。')
+    assert "信息量不足" not in validate_stderr(minimal_fill(thesis_html=th_ok)), \
+        "论点+论据+三价+结论齐备不应告警"
+
+
+def test_prev_fields_warns():
+    """#11: prev 锚点缺项（quality/valuation/timing/target_range）+ review_html 无
+    关键假设变更表 → 告警到 stderr。"""
+    prev = {"date": "2026-08-08",
+            # base 带与本版一致（10-12x）→ 不触发锚移动硬拒，单测 _check_prev_fields
+            "scenarios": [{"scenario": "基础情景", "归母净利": "95 亿", "PE": "10-12x",
+                           "目标价": "9.5-11.4 元"}]}
+    out = validate_stderr(minimal_fill(prev=prev, review_html="<p>复盘文字，无表格。</p>"))
+    for kw in ("prev.quality 缺失", "prev.valuation 缺失", "缺关键假设变更表"):
+        assert kw in out, f"应告警含「{kw}」，实际 stderr: {out}"
+    out_ok = validate_stderr(full_fill())
+    assert "prev.quality 缺失" not in out_ok and "缺关键假设变更表" not in out_ok, \
+        "full_fill 锚点齐备、review 有假设表，不应告警"
+
+
+def test_object_fields_reject_arrays():
+    """#14: 对象型字段（scores/layer_share/timing_weights）传数组 → 友好 ValueError，
+    不得 AttributeError 裸崩。"""
+    f = minimal_fill(scores=["1A", 7])
+    try:
+        R.validate_content(f, None)
+    except ValueError as e:
+        assert "scores" in str(e) and "需为对象" in str(e), f"报错文案不符: {e}"
+    else:
+        raise AssertionError("scores 传数组应拒渲染")
+    expect_valueerror(minimal_fill(layer_share=["L1", "L3"]), "layer_share 数组应拒",
+                      kw="layer_share 需为对象")
+    expect_valueerror(minimal_fill(timing_weights=["筹码面", 50]), "timing_weights 数组应拒",
+                      kw="timing_weights 需为对象")
+
+
+def test_period_track_band_years_type_guard():
+    """#小1: band_years 传字符串按字符迭代误比对（空串曾与空列表假相等漏网、
+    "2023" 被拆成 [2,0,2,3]）——与 band 守卫对齐：非数组一律按不一致拒。"""
+    f = period_fill("annual")
+    f["period_track"]["band_years"] = ""   # 落盘为 []：修复前 []==[] 假相等漏网
+    expect_valueerror(f, "band_years 空字符串应拒", kw="period_track.band_years")
+    f = period_fill("h1")
+    f["period_track"]["band_years"] = "2023-2025"
+    expect_valueerror(f, "band_years 字符串应拒", kw="period_track.band_years")
+
+
+def test_missing_thesis_warns():
+    """#小2: thesis_html 缺失 → 告警 Hero 一句话结论为空（timing_scores/yellow_deductions
+    缺项由 compute_scores 硬拒，不再 soft 告警重复，文案矛盾已除）。"""
+    out = validate_stderr(minimal_fill(thesis_html=""))
+    assert "thesis_html 缺失" in out, f"thesis 缺失应告警，实际 stderr: {out}"

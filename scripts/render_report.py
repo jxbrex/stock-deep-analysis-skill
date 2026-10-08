@@ -59,7 +59,7 @@ from validate import validate_content
 
 # 渲染器版本：嵌入输出 HTML 尾部注释，事后可 grep 验证报告确由本脚本渲染
 # （防"render 报错后手写全文 HTML 绕行"，巨石 2026-08-23 实证）
-RENDERER_VERSION = "v5.5.1"
+RENDERER_VERSION = "v5.5.2"
 
 # Windows 文件名非法字符：\ / : * ? " < > | 及 ASCII 控制字符（\x00-\x1f）
 _WIN_ILLEGAL = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
@@ -514,11 +514,15 @@ def _archive_artifacts(fill: dict, fill_path: str, out_path: str, date: str,
         moved = []
         if os.path.basename(fill_path).startswith("_fill_") and os.path.exists(fill_path):
             dst = os.path.join(arch_dir, f"fill_{company_s}_{code_s}_{date_s}.json")
+            if os.path.exists(dst):
+                print(f"⚠️ 归档文件已存在，将被覆盖: {dst}", file=sys.stderr)
             os.replace(fill_path, dst)
             moved.append(os.path.basename(dst))
         qsf = (fill.get("quote") or {}).get("source_file") or ""
         if os.path.basename(qsf).startswith("_em_") and os.path.exists(qsf):
             dst = os.path.join(arch_dir, f"em_{code_s}_quote_{date_s}.json")
+            if os.path.exists(dst):
+                print(f"⚠️ 归档文件已存在，将被覆盖: {dst}", file=sys.stderr)
             os.replace(qsf, dst)
             moved.append(os.path.basename(dst))
         row = {

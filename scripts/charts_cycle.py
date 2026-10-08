@@ -473,7 +473,9 @@ def build_price_history(fill: dict) -> str:
             w_dir = None
             pe_first = pe_line[0][1] if pe_line else None
             pe_lastw = next((v for _x, v, _a, _b in reversed(pe_line) if v is not None), None)
-            if pe_first and pe_first > 0 and pe_lastw and len(quarters) >= 2:
+            # v5.5.2 审计：首季收盘为 0（停牌脏数据）时除零崩整份渲染——分母非正即缺席本句
+            if (pe_first and pe_first > 0 and pe_lastw and len(quarters) >= 2
+                    and quarters[0]["c"] > 0):
                 pcw = (quarters[-1]["c"] / quarters[0]["c"] - 1) * 100
                 ppew = (pe_lastw / pe_first - 1) * 100
                 dew = ((1 + pcw / 100) / (1 + ppew / 100) - 1) * 100
@@ -486,7 +488,7 @@ def build_price_history(fill: dict) -> str:
             k = 4 if len(quarters) >= 9 else 0
             pe_now = pe_line[-1][1] if pe_line else None
             pe_old = pe_line[-1 - k][1] if k and len(pe_line) > k else None
-            if k and pe_now and pe_old and pe_old > 0:
+            if k and pe_now and pe_old and pe_old > 0 and quarters[-1 - k]["c"] > 0:
                 pc = (quarters[-1]["c"] / quarters[-1 - k]["c"] - 1) * 100
                 ppe = (pe_now / pe_old - 1) * 100
                 de = ((1 + pc / 100) / (1 + ppe / 100) - 1) * 100

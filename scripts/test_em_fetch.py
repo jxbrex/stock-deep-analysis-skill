@@ -13,6 +13,7 @@ test_em_fetch.py — em_fetch.py 无网络单元测试（自包含、全 assert�
 """
 import os
 import sys
+import tempfile
 import time
 from datetime import date
 
@@ -736,6 +737,227 @@ def test_19_growth_sigma_parity():
                  [None, 100, 110, 121, 133], [1, 2, 3], []):
         assert growth_sigma(vals) == _growth_sigma(vals), f"parity 漂移: {vals}"
     print("19. growth_sigma 双副本 parity 通过")
+
+
+
+def test_20_latest_quarter_yoy_year_guard():
+    """20. 最新季度同比基数年份守卫（审计 #2，无网络 mock ts_call）：同比找基数只比 end_date
+    月日、不校年份——缺 2024 三季报时会把 2023Q3 当去年同期，同比静默错两年；修法后缺期
+    输出 None，补齐后同比恢复正确值。"""
+    import em_finance
+    _orig_ts20 = em_core.ts_call
+    try:
+        # 缺 2024Q3：序列里最近的前期是 2023Q3（月日相同但年份差 2）→ 不得当基数
+        rows_missing = [
+            {"end_date": "20250930", "ann_date": "20251030", "report_type": "1", "n_income_attr_p": 120e8},
+            {"end_date": "20250630", "ann_date": "20250828", "report_type": "1", "n_income_attr_p": 80e8},
+            {"end_date": "20250331", "ann_date": "20250428", "report_type": "1", "n_income_attr_p": 50e8},
+            {"end_date": "20230930", "ann_date": "20231027", "report_type": "1", "n_income_attr_p": 100e8},
+        ]
+        em_core.ts_call = lambda api, params=None, fields="": rows_missing if api == "income" else []
+        q = em_finance._ts_latest_quarter("600989")
+        assert q["PARENTNETPROFITTZ"] is None, \
+            f"缺去年同期时同比应为 None（不得拿两年前同期当基数），实际 {q['PARENTNETPROFITTZ']}"
+        # 补齐 2024Q3（利润 60e8，与 2023Q3 的 100e8 区分）：同比=120/60-1=100%
+        rows_full = rows_missing + [
+            {"end_date": "20240930", "ann_date": "20241030", "report_type": "1", "n_income_attr_p": 60e8}]
+        em_core.ts_call = lambda api, params=None, fields="": rows_full if api == "income" else []
+        q2 = em_finance._ts_latest_quarter("600989")
+        assert abs(q2["PARENTNETPROFITTZ"] - 100.0) < 0.01, \
+            f"补齐去年同期后同比应按 2024Q3 基数算 100%，实际 {q2['PARENTNETPROFITTZ']}（疑似仍拿 2023Q3 当基数）"
+    finally:
+        em_core.ts_call = _orig_ts20
+    print("20. 最新季度同比基数年份守卫 通过")
+
+
+
+def test_21_mainop_hier_gp_ratio():
+    """21. E6 毛利占比分母取合计行口径（审计 #3，无网络 mock ts_call/_sec_e6）：
+    层级 payload（父级小计+子级明细并存）下 sum(明细毛利) 重复计数（工商银行型合计可达
+    366%）——分母必须用被剔除合计行的毛利（fetch_mainop 带出 _TOTAL_GP）；无 _TOTAL_GP
+    （东财兜底形态）退回 sum(GROSS_PROFIT)。父+子并存时全行合计>100% 是层级 payload 固有
+    形态，同 test_08 已钉的 MBI_RATIO 口径（父级=100%、子级合计≈100%）。"""
+    import re
+    _orig_ts21 = em_core.ts_call
+    try:
+        # 合计行毛利 7e9（=父级小计；子级为其分解 6e9+1e9）——sum(明细)=14e9 重复计数
+        em_core.ts_call = lambda api, params=None, fields="": [
+            {"end_date": "20251231", "bz_item": "能源装备制造", "bz_sales": 2e10,
+             "bz_cost": 1.3e10, "bz_profit": 7e9},   # 父级小计（保留展示）
+            {"end_date": "20251231", "bz_item": "烯烃产品", "bz_sales": 1.5e10,
+             "bz_cost": 9e9, "bz_profit": 6e9},
+            {"end_date": "20251231", "bz_item": "焦化产品", "bz_sales": 5e9,
+             "bz_cost": 4e9, "bz_profit": 1e9},
+            {"end_date": "20251231", "bz_item": "产品", "bz_sales": 2e10,
+             "bz_cost": None, "bz_profit": 7e9},   # 维度合计行（毛利应随返回带出）
+        ] if api == "fina_mainbz" else []
+        mo = em.fetch_mainop("600875.SH")
+        assert getattr(mo, "_TOTAL_GP", None) == 7e9, "合计行毛利（bz_profit）应随返回带出"
+        lines = em._sec_e6("600875.SH", False)
+        txt = "\n".join(lines)
+        # 分母=合计行毛利 7e9：父级 100.0%、子级 85.7%/14.3%（旧实现分母 14e9 → 父级 50.0%，红）
+        assert "能源装备制造" in txt and "毛利占比100.0%" in txt, \
+            f"父级小计应占合计行毛利 100%，实际:\n{txt}"
+        assert "毛利占比85.7%" in txt and "毛利占比14.3%" in txt, f"子级占比应对齐合计行口径:\n{txt}"
+        pcts = dict(re.findall(r"^(.+?): .*?（毛利占比([\d.]+)%）", txt, re.M))
+        assert abs(float(pcts["烯烃产品"]) + float(pcts["焦化产品"]) - 100.0) < 0.2, \
+            f"子级明细毛利占比合计应≈100%，实际 {pcts}"
+
+        # 无 _TOTAL_GP（东财兜底形态）→ 退回 sum(GROSS_PROFIT)：1.5e9/5e8 → 75%/25%
+        _orig_fm = em.fetch_mainop
+        try:
+            em.fetch_mainop = lambda sec: [
+                {"REPORT_DATE": "2025-12-31", "REPORT_NAME": "2025年报", "MAINOP_TYPE": "2",
+                 "ITEM_NAME": "A", "MAIN_BUSINESS_INCOME": 3e9, "MBI_RATIO": 0.6,
+                 "GROSS_RPOFIT_RATIO": 0.5, "GROSS_PROFIT": 1.5e9},
+                {"REPORT_DATE": "2025-12-31", "REPORT_NAME": "2025年报", "MAINOP_TYPE": "2",
+                 "ITEM_NAME": "B", "MAIN_BUSINESS_INCOME": 2e9, "MBI_RATIO": 0.4,
+                 "GROSS_RPOFIT_RATIO": 0.25, "GROSS_PROFIT": 5e8},
+            ]
+            txt2 = "\n".join(em._sec_e6("600989.SH", False))
+            assert "毛利占比75.0%" in txt2 and "毛利占比25.0%" in txt2, \
+                f"无 _TOTAL_GP 应退回 sum(明细毛利) 作分母，实际:\n{txt2}"
+        finally:
+            em.fetch_mainop = _orig_fm
+    finally:
+        em_core.ts_call = _orig_ts21
+    print("21. E6 毛利占比合计行分母 通过")
+
+
+
+def test_22_out_atomic_write():
+    """22. --out 原子落盘（审计 #8，无网络 mock summarize/json.dump）：照抄 em_cache.dc_write
+    模式——先写 PID 后缀 tmp 再 os.replace；成功落盘不留 .tmp，json.dump 中途抛异常时目标
+    文件不被截断（旧实现直接 open(out) 写，中断留半个 JSON）。"""
+    _orig_sv, _orig_cap, _orig_argv = em.summarize, dict(em._CAPTURE), sys.argv
+    with tempfile.TemporaryDirectory() as d:
+        out = os.path.join(d, "quote.json")
+        try:
+            em.summarize = lambda *a, **k: "ok"
+            em._CAPTURE.clear()
+            em._CAPTURE.update({"price": 10.5})
+            sys.argv = ["em_fetch.py", "600989", f"--out={out}"]
+            em.main()
+            assert os.path.exists(out), "落盘文件应存在"
+            import json as _json
+            payload = _json.loads(open(out, encoding="utf-8").read())
+            assert payload["price"] == 10.5 and payload["source"] == "em_fetch.py", f"实际 {payload}"
+            assert not [p for p in os.listdir(d) if p.endswith(".tmp")], \
+                f"成功落盘后不得残留 .tmp：{os.listdir(d)}"
+
+            # 失败路径：json.dump 抛异常 → 异常外溢且目标文件保留原内容不被截断
+            open(out, "w", encoding="utf-8").write('{"sentinel": true}')
+            _orig_dump = em.json.dump
+            def _boom(obj, fp, **kw):
+                raise IOError("磁盘已满")
+            em.json.dump = _boom
+            try:
+                try:
+                    em.main()
+                    raise AssertionError("json.dump 抛异常应原样外溢")
+                except IOError:
+                    pass
+                assert open(out, encoding="utf-8").read() == '{"sentinel": true}', \
+                    "写盘中断不得截断/污染目标文件"
+            finally:
+                em.json.dump = _orig_dump
+        finally:
+            em.summarize = _orig_sv
+            sys.argv = _orig_argv
+            em._CAPTURE.clear()
+            em._CAPTURE.update(_orig_cap)
+    print("22. --out 原子落盘 通过")
+
+
+
+def test_23_forensic_fields_third_param():
+    """23. fetch_forensic 的 fina_indicator fields 必须走第三参（审计 #小4，无网络 mock ts_call）：
+    fields 塞进 params 会被 ts_call 键归一化剔除（键尾空串）→ 实际全字段拉取
+    （em_market.fetch_pe_pb_band 同款 bug 有注释记录）；income 行不带毛利率时必走该分支。"""
+    import em_finance
+    inc = [
+        {"end_date": "20251231", "ann_date": "20260328", "report_type": "1",
+         "total_revenue": 400e8, "n_income": 50e8, "n_income_attr_p": 48e8,
+         "sell_exp": 10e8, "admin_exp": 8e8, "comp_type": "1"},   # 无 grossprofit_margin → 触发 fina_indicator 补毛利率分支
+        {"end_date": "20241231", "ann_date": "20250328", "report_type": "1",
+         "total_revenue": 350e8, "n_income": 45e8, "n_income_attr_p": 43e8,
+         "sell_exp": 9e8, "admin_exp": 7e8, "comp_type": "1"},
+    ]
+    bs = [
+        {"end_date": "20251231", "report_type": "1", "total_assets": 1000e8, "accounts_receiv": 40e8,
+         "total_cur_assets": 300e8, "fix_assets": 200e8, "total_liab": 400e8},
+        {"end_date": "20241231", "report_type": "1", "total_assets": 900e8, "accounts_receiv": 35e8,
+         "total_cur_assets": 280e8, "fix_assets": 180e8, "total_liab": 380e8},
+    ]
+    cf = [
+        {"end_date": "20251231", "n_cashflow_act": 60e8, "depr_fa_coga_dpba": 15e8},
+        {"end_date": "20241231", "n_cashflow_act": 55e8, "depr_fa_coga_dpba": 14e8},
+    ]
+    ind = [{"end_date": "20251231", "grossprofit_margin": 40.0},
+           {"end_date": "20241231", "grossprofit_margin": 38.0}]
+    calls = []
+    _orig_ts23 = em_core.ts_call
+    def _ts23(api, params=None, fields=""):
+        calls.append((api, dict(params or {}), fields))
+        return {"income": inc, "balancesheet": bs, "cashflow": cf,
+                "fina_indicator": ind}.get(api, [])
+    try:
+        em_core.ts_call = _ts23
+        lines = em_finance.fetch_forensic("600989")
+        fi = [(p, f) for (a, p, f) in calls if a == "fina_indicator"]
+        assert fi, "income 无毛利率时 fetch_forensic 应调 fina_indicator 补齐"
+        (params23, fields23), = fi
+        assert "fields" not in params23, "fields 不得塞进 params（被键归一化剔除→全字段拉取）"
+        assert fields23 == "ts_code,end_date,grossprofit_margin", \
+            f"fields 应走第三参，实际 {fields23!r}"
+        assert any("M-Score" in l for l in lines), f"应产出 M-Score 行，实际 {lines}"
+    finally:
+        em_core.ts_call = _orig_ts23
+    print("23. fetch_forensic fields 第三参 通过")
+
+
+
+def test_24_memo_falsy_contract():
+    """24. em_core.memo 缓存契约（零测试补漏，无网络）：falsy 返回值（[]）是合法缓存值——
+    第二次命中缓存且 loader 只调一次；loader 抛异常——不回填（缓存无键）且异常原样外溢。"""
+    calls = []
+    cache = {}
+    assert em_core.memo(cache, "k", lambda: calls.append(1) or []) == []
+    assert em_core.memo(cache, "k", lambda: calls.append(2) or ["新值"]) == [], \
+        "falsy 结果已入缓存：第二次调用必须命中缓存返回 []"
+    assert calls == [1], f"loader 应只调一次，实际 {calls}"
+    boom = RuntimeError("net down")
+    def _loader():
+        raise boom
+    try:
+        em_core.memo(cache, "bad", _loader)
+        raise AssertionError("loader 异常应原样外溢")
+    except RuntimeError as e:
+        assert e is boom, "异常对象应原样外溢（不被包装/吞掉）"
+    assert "bad" not in cache, "失败不入缓存（缓存不得有键）"
+    print("24. memo falsy 缓存契约 通过")
+
+
+
+def test_25_daily_basic_latest():
+    """25. em_core._daily_basic_latest 取最新行（零测试补漏，无网络 mock ts_call）：
+    乱序返回时取 trade_date 最大行；空/None trade_date 行先过滤再取 max（None 陷阱）。"""
+    rows = [
+        {"trade_date": "20260930", "close": 10.0, "pe_ttm": 15.0},
+        {"trade_date": "", "close": 99.0},            # 空日期行：须过滤，不得参与 max
+        {"trade_date": None, "close": 98.0},          # None 日期行：同上
+        {"trade_date": "20261008", "close": 12.0, "pe_ttm": 14.0},
+        {"trade_date": "20261001", "close": 11.0},
+    ]
+    _orig_ts25 = em_core.ts_call
+    try:
+        em_core.ts_call = lambda api, params=None, fields="": rows
+        row = em_core._daily_basic_latest("600989")
+        assert row["trade_date"] == "20261008" and row["close"] == 12.0, \
+            f"应取日期最大行，实际 {row}"
+    finally:
+        em_core.ts_call = _orig_ts25
+    print("25. _daily_basic_latest 最新行 通过")
 
 
 if __name__ == "__main__":

@@ -950,3 +950,73 @@ def test_price_history_stage_seams():
     seg2 = html2.split('aria-label="股价季K与PE历史走势"', 1)[1].split("</svg>", 1)[0]
     assert "左夹段" not in seg2 and "淡底/竖虚线=周期阶段" not in html2,         "无 cycle_stages 不应有阶段线与其图注说明"
     print("OK 阶段分界竖虚线（夹取/去重/跳过/图注说明）")
+
+
+def test_price_history_zero_close_no_crash():
+    """v5.5.2 审计：序列中任一月 close=0（停牌脏数据）时判词两处除零崩整份渲染——
+    首季/近季分母季收盘非正时对应归因句缺席（部件不足不硬凑），图照常渲染、当前句仍在。"""
+    months = []
+    for i in range(36):  # 2023-01 ~ 2025-12；首季末月与第 8 季末月收盘置 0
+        y, m = 2023 + i // 12, i % 12 + 1
+        c = 0.0 if (y, m) in ((2023, 3), (2024, 12)) else 10 + i * 0.2
+        months.append({"m": f"{y}-{m:02d}", "open": c, "high": c + 1, "low": max(c - 1, 0),
+                       "close": c, "pe": 12.0})
+    html = render_fill(minimal_fill(price_history={"label": "近3年", "series": months},
+                                    cycle_html='<table><tr><td>x</td></tr></table>'))
+    seg = html.split('aria-label="股价季K与PE历史走势"', 1)[1]
+    assert '<div class="layer-summary"><strong>判词：</strong>' in seg, "判词块应渲染"
+    v_seg = seg.split("<strong>判词：</strong>", 1)[1].split("</div>", 1)[0]
+    assert "当前最新月收" in v_seg, "当前位置句应仍在"
+    assert "区间价" not in v_seg, "首季收盘为 0 时区间归因句应缺席（除零守卫）"
+    assert "近 4 季" not in v_seg, "近季分母季收盘为 0 时近季归因句应缺席（除零守卫）"
+    print("OK close=0 停牌脏数据不崩、归因句缺席、图与当前句照常")
+
+
+def test_holders_all_zero_no_crash():
+    """v5.5.2 审计：holders 全零户数时 max(num)×1.18=0 除零——or 1.0 兜底（charts_period
+    单季图同口径），全量渲染下户数图照常生成。"""
+    html = render_fill(minimal_fill(holders=[
+        {"date": "2025-03-31", "num": 0, "chg": None},
+        {"date": "2025-06-30", "num": 0, "chg": 0.0},
+        {"date": "2025-09-30", "num": 0, "chg": None},
+        {"date": "2025-12-31", "num": 0, "chg": None}]))
+    assert 'aria-label="股东户数趋势"' in html, "全零户数图应照常渲染"
+    print("OK 全零户数不除零、图照常渲染")
+
+
+def test_fix_alignment_th_rowspan_registers():
+    """v5.5.2 审计：重建循环 rowspan 登记原先只在 td 分支——<th rowspan="2"> 不占位导致
+    其下数据行列位错位一格、num 列首格被剥右对齐；修法登记挪出 td 分支（与投票循环同口径）。"""
+    tbl = ('<table><thead>'
+           '<tr><th rowspan="2">项目</th><th class="num">本期</th><th class="num">上期</th></tr>'
+           '<tr><td class="num">12.5</td><td class="num">10.2</td></tr>'
+           '</thead><tbody>'
+           '<tr><td>说明文字</td><td class="num">7.5</td><td class="num">6.8</td></tr>'
+           '</tbody></table>')
+    html = R.fix_table_alignment(tbl)
+    assert '<td class="num">12.5</td>' in html, "跨行表头下首数据格应保住 num 右对齐"
+    assert '<td class="num">10.2</td>' in html, "次数据格应保住 num 右对齐"
+    assert '<th class="num">本期</th>' in html and '<th class="num">上期</th>' in html
+    print("OK th rowspan 重建登记（数据列不错位、数字列保右对齐）")
+
+
+def test_scenario_horizon_escaped():
+    """v5.5.2 审计：三指标卡副行（{calc["horizon"]}）漏 _esc（表格行同字段早已转义）——
+    用户文本含 HTML 标签时不得原样注入。断言用「raw 不存在」：escaped 存在性被表格行干扰。"""
+    f = minimal_fill()
+    f["valuation"]["horizon"] = "<b>12个月</b>"
+    html = R.build_scenario_block(R.compute_valuation(f))
+    assert "<b>12个月</b>" not in html, "horizon 不得原样注入（应转义）"
+    print("OK 三指标卡 horizon 转义")
+
+
+def test_fin_trend_unit_escaped():
+    """v5.5.2 审计：fin_trend 头行柱末值单位（{b0["unit"]}/{b1["unit"]}）漏 _esc（图例行
+    同字段早已转义）——断言锁定 m-val 头行段（整图断言 escaped 会被图例转义干扰）。"""
+    f = minimal_fill()
+    f["fin_trend"]["panels"][0]["bars"][0]["unit"] = "<b>亿</b>"
+    html = build_fin_trend(f)
+    m_seg = html.split('class="m-val"', 1)[1].split("</span>", 1)[0]
+    assert "<b>" not in m_seg, "头行单位不得原样注入（应转义）"
+    assert "&lt;b&gt;" in m_seg, "头行单位应转义出现"
+    print("OK fin_trend 头行单位转义")

@@ -160,6 +160,13 @@ def fetch_consensus(code: str) -> dict:
 _MAINBZ_TOTAL_NAMES = {"产品", "行业", "地区", "合计", "主营业务"}
 
 
+class _MainopRows(list):
+    """fetch_mainop 的返回类型（list 子类，行为与 list 完全一致）：剔除合计行时把合计行
+    毛利挂在 _TOTAL_GP 属性上带出（审计 #3）——层级 payload 下父级小计+子级明细并存，
+    sum(明细毛利) 会重复计数（工商银行型毛利占比合计可达 366%），毛利占比分母必须用
+    合计行口径；无合计行（含东财兜底路径）时属性不存在，消费方退回 sum(GROSS_PROFIT)。"""
+
+
 def _em_mainop(secucode: str) -> list:
     try:
         return _em_dc("RPT_F10_FN_MAINOP", f'(SECUCODE="{secucode}")', 20, "REPORT_DATE")
@@ -201,7 +208,8 @@ def fetch_mainop(secucode: str) -> list:
     """E6 主营构成（东财键名同构）。tushare fina_mainbz 优先（产品P→行业D次序），东财兜底。
     v4.8 起各分部带 GROSS_PROFIT（毛利额，元）：tushare 取 bz_profit（缺则 收入−成本），
     东财取 MAIN_BUSINESS_RPOFIT（缺则 收入×毛利率 折算）。分部净利润无公开数据源，
-    业务构成图的利润口径一律为毛利。v4.10.3 起剔除 fina_mainbz 的维度合计行（见下）。"""
+    业务构成图的利润口径一律为毛利。v4.10.3 起剔除 fina_mainbz 的维度合计行（见下）；
+    剔除时合计行毛利经 _TOTAL_GP 属性随返回带出（审计 #3，层级 payload 毛利占比分母）。"""
     code, _ = secucode.split(".")
     try:
         ts = to_ts_code(code)
@@ -245,9 +253,21 @@ def fetch_mainop(secucode: str) -> list:
                             for r in dropped)
             print(f"注：fina_mainbz 已剔除维度合计行（{desc}，其值作分母）", file=sys.stderr)
             total = max((float(r["bz_sales"]) for r in dropped if r.get("bz_sales")), default=None)
+            # 合计行毛利随返回带出（审计 #3，_MainopRows._TOTAL_GP）：毛利占比分母用合计行
+            # 口径（bz_profit，缺则 收入−成本）——层级 payload 下 sum(明细毛利) 会重复计数；
+            # 锚定销售额最大的合计行（与 total 同锚）
+            anchor = max((r for r in dropped if r.get("bz_sales")),
+                         key=lambda r: float(r["bz_sales"]), default=None)
+            total_gp = None
+            if anchor is not None:
+                if anchor.get("bz_profit") is not None:
+                    total_gp = float(anchor["bz_profit"])
+                elif anchor.get("bz_cost") is not None:
+                    total_gp = float(anchor["bz_sales"]) - float(anchor["bz_cost"])
         else:
             total = sum(float(r["bz_sales"]) for r in items if r.get("bz_sales")) or None
-        out = []
+            total_gp = None
+        out = _MainopRows()
         for r in items:
             sales = float(r["bz_sales"]) if r.get("bz_sales") else None
             cost = float(r["bz_cost"]) if r.get("bz_cost") else None
@@ -266,6 +286,8 @@ def fetch_mainop(secucode: str) -> list:
                 "GROSS_RPOFIT_RATIO": ((sales - cost) / sales if (sales and cost is not None) else None),
                 "GROSS_PROFIT": gp,
             })
+        if total_gp is not None:
+            out._TOTAL_GP = total_gp
         return out
     except Exception:
         return _mainop_norm_em(_em_mainop(secucode))

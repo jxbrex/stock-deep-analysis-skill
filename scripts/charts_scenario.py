@@ -120,7 +120,7 @@ def build_scenario_block(calc: dict, cur: str = "元") -> str:
 
     c, odds, disp = calc["central"], calc["odds"], calc["dispersion"]
     c_cls = "up" if c >= 0 else "down"
-    c_sub = f'基础中值 {_fmt_px(calc["rows"][1]["mid"] if len(calc["rows"])>1 else calc["rows"][0]["mid"])} ÷ 现价 {_fmt_px(calc["price"])} − 1（{calc["horizon"]}）'
+    c_sub = f'基础中值 {_fmt_px(calc["rows"][1]["mid"] if len(calc["rows"])>1 else calc["rows"][0]["mid"])} ÷ 现价 {_fmt_px(calc["price"])} − 1（{_esc(calc["horizon"])}）'
     if c < 0:
         c_sub += "；中枢为负 → 回避"
     # v4.9 颜色语义拆分：中枢期望收益是方向量（随 .up/.down 红涨绿跌）；

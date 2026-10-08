@@ -154,7 +154,10 @@ def _check_quote_consistency(fill: dict, warns: list) -> None:
 def _check_score_ranges(fill: dict) -> None:
     """分数范围（0-10）越界是硬错误。"""
     for field in ("scores", "timing_scores"):
-        for k, v in (fill.get(field) or {}).items():
+        raw = fill.get(field)
+        if raw is not None and not isinstance(raw, dict):
+            raise ValueError(f"{field} 需为对象（{{维度: 0-10 分值}}），实际: {type(raw).__name__}")
+        for k, v in (raw or {}).items():
             try:
                 fv = float(v)
             except (TypeError, ValueError):
@@ -728,11 +731,9 @@ def _check_content_floor(fill: dict) -> None:
 
 
 def _check_missing_required_warns(fill: dict, warns: list) -> None:
-    """必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让分数算错或结构残缺）。"""
-    if not fill.get("timing_scores"):
-        warns.append("timing_scores 缺失或为空：时机分将显示 —，请补筹码面/技术面得分")
-    if "yellow_deductions" not in fill:
-        warns.append("yellow_deductions 键缺失：黄灯扣分按 0 处理，质量分可能虚高；无扣分请显式填 []")
+    """必填字段缺失告警（fill-schema 标 ✓ 但渲染器原零校验，静默缺失会让结构残缺）。
+    timing_scores / yellow_deductions 缺项由 compute_scores 硬拒（拒渲染即最大声提示），
+    此处曾 soft 告警「将显示 —/按 0 处理」与随后硬拒文案矛盾且完全冗余，已删。"""
     th = fill.get("thesis_html", "")
     if not th.strip():
         warns.append("thesis_html 缺失：Hero 一句话结论为空")
@@ -2640,10 +2641,15 @@ def _check_period_track(fill: dict, warns: list) -> None:
         elif fy is None:
             _copy_missing("band_years", ry)
         else:
-            try:
-                same_years = [int(x) for x in fy] == [int(x) for x in (ry or [])]
-            except (TypeError, ValueError):
+            # 类型守卫与上方 band 守卫（isinstance(fb, (list, tuple))）对齐：字符串按字符迭代
+            # 会把 "2023" 拆成 [2,0,2,3]、空串与空列表假相等——非数组一律按不一致拒
+            if not isinstance(fy, (list, tuple)):
                 same_years = False
+            else:
+                try:
+                    same_years = [int(x) for x in fy] == [int(x) for x in (ry or [])]
+                except (TypeError, ValueError):
+                    same_years = False
             if not same_years:
                 _mismatch("band_years", fy, ry)
         # consensus_np：fill 照抄的是落盘 consensus_np.np_avg（E5 当年净利均值）

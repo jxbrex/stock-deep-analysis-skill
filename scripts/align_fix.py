@@ -207,13 +207,15 @@ def fix_table_alignment(html: str) -> str:
                 tag, attrs = cm.group(1), cm.group(2)
                 cs = re.search(r'colspan\s*=\s*"?(\d+)', attrs)
                 colspan = int(cs.group(1)) if cs else 1
+                # rowspan 登记挪出 td 分支（v5.5.2 审计：th 跨行格原先不登记 → 其下数据行
+                # 列位错位一格、num 列首格被剥右对齐；与第一遍投票循环同口径，th/td 都登记）
+                rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
+                if rs and int(rs.group(1)) > 1:
+                    rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
                 if tag.lower() == "th":
                     want = decided.get(col)
                     attrs = _strip_th_align(attrs) if want is None else _set_th_align(attrs, want)
                 else:
-                    rs = re.search(r'rowspan\s*=\s*"?(\d+)', attrs)
-                    if rs and int(rs.group(1)) > 1:
-                        rowspans2.append((col, int(rs.group(1))))  # 行首即消耗，故存 N
                     # td 对齐统一（num 列）：v4.10.3 起「含 prose 格」的列已在决策层整列判左
                     # （col_prose），故到达本分支的 num 列必无 prose 格——原格级 _is_prose_cell
                     # 剥类分支成为不可达代码，已删；数字、含数字短值、≤4 字短标记（"基础""12个月"）

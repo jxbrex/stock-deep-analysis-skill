@@ -33,10 +33,10 @@ def _pctile(xs, q):
     return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
 
 
-def main():
-    directory = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DIR
-    by_code = {}
-    skipped_unparsed = 0
+def scan_infos(directory: str):
+    """扫描目录 → (code → [info] 分组, 像报告但解析失败计数)。
+    扫描与计算拆开（审计#小6），供离线测试直接构造文件名验证。"""
+    by_code, skipped_unparsed = {}, 0
     for root, dirs, files in os.walk(directory):
         E.prune_scan_dirs(dirs)  # 与 find_prev_report 同一剪枝口径（单源）
         for fn in sorted(files):
@@ -45,12 +45,17 @@ def main():
                 by_code.setdefault(E.norm_code(info["code"]), []).append(info)
             elif E._looks_like_report(fn):
                 skipped_unparsed += 1  # 像报告但解析失败：校准样本的下偏必须显性化
+    return by_code, skipped_unparsed
+
+
+def pair_deltas(by_code: dict):
+    """同股相邻两版配对 → (质量分差列表, 估值分差列表, 配对数, 跨代隔离数)。
+    跨命名代配对隔离：旧代（valuation=None）quality 是单轨综合分，新代是纯质量分，
+    口径混杂会系统性抬高 P50/P80（热核审计实证），恰好一侧 None 即跳过。"""
     dq, dv, pairs, cross_gen = [], [], 0, 0
     for _code, rs in sorted(by_code.items()):
         rs = sorted((r for r in rs if r["quality"] is not None), key=lambda r: r["date"])
         for a, b in zip(rs, rs[1:]):
-            # 跨命名代配对隔离：旧代（valuation=None）quality 是单轨综合分，新代是纯质量分，
-            # 口径混杂会系统性抬高 P50/P80（热核审计实证），恰好一侧 None 即跳过
             if (a["valuation"] is None) != (b["valuation"] is None):
                 cross_gen += 1
                 continue
@@ -58,6 +63,13 @@ def main():
             dq.append(abs(b["quality"] - a["quality"]))
             if a["valuation"] is not None and b["valuation"] is not None:
                 dv.append(abs(b["valuation"] - a["valuation"]))
+    return dq, dv, pairs, cross_gen
+
+
+def main():
+    directory = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DIR
+    by_code, skipped_unparsed = scan_infos(directory)
+    dq, dv, pairs, cross_gen = pair_deltas(by_code)
     print(f"目录: {directory}")
     print(f"股票数: {len(by_code)}｜同股相邻两版配对: {pairs}"
           f"（质量分样本 {len(dq)} / 估值分样本 {len(dv)}；跨代配对隔离 {cross_gen} 对；"

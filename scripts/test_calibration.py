@@ -48,6 +48,44 @@ def test_dedup_earliest():
     assert next(r for r in got if r["code"] == "00700")["rep_date"] == "2026-08-14"
 
 
+def test_collect_reports_walks_subdirs():
+    """审计#16：报告放子目录时不得静默漏样本（与 extract_review/score_drift 递归口径一致）。
+    正文提取 monkeypatch 掉——本用例只测扫描递归，文件名解析走真实 parse_report_name。"""
+    import tempfile
+    real_extract = sc.E.extract
+    sc.E.extract = lambda path: {"prev": {"quality": 6.7, "valuation": 7.4, "date": "2026-08-01"},
+                                 "code": "600309"}
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            sub = os.path.join(d, "2026-08")
+            os.makedirs(sub)
+            with open(os.path.join(sub, "万华化学-600309-6.74-7.4-2026-08-01.html"),
+                      "w", encoding="utf-8") as f:
+                f.write("<html/>")
+            reps = sc.collect_reports(d)
+    finally:
+        sc.E.extract = real_extract
+    assert len(reps) == 1, f"子目录样本被漏: {reps}"
+    assert reps[0]["code"] == "600309" and reps[0]["quality"] == 6.7
+
+
+def test_fetch_index_return_string_close():
+    """审计#17：tushare 字符串 close 必须正常算出基准收益——缺失 float() 时
+    字符串除法 TypeError 被外层 except 吞成 None，A 股超额收益整列静默丢失。"""
+    real_ts = sc._ts
+    sc._ts = lambda api_name, params: [
+        {"trade_date": "20260801", "close": "4000.0"},
+        {"trade_date": "20260829", "close": "4400.0"},
+    ]
+    sc._INDEX_CACHE.clear()  # 防同键缓存污染本用例
+    try:
+        ret = sc.fetch_index_return("A", "20260801", "20260829")
+    finally:
+        sc._ts = real_ts
+        sc._INDEX_CACHE.clear()
+    assert abs(ret - 0.1) < 1e-12, f"字符串 close 基准收益算错: {ret}"
+
+
 if __name__ == "__main__":
     test_parse_report_name_wiring()
     print("OK parse_report_name 接线（owner=extract_review，两代命名 + 非报告排除）")
@@ -55,4 +93,8 @@ if __name__ == "__main__":
     print("OK bucket_of（边界左闭右开 / None 不入桶）")
     test_dedup_earliest()
     print("OK dedup_earliest（同股取最早，独立窗口）")
-    print("全部 3 项测试通过")
+    test_collect_reports_walks_subdirs()
+    print("OK collect_reports 子目录递归扫描")
+    test_fetch_index_return_string_close()
+    print("OK fetch_index_return 字符串 close 不丢基准收益")
+    print("全部 5 项测试通过")
